@@ -1812,6 +1812,16 @@
     { ground: 0x2a2418, accent: 0xe0a64a, glow: 0x4a3410, tier: 0 }, // resource basins
   ];
 
+  // ---- CENTRAL-PLAZA LIFE (decorative; PERSISTENT, never streamed/recycled) ----
+  // Pedestrians + delivery vehicles that bring the FIXED economy district to life. Cloned from the
+  // shared chunkAssets templates (geo+mat reuse → no per-instance GPU alloc). They follow deterministic
+  // looping plaza paths (a perimeter promenade ring + lanes between the tier rows + a vehicle ring road)
+  // and are DECORATIVE ONLY: never tagged with userData.firmId and never pushed to `pickables`, so they
+  // can NEVER intercept click-to-inspect (the 11 firm towers + NPC_DESK must still resolve exactly).
+  // Animated alloc-free from the render-loop dt, gated by !reduceMotion && activeSection==='factory'.
+  const plazaPeds = [];      // persistent walker records (grp + run-path + swing limbs); never recycled
+  const plazaTraffic = [];   // persistent delivery-vehicle records (mesh + ring/spoke path)
+
   // Shared geometry + materials, built ONCE and reused by every chunk so recycling a
   // chunk frees only references (no per-chunk GPU allocation, no leak).
   let chunkAssets = null;
@@ -2031,6 +2041,119 @@
   function inArena(x, z){
     if (Math.abs(x) < 48 && Math.abs(z) < 44) return true;
     return false;
+  }
+
+  /* ============================================================
+   *  CENTRAL-PLAZA LIFE — makePlazaLife()
+   *  Populate the FIXED economy district (centralGroup) with DECORATIVE pedestrians + delivery
+   *  vehicles following deterministic looping plaza paths. The plaza is PERSISTENT (NOT streamed),
+   *  so there is NO chunkSignature/determinism constraint here — positions are seeded freely.
+   *
+   *  Each walker/vehicle follows a CLOSED POLYLINE (list of {x,z} waypoints). A record stores the
+   *  loop, its total length, and a scalar arc-length cursor `u` (metres travelled, mod loopLen). Per
+   *  frame we advance `u` by speed*dt and resolve (x,z) + heading along the polyline — alloc-free.
+   *  Heading aligns the template's local +X-forward to travel via rotation.y = atan2(-dz, dx) (same
+   *  convention the streamed trucks use: cab toward +X, moving +X ⇒ rotation.y = 0).
+   *
+   *  Paths are hand-laid to clear building footprints: the firm towers occupy the 4 tier rows at
+   *  z = ROW_Z[0..3] (−30/−10/10/30) with a ±~2.5 footprint, and the EXCHANGE sits at the origin with
+   *  a ~5-unit radius. Promenade ring + inter-row lanes + vehicle ring road all stay in the gaps.
+   *  Headless-safe: only Group.clone()/position/rotation writes — no new geometry/material allocated. */
+  function makePlazaLife(){
+    if (!chunkAssets || !centralGroup) return;             // templates + group must exist first
+    const pedTpl = chunkAssets.pedTemplates, truckTpl = chunkAssets.truckTemplates;
+    if (!pedTpl || !pedTpl.length || !truckTpl || !truckTpl.length) return;
+
+    // measured length of a closed polyline (wraps last→first) so the cursor can advance in metres.
+    const loopLen = (pts) => { let L = 0; for (let i=0;i<pts.length;i++){ const a = pts[i], b = pts[(i+1)%pts.length]; L += Math.hypot(b.x-a.x, b.z-a.z); } return L; };
+
+    // ---- PEDESTRIAN PATHS (kept clear of the tier rows at z=±30/±10 and the exchange at origin) ----
+    // A perimeter PROMENADE ring hugging the inside of the district + lanes running BETWEEN the tier
+    // rows (the inter-row gaps at z=−20/0/+20 are tower-free; the z=0 lane detours around the exchange).
+    const pedPaths = [
+      // outer promenade ring (rounded rectangle inside the |x|<48,|z|<44 arena)
+      [ {x:-42,z:-36},{x:42,z:-36},{x:42,z:36},{x:-42,z:36} ],
+      // a second, inner promenade loop (counter-walked) for layered foot traffic
+      [ {x:-36,z:-24},{x:36,z:-24},{x:36,z:24},{x:-36,z:24} ],
+      // lane between T0 (z=−30) and T1 (z=−10), running the full width
+      [ {x:-40,z:-20},{x:40,z:-20} ],
+      // lane between T1 (z=−10) and T2 (z=10) — the z≈0 gap; detour AROUND the exchange (origin, r≈5)
+      [ {x:-40,z:0},{x:-9,z:0},{x:-7,z:-8},{x:7,z:-8},{x:9,z:0},{x:40,z:0},{x:9,z:0},{x:7,z:8},{x:-7,z:8},{x:-9,z:0} ],
+      // lane between T2 (z=10) and T3 (z=30)
+      [ {x:-40,z:20},{x:40,z:20} ],
+    ];
+
+    // 15 pedestrians spread across the paths (within the recommended 12–18). Hand-seeded variety in
+    // start offset / speed / direction / limb phase so the crowd never looks like marching clones.
+    const N_PED = 15;
+    for (let i = 0; i < N_PED; i++){
+      const tpl = pedTpl[i % pedTpl.length];
+      const grp = tpl.clone();                              // shares geo+mat refs (no GPU alloc)
+      const path = pedPaths[i % pedPaths.length];
+      const L = loopLen(path);
+      const dir = (i % 3 === 0) ? -1 : 1;                   // a third walk the loop the other way
+      const speed = 1.1 + (i % 5) * 0.18;                   // gentle 1.1–1.82 u/s walking pace
+      const li = grp.userData.pedLimbIdx;
+      centralGroup.add(grp);
+      const rec = {
+        grp, path, L, dir, speed,
+        u: (i / N_PED) * L,                                 // spread start positions around the loop
+        phase: i * 1.7, stride: 6.4 + (i % 4) * 0.5, baseY: 0,
+        legA: grp.children[li.legA], legB: grp.children[li.legB],
+        armA: grp.children[li.armA], armB: grp.children[li.armB],
+      };
+      placeOnPath(rec, grp);                                // seat at the start pose (also under reduced-motion)
+      plazaPeds.push(rec);
+    }
+
+    // ---- DELIVERY-VEHICLE PATHS (slow loops around the district) ----
+    // A perimeter RING ROAD just inside the arena edge + two radial LOGISTICS SPOKES that run out along
+    // the tower-free gaps (z≈±20) to the ring and back — the visible flow of goods around downtown.
+    const truckPaths = [
+      // wide ring road around the whole district
+      [ {x:-45,z:-40},{x:45,z:-40},{x:45,z:40},{x:-45,z:40} ],
+      // radial spoke: out along the upper inter-row gap (z=−20) to the ring, run the east edge, back
+      [ {x:0,z:-20},{x:44,z:-20},{x:44,z:20},{x:0,z:20} ],
+      // radial spoke: out along the lower inter-row gap (z=+20) to the ring, run the west edge, back
+      [ {x:0,z:20},{x:-44,z:20},{x:-44,z:-20},{x:0,z:-20} ],
+    ];
+    const N_TRUCK = 4;                                      // within the recommended 3–5
+    for (let i = 0; i < N_TRUCK; i++){
+      const tpl = truckTpl[i % truckTpl.length];
+      const mesh = tpl.clone();                             // shares geo+mat refs (no GPU alloc)
+      const path = truckPaths[i % truckPaths.length];
+      const L = loopLen(path);
+      centralGroup.add(mesh);
+      const rec = {
+        mesh, path, L,
+        dir: 1, speed: 4.5 + (i % 3) * 1.0,                 // slow delivery crawl 4.5–6.5 u/s
+        u: (i / N_TRUCK) * L, baseY: 0.05,                  // sit on its wheels (group origin at ground)
+      };
+      placeOnPath(rec, mesh);
+      plazaTraffic.push(rec);
+    }
+  }
+
+  /* Resolve a record's arc-length cursor `u` (mod loop length) to an (x,z) point + travel heading on its
+   * closed polyline, and write them onto `obj` (position + rotation.y). Used both for the initial static
+   * pose and every animated frame. ALLOC-FREE: only scalar math + position/rotation writes. */
+  function placeOnPath(rec, obj){
+    const pts = rec.path, n = pts.length;
+    let d = ((rec.u % rec.L) + rec.L) % rec.L;              // normalise into [0, L)
+    for (let i = 0; i < n; i++){
+      const a = pts[i], b = pts[(i + 1) % n];
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      if (d <= segLen || i === n - 1){
+        const f = d / segLen;
+        const x = a.x + (b.x - a.x) * f, z = a.z + (b.z - a.z) * f;
+        obj.position.x = x; obj.position.z = z; obj.position.y = rec.baseY;
+        // forward (dx,dz) along this segment, oriented to travel direction; +X-forward template
+        const dx = (b.x - a.x) * rec.dir, dz = (b.z - a.z) * rec.dir;
+        obj.rotation.y = Math.atan2(-dz, dx);
+        return;
+      }
+      d -= segLen;
+    }
   }
 
   // deterministic per-tile PRNG → a tile looks identical on every revisit (seed = chunk coords)
@@ -2558,7 +2681,8 @@
     scene = new THREE.Scene();
     const SKY = 0x0b1426;
     scene.background = new THREE.Color(SKY);
-    // distance FOG hides chunk pop-in at the streaming horizon
+    // distance FOG hides chunk pop-in at the streaming horizon. Its colour is now driven
+    // by the DAY/NIGHT cycle (see updateDayNight); the start tone is a pleasant night-blue.
     scene.fog = new THREE.Fog(SKY, 120, 460);
     cam = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 2000);
 
@@ -2587,9 +2711,13 @@
       orbitTo(d.tx, d.ty, d.tz, d.dist, d.polar, d.azimuth);
     }
 
-    // lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.34));
-    scene.add(new THREE.HemisphereLight(0x9fc0ff, 0x202838, 0.5));
+    // lighting — references captured at module scope so the DAY/NIGHT cycle (updateDayNight,
+    // driven from the render-loop dt) can retint colour/intensity each frame. Initial values
+    // are a pleasant midday so the very first rendered frame already reads well.
+    lightAmbient = new THREE.AmbientLight(0xffffff, 0.34);
+    scene.add(lightAmbient);
+    lightHemi = new THREE.HemisphereLight(0x9fc0ff, 0x202838, 0.5);
+    scene.add(lightHemi);
     const key = new THREE.DirectionalLight(0xffe9c0, 1.2);
     key.position.set(-60, 120, 50); key.castShadow = true;
     if (key.shadow && key.shadow.mapSize) key.shadow.mapSize.set(2048, 2048);
@@ -2597,6 +2725,10 @@
       Object.assign(key.shadow.camera, { left:-90, right:90, top:90, bottom:-90, near:1, far:400 });
     }
     scene.add(key);
+    lightSun = key;
+    // prime the cycle so the first paint matches the phase (hold a fixed pleasant midday under
+    // reduced-motion; otherwise this seeds the colours that updateDayNight then animates).
+    updateDayNight(0);
 
     // endless faint base plane that FOLLOWS the camera (snapped to a coarse step so its
     // motion is invisible). The per-chunk biome ground sits on top of this; this plane
@@ -2627,6 +2759,9 @@
 
     // streamed-world shared assets + first load
     buildChunkAssets();
+    // CENTRAL-PLAZA LIFE: decorative peds + delivery vehicles in the FIXED district. Built RIGHT AFTER
+    // buildChunkAssets() so the shared truck/ped templates exist to clone. Persistent (never streamed).
+    makePlazaLife();
     streamChunks(0, 0, true);
 
     // ===== the four bounded DIORAMAS (market/finance/network/leaderboard) =====
@@ -2642,6 +2777,99 @@
     return true;
   }
   let skyFloor = null;
+
+  /* ============================================================
+   *  DAY / NIGHT LIGHTING CYCLE (global; VIEW-ONLY — touches lights/background/fog only).
+   *  A slow clock `todPhase` in [0,1) advances from the render-loop dt (full loop ~3.5 min)
+   *  and is interpolated through a small ring of keyframe palettes: dawn → midday → dusk →
+   *  night → (wrap) dawn. Drives the captured sun / hemisphere / ambient lights plus
+   *  scene.background + scene.fog colour. It NEVER touches the economy, streaming chunks,
+   *  determinism, picking, or the Sankey contract. Frozen (held at a pleasant midday) under
+   *  reduced-motion. Alloc-free per frame: all scratch Colors below are built once.
+   * ============================================================ */
+  let lightSun = null, lightHemi = null, lightAmbient = null;
+  let todPhase = 0.30;          // start mid-morning so the first frame is bright & readable
+  let todPaused = false;        // optional manual hold (KeyT); auto-cycle when false
+  const TOD_PERIOD = 210;       // seconds for a full dawn→…→dawn loop (~3.5 min)
+  const TOD_FIXED  = 0.30;      // pleasant daytime held under reduced-motion / manual pause-to-day
+  // Keyframe ring (phase, sun rgb, sun intensity, sky/fog rgb, hemiSky rgb, hemiGround rgb,
+  // hemi intensity, ambient intensity). Linearly blended between neighbours each frame. The
+  // ambient + hemi values keep a FLOOR (never 0) so dioramas (Sankey/network/leaderboard) stay
+  // readable at the darkest point; emissive materials add the rest of the night legibility.
+  const TOD_KEYS = [
+    // dawn (warm low sun, peach sky)
+    { p:0.00, sun:[1.00,0.62,0.34], sunI:0.65, sky:[0.86,0.55,0.42], hs:[1.00,0.78,0.62], hg:[0.22,0.20,0.26], hemiI:0.42, ambI:0.30 },
+    // mid-morning → midday (neutral bright)
+    { p:0.22, sun:[1.00,0.96,0.86], sunI:1.30, sky:[0.42,0.62,0.92], hs:[0.62,0.75,1.00], hg:[0.18,0.22,0.30], hemiI:0.62, ambI:0.40 },
+    // dusk (warm orange, low sun again)
+    { p:0.50, sun:[1.00,0.55,0.28], sunI:0.70, sky:[0.92,0.46,0.30], hs:[1.00,0.66,0.50], hg:[0.24,0.18,0.22], hemiI:0.40, ambI:0.30 },
+    // night (dim cool — NOT pitch black; ambient/hemi floor keeps things legible)
+    { p:0.72, sun:[0.46,0.56,0.82], sunI:0.22, sky:[0.04,0.07,0.16], hs:[0.30,0.40,0.62], hg:[0.06,0.08,0.14], hemiI:0.34, ambI:0.26 },
+    // deep night plateau (same floor; holds before the dawn wrap)
+    { p:0.88, sun:[0.46,0.56,0.82], sunI:0.22, sky:[0.04,0.07,0.16], hs:[0.30,0.40,0.62], hg:[0.06,0.08,0.14], hemiI:0.34, ambI:0.26 },
+  ];
+  // reusable scratch (alloc-free; constructed once, lazily, only when THREE exists)
+  let _todC = null;             // { sun, sky, hs, hg } THREE.Color scratch
+  function _todColors(){
+    if (_todC || typeof THREE === 'undefined' || !THREE.Color) return _todC;
+    _todC = { sun:new THREE.Color(), sky:new THREE.Color(), hs:new THREE.Color(), hg:new THREE.Color() };
+    return _todC;
+  }
+  function _lerp(a, b, t){ return a + (b - a) * t; }
+  // sample the keyframe ring at phase p → fills the scratch colours + returns the scalar lights
+  function _todSample(p, out){
+    const K = TOD_KEYS, n = K.length;
+    let i = 0; while (i < n - 1 && p >= K[i + 1].p) i++;
+    const a = K[i];
+    // wrap from the last key back to the first (night → dawn) across the [last.p, 1) gap
+    const wrap = (i === n - 1);
+    const b = wrap ? K[0] : K[i + 1];
+    const span = (wrap ? (1 + K[0].p - a.p) : (b.p - a.p)) || 1;
+    const t = Math.max(0, Math.min(1, (p - a.p) / span));
+    out.sun.setRGB(_lerp(a.sun[0],b.sun[0],t), _lerp(a.sun[1],b.sun[1],t), _lerp(a.sun[2],b.sun[2],t));
+    out.sky.setRGB(_lerp(a.sky[0],b.sky[0],t), _lerp(a.sky[1],b.sky[1],t), _lerp(a.sky[2],b.sky[2],t));
+    out.hs.setRGB(_lerp(a.hs[0],b.hs[0],t), _lerp(a.hs[1],b.hs[1],t), _lerp(a.hs[2],b.hs[2],t));
+    out.hg.setRGB(_lerp(a.hg[0],b.hg[0],t), _lerp(a.hg[1],b.hg[1],t), _lerp(a.hg[2],b.hg[2],t));
+    out.sunI  = _lerp(a.sunI, b.sunI, t);
+    out.hemiI = _lerp(a.hemiI, b.hemiI, t);
+    out.ambI  = _lerp(a.ambI, b.ambI, t);
+    return out;
+  }
+  // Advance the clock + retint the scene. GLOBAL: called once at the top of frame() so every
+  // section (factory + all dioramas) shares one sky. dt is the same render-loop dt the rest of
+  // the motion uses. No allocation, no economy/scene-graph mutation beyond light/bg/fog colours.
+  function updateDayNight(dt){
+    const C = _todColors();
+    if (!C) return;                                  // headless / stub-THREE: nothing to retint
+    // clock: advance only when motion is allowed AND not manually paused; else hold a daytime.
+    if (reduceMotion){ todPhase = TOD_FIXED; }
+    else if (!todPaused && dt > 0){ todPhase = (todPhase + dt / TOD_PERIOD) % 1; if (todPhase < 0) todPhase += 1; }
+    const s = _todSample(todPhase, C);
+    // SUN: colour + intensity from the palette; swing elevation/azimuth across the sky so the
+    // long shadows of dawn/dusk read (kept above the horizon at night so nothing flips to lit-from-below).
+    if (lightSun){
+      if (lightSun.color && lightSun.color.copy) lightSun.color.copy(C.sun);
+      lightSun.intensity = s.sunI;
+      if (lightSun.position && lightSun.position.set){
+        const ang = todPhase * Math.PI * 2;          // 0=dawn east-low, .25=high, .5=dusk west-low
+        const elev = Math.max(0.12, Math.sin(ang) * 0.5 + 0.5);   // 0.12..1 (never under the floor)
+        lightSun.position.set(Math.cos(ang) * 110, 30 + elev * 130, 50 + Math.sin(ang) * 40);
+      }
+    }
+    // HEMISPHERE + AMBIENT: cool/dim at night, neutral/bright by day, but the palette floors above
+    // keep them non-zero so the dioramas stay legible at the darkest point.
+    if (lightHemi){
+      if (lightHemi.color && lightHemi.color.copy) lightHemi.color.copy(C.hs);
+      if (lightHemi.groundColor && lightHemi.groundColor.copy) lightHemi.groundColor.copy(C.hg);
+      lightHemi.intensity = s.hemiI;
+    }
+    if (lightAmbient) lightAmbient.intensity = s.ambI;
+    // SKY: background + fog share one tone (day blue → sunset orange → deep night-blue, never black).
+    if (scene){
+      if (scene.background && scene.background.copy) scene.background.copy(C.sky);
+      if (scene.fog && scene.fog.color && scene.fog.color.copy) scene.fog.color.copy(C.sky);
+    }
+  }
 
   function wireCameraInput(){
     // ----- MAP drag-to-pan + wheel-to-zoom (FALLBACK ONLY) -----
@@ -2834,6 +3062,11 @@
     if (!ready || !renderer) return;
     const dt = Math.min(0.05, (ts - lastTs)/1000) || 0.016; lastTs = ts;
 
+    // DAY/NIGHT cycle — advanced FIRST, before the diorama early-return below, so the one shared
+    // sky/sun/ambient applies GLOBALLY to every section. Held at a pleasant midday under
+    // reduced-motion. View-only (lights/background/fog only) + alloc-free.
+    updateDayNight(dt);
+
     // ease central tower heights + glow
     for (const f of world.firms){
       const id = f.id, b = buildings[id]; if (!b) continue;
@@ -2946,6 +3179,24 @@
             w.legA.rotation.x =  swing;  w.legB.rotation.x = -swing;
             w.armA.rotation.x = -swing;  w.armB.rotation.x =  swing;  // arms anti-phase to legs
           }
+        }
+
+        // CENTRAL-PLAZA LIFE: drive the PERSISTENT decorative crowd + delivery vehicles around their
+        // closed plaza paths. Same dt + worldAnimT (T) phase as the streamed workers, so everything
+        // freezes together under reduced-motion (this whole block is gated by !reduceMotion above) and
+        // pauses outside the factory view. Alloc-free — only cursor maths + position/rotation writes.
+        for (let i = 0; i < plazaPeds.length; i++){ const w = plazaPeds[i];
+          w.u += w.speed * dt;                                // advance arc-length cursor (placeOnPath wraps mod L)
+          placeOnPath(w, w.grp);                              // resolve (x,z) + travel heading on the loop
+          const s = Math.sin(T * w.stride + w.phase);
+          w.grp.position.y = w.baseY + Math.abs(s) * 0.05;    // small step bob (matches streamed workers)
+          const swing = s * 0.5;                              // leg/arm swing amplitude
+          w.legA.rotation.x =  swing;  w.legB.rotation.x = -swing;
+          w.armA.rotation.x = -swing;  w.armB.rotation.x =  swing;  // arms anti-phase to legs
+        }
+        for (let i = 0; i < plazaTraffic.length; i++){ const v = plazaTraffic[i];
+          v.u += v.speed * dt;                                // advance arc-length cursor (wraps mod L)
+          placeOnPath(v, v.mesh);                             // resolve (x,z) + travel heading (faces the way it drives)
         }
       }
     }
@@ -3605,6 +3856,9 @@
     window.addEventListener('keydown', e => {
       if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
       if (e.code === 'KeyV'){ e.preventDefault(); setCamMode(camMode === 'map' ? 'roam' : 'map'); return; }
+      // KeyT: pause/resume the DAY/NIGHT auto-cycle (optional, unobtrusive). Pausing freezes the
+      // current sky; pausing has no effect under reduced-motion (the clock is already held at midday).
+      if (e.code === 'KeyT'){ e.preventDefault(); todPaused = !todPaused; return; }
       if (camMode === 'map' && e.code === 'Space'){ e.preventDefault(); setPlaying(!playing); }
       else if (e.key === 's' || e.key === 'S' || e.key === '.'){ e.preventDefault(); setPlaying(false); advance(); }
     });
