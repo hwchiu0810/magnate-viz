@@ -1879,11 +1879,71 @@
         new THREE.MeshStandardMaterial({ color: 0xffd27a, emissive: 0xffae3a, emissiveIntensity:1.7 }),   // reg2 molten core glow — white-hot
         new THREE.MeshStandardMaterial({ color: 0xb89058, emissive: 0x6a4a1e, emissiveIntensity:.5, roughness:1 }), // reg3 ore flecks — warm mineral
       ],
+      // FURNACE SMOKE puff (reg2 smelting): a SHARED soft grey-white transparent TEMPLATE material
+      // (built once). Each puff fades INDEPENDENTLY (its own opacity over its rise), so per puff we
+      // .clone() this template — a tiny, BOUNDED count (capped at ~2 puffs / chunk, freed on recycle)
+      // mirroring the truck-template pattern. depthWrite:false so the rising plume blends without
+      // depth-sort artefacts; additive-feel soft grey, NO bloom/post.
+      smokeMat:   new THREE.MeshBasicMaterial({ color: 0xd8dde4, transparent: true, opacity: 0.0, depthWrite: false }),
+
+      // ---- PEDESTRIAN (factory worker) assets (shared once; reused by every walker) ----
+      // Skin head tone + a few hi-vis VEST body colours and HARD-HAT accent colours that fit the
+      // industrial theme. A worker is assembled from the SHARED box/cyl/sphere geos in makePedestrian:
+      // torso uses the vest mat; legs/arms use a shared dark trouser/sleeve mat; head uses a shared skin
+      // mat; helmet uses the per-variant hat mat (paired with the vest).
+      pedSkinMat:  new THREE.MeshStandardMaterial({ color: 0xd8a878, roughness:.85 }),       // head/skin tone
+      pedLimbMat:  new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness:.9, metalness:.05 }), // trousers/sleeves
+      pedVestMat:  [
+        new THREE.MeshStandardMaterial({ color: 0xffd23a, roughness:.6 }),   // hi-vis yellow
+        new THREE.MeshStandardMaterial({ color: 0xff8a2a, roughness:.6 }),   // hi-vis orange
+        new THREE.MeshStandardMaterial({ color: 0x46d0ff, roughness:.6 }),   // hi-vis cyan
+      ],
+      pedHatMat:   [
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness:.5 }),   // white hard-hat
+        new THREE.MeshStandardMaterial({ color: 0xff4438, roughness:.5 }),   // red hard-hat
+        new THREE.MeshStandardMaterial({ color: 0x3a6bff, roughness:.5 }),   // blue hard-hat
+      ],
     };
     // 4 prebuilt truck templates (one per body colour). Built ONCE here; buildChunk CLONEs the
     // matching template per truck (Object3D.clone shares geometry + material refs → no per-truck
     // GPU allocation). Clones are freed when their chunk group is dropped during recycle.
     chunkAssets.truckTemplates = chunkAssets.truckMats.map(m => makeTruck(m));
+    // PEDESTRIAN templates: one per vest/hat colour pairing (built ONCE). buildChunk CLONEs the matching
+    // template per worker (clone shares geometry + material refs → no per-pedestrian GPU allocation).
+    // Clones are freed when their chunk group is dropped during recycle.
+    chunkAssets.pedTemplates = chunkAssets.pedVestMat.map((vest, i) => makePedestrian(vest, chunkAssets.pedHatMat[i]));
+  }
+
+  /* makePedestrian(vestMat, hatMat) → a small low-poly humanoid factory worker as a THREE.Group, ≈1.6
+   * units tall, assembled from the SHARED box/cyl geos. GROUP ORIGIN at the FEET (y≈0) so buildChunk can
+   * place it on the ground and the render loop can BOB it via group.position.y. Faces +X by default (so
+   * grp.rotation.y aims it along travel). 6 meshes: torso(+vest band) / head / hard-hat / 2 legs / 2 arms.
+   * The two legs + two arms are returned via well-known child indices so the render loop can SWING them.
+   * Children are positioned in LOCAL space about the feet. Headless-safe (Group/Mesh + scale/pos/rot from
+   * shared geos — NO new geometry/material here). */
+  function makePedestrian(vestMat, hatMat){
+    const A = chunkAssets, g = new THREE.Group();
+    const part = (geo, mat, sx,sy,sz, px,py,pz) => {
+      const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); g.add(m); return m;
+    };
+    const legLen = 0.62, hipY = legLen;                 // legs run feet(0)→hip
+    // TORSO: hi-vis VEST-coloured box sitting on the hips (the bright vest is the whole torso)
+    const torso = part(A.box, vestMat, 0.5, 0.62, 0.3, 0, hipY + 0.31, 0); torso.castShadow = true;
+    // HEAD: skin sphere atop the torso
+    part(A.sphere, A.pedSkinMat, 0.17, 0.19, 0.17, 0, hipY + 0.78, 0);
+    // HARD-HAT: small per-variant dome cap over the head (factory accent)
+    part(A.sphere, hatMat, 0.2, 0.13, 0.2, 0, hipY + 0.88, 0);
+    // 2 LEGS: dark trouser boxes hanging from the hips (pivot baked at top via position; swung about X
+    // in the render loop — small amplitude so the foot-end traces a gentle walk arc).
+    const legA = part(A.box, A.pedLimbMat, 0.16, legLen, 0.18, -0.13, hipY*0.5, 0);  // child index 3
+    const legB = part(A.box, A.pedLimbMat, 0.16, legLen, 0.18,  0.13, hipY*0.5, 0);  // child index 4
+    // 2 ARMS: dark sleeve boxes at the shoulders (swung opposite the legs)
+    const armA = part(A.box, A.pedLimbMat, 0.12, 0.52, 0.14, -0.31, hipY + 0.34, 0); // child index 5
+    const armB = part(A.box, A.pedLimbMat, 0.12, 0.52, 0.14,  0.31, hipY + 0.34, 0); // child index 6
+    // expose the swing limbs on userData so a CLONE can locate them by the same child indices
+    g.userData.pedLimbIdx = { legA: 3, legB: 4, armA: 5, armB: 6 };
+    void legA; void legB; void armA; void armB;
+    return g;
   }
 
   /* makeTruck(bodyMat) → a THREE.Group box-lorry assembled from the SHARED box/cyl geometries.
@@ -1978,6 +2038,14 @@
     let s = (cx*73856093 ^ cz*19349663 ^ 0x5f3759df) >>> 0;
     return () => { s = (s*1664525 + 1013904223) >>> 0; return s / 4294967296; };
   }
+  // SEPARATE deterministic per-tile PRNG used ONLY for PEDESTRIANS. Seeded from the chunk coords with a
+  // DIFFERENT salt/primes than tileRng so the shared buildChunk 'r()' draw order — and therefore
+  // chunkSignature — is COMPLETELY untouched by adding/removing/tuning pedestrians. Same revisit-stable
+  // contract: a chunk's workers look identical on every revisit.
+  function pedRng(cx, cz){
+    let s = (cx*40503 ^ cz*86028157 ^ 0x9e3779b9) >>> 0;
+    return () => { s = (s*1103515245 + 12345) >>> 0; return s / 4294967296; };
+  }
 
   // flat horizontal strip from SHARED geometry, scaled to size, rotated to lie on the ground.
   function flatStrip(mat, cx, cz, y, lenX, lenZ){
@@ -2004,6 +2072,16 @@
     const g = new THREE.Group();
     g.userData.trucks = [];            // streamed logistics — freed when the chunk is recycled
     g.userData.beltGoods = [];         // goods riding conveyor belts — freed when the chunk is recycled
+    // MOTION-POLISH refs (animated in the render loop; collected during machine build below).
+    // Each animates EXISTING meshes only (arms/drills) or a tiny shared-pooled puff (smoke) → it adds
+    // NO new r() draws here, so chunkSignature is unchanged. All freed (nulled) in recycleChunk.
+    g.userData.arms = [];              // reg1 robot arms: { seg1, seg2, baseZ1, baseZ2, phase } — gently work
+    g.userData.drills = [];            // reg3 drill heads/bits: { mesh, speed, phase } — slow continuous spin
+    g.userData.smoke = [];             // reg2 furnace puffs: { mesh, baseY, rise, phase } — rise/grow/fade loop
+    // PEDESTRIANS (factory workers) walking a deterministic path. Cloned from chunkAssets.pedTemplates and
+    // driven by a SEPARATE pedRng (see below) so they DON'T perturb the shared 'r()' draw order or
+    // chunkSignature. Each: { grp, axis, pos, dir, speed, lo, hi, legA, legB, armA, armB, phase, stride, baseY }.
+    g.userData.peds = [];
     const r = tileRng(cx, cz);
     const ox = cx*CHUNK, oz = cz*CHUNK;
     const ring = ringOf(cx, cz), reg = regionIndex(ring);
@@ -2141,6 +2219,17 @@
             const stack = new THREE.Mesh(chunkAssets.cyl, chunkAssets.stackMat);
             const sx = mx + (r()-0.5)*mw*0.5, sz = mz + (r()-0.5)*md*0.5;
             stack.scale.set(0.6, sh, 0.6); stack.position.set(sx, topY + sh/2, sz); g.add(stack);
+            // MOTION POLISH: one soft smoke puff at this stack TOP. CAP at ~2 puffs / chunk so overdraw
+            // stays bounded. Shared sphere geo + a per-puff CLONE of the shared smokeMat (so each puff
+            // fades on its own loop). Positions come from the EXISTING stack top (sx, top, sz) and phase
+            // from index → NO r() draws here. The render loop rises/grows/fades it on a (T+phase) loop.
+            if (g.userData.smoke.length < 2){
+              const stackTop = topY + sh;
+              const puff = new THREE.Mesh(chunkAssets.sphere, chunkAssets.smokeMat.clone());
+              puff.scale.setScalar(0.6); puff.position.set(sx, stackTop + 0.4, sz); g.add(puff);
+              g.userData.smoke.push({ mesh: puff, baseY: stackTop + 0.4, rise: 4.5,
+                                      phase: (mi * 3.1 + s * 1.3 + sx * 0.11) });
+            }
           }
         } else if (reg === 1){
           // simple articulated robot arm: a base + 2 rotated boxes
@@ -2156,6 +2245,11 @@
           // GRIPPER TIP box at the end of seg2 (deterministic offset along the arm, no r())
           const grip = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
           grip.scale.set(0.45, 0.3, 0.45); grip.position.set(ax + 1.4, baseY + 2.7, az); g.add(grip);
+          // MOTION POLISH: gently work the arm. Capture the BASE rotation.z just set (no extra r()), and a
+          // DETERMINISTIC phase from machine index + placement so neighbouring arms desync. The render loop
+          // oscillates each seg about its base (small slow amp). Animates EXISTING meshes only → no r()/draws.
+          g.userData.arms.push({ seg1, seg2, baseZ1: seg1.rotation.z, baseZ2: seg2.rotation.z,
+                                 phase: (mi * 1.7 + ax * 0.13 + az * 0.07) });
         } else if (reg === 3){
           // drill tower over a crusher: a tall box mast + a wider feed head
           const dh = 4 + r()*4;
@@ -2166,6 +2260,11 @@
           // DRILL BIT / TEETH box just under the feed head (deterministic, no r())
           const bit = new THREE.Mesh(chunkAssets.box, chunkAssets.ventMat);
           bit.scale.set(1.0, 0.7, 1.0); bit.position.set(mx, topY + dh - 0.6, mz); g.add(bit);
+          // MOTION POLISH: spin the drill bit slowly + continuously about its own Y. Deterministic phase +
+          // a small speed jitter from machine index/placement so rigs don't lock-step. Animates the EXISTING
+          // bit mesh only → no r()/draws. (centred on the mast axis, so rotation.y stays in place.)
+          g.userData.drills.push({ mesh: bit, speed: 1.1 + (mi % 3) * 0.25,
+                                   phase: (mi * 2.3 + mx * 0.05 + mz * 0.09) });
         } else {
           // metropolis: a packaging block stacked on the machine (loading bay reads on belt below)
           const pack = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[0]);
@@ -2244,6 +2343,54 @@
       g.add(mesh);
       g.userData.trucks.push({ mesh, axis, pos, dir, speed, lo, hi });
     }
+
+    // ============================================================
+    //  PEDESTRIANS — 1–2 factory workers per chunk walking a SIDEWALK beside one of this chunk's
+    //  owned edge roads (south z=oz-HALF / west x=ox-HALF), set slightly OUTSIDE the road lane.
+    //  CRITICAL: driven by the SEPARATE pedRng(cx,cz) — NOT the shared 'r()' above — so the
+    //  buildChunk draw order + chunkSignature stay byte-stable regardless of pedestrians. Each worker
+    //  CLONES the matching shared template (shares geo+mat → bounded memory), walks deterministically
+    //  along its run-axis and wraps at the 64m edge (flowing into the neighbour's identical sidewalk).
+    //  The render loop bobs the body + swings the limbs. Freed (nulled) in recycleChunk.
+    // ============================================================
+    const pr = pedRng(cx, cz);
+    const nPed = 1 + (pr() < 0.55 ? 1 : 0);            // 1–2 workers / chunk
+    const SW = 5.6;                                     // sidewalk offset from the chunk centre line (outside the road)
+    for (let i = 0; i < nPed; i++){
+      const tpl = chunkAssets.pedTemplates[(pr() * chunkAssets.pedTemplates.length) | 0];
+      const grp = tpl.clone();
+      const onX = pr() < 0.5;                           // walk along the south sidewalk (X) or west sidewalk (Z)
+      const dir = pr() < 0.5 ? 1 : -1;
+      const speed = 1.1 + pr() * 0.9;                   // gentle walking pace (units/s)
+      const side = pr() < 0.5 ? -1 : 1;                 // which side of the edge road the sidewalk sits on
+      const phase = pr() * 6.283;                       // desync the limb swing between workers
+      const stride = 6.5 + pr() * 1.5;                  // leg/arm swing frequency
+      let axis, lo, hi, pos, px, pz;
+      if (onX){
+        axis = 'x'; lo = ox - HALF; hi = ox + HALF;
+        const lane = (oz - HALF) + side * SW;           // beside the south edge road
+        pos = lo + pr() * (hi - lo);
+        if (inArena(pos, lane)) continue;
+        px = pos; pz = lane;
+        grp.rotation.y = dir > 0 ? Math.PI/2 : -Math.PI/2;   // default-faces +X → face travel along ±X
+      } else {
+        axis = 'z'; lo = oz - HALF; hi = oz + HALF;
+        const lane = (ox - HALF) + side * SW;           // beside the west edge road
+        pos = lo + pr() * (hi - lo);
+        if (inArena(lane, pos)) continue;
+        px = lane; pz = pos;
+        grp.rotation.y = dir > 0 ? 0 : Math.PI;              // default-faces +X → face travel along ±Z
+      }
+      const baseY = 0;
+      grp.position.set(px, baseY, pz);
+      g.add(grp);
+      const li = grp.userData.pedLimbIdx;
+      g.userData.peds.push({
+        grp, axis, pos, dir, speed, lo, hi, phase, stride, baseY,
+        legA: grp.children[li.legA], legB: grp.children[li.legB],
+        armA: grp.children[li.armA], armB: grp.children[li.armB],
+      });
+    }
     return g;
   }
 
@@ -2256,7 +2403,15 @@
    * ---------------------------------------------------------------- */
   function recycleChunk(g){
     if (scene) scene.remove(g);
-    if (g.userData){ g.userData.trucks = null; g.userData.beltGoods = null; }   // drop streamed-traffic + belt-goods refs
+    if (g.userData){
+      // dispose the few per-puff smoke material CLONES (bounded ≤2/chunk) before dropping refs → no leak
+      const sm = g.userData.smoke;
+      if (sm) for (let i=0;i<sm.length;i++){ const mt = sm[i].mesh && sm[i].mesh.material; if (mt && mt.dispose) mt.dispose(); }
+      // drop streamed-traffic + belt-goods + MOTION-POLISH + PEDESTRIAN refs (keeps roaming bounded, no leak)
+      g.userData.trucks = null; g.userData.beltGoods = null;
+      g.userData.arms = null; g.userData.drills = null; g.userData.smoke = null;
+      g.userData.peds = null;
+    }
   }
   function streamChunks(px, pz, force){
     const tx = Math.round(px/CHUNK), tz = Math.round(pz/CHUNK), key = tx+','+tz;
@@ -2671,6 +2826,9 @@
    *  RENDER LOOP (browser only).
    * ============================================================ */
   let lastTs = 0;
+  let worldAnimT = 0;   // per-frame accumulating phase for streamed-machine motion polish (arms/drills/smoke).
+                        // Advances ONLY when factory motion is allowed (activeSection==='factory' && !reduceMotion)
+                        // so the plume/arm/drill phase freezes under reduced-motion or while a diorama is active.
   function frame(ts){
     requestAnimationFrame(frame);
     if (!ready || !renderer) return;
@@ -2747,6 +2905,49 @@
           u.pos += u.dir*u.speed*dt;
           if (u.pos > u.hi) u.pos = u.lo; else if (u.pos < u.lo) u.pos = u.hi;
           u.mesh.position[u.axis] = u.pos; } }
+      // MOTION POLISH for the streamed MACHINES — only when the factory world is the active view (a diorama
+      // hides the world, so skip then). Animates EXISTING meshes (arms/drills) + the tiny shared smoke puffs;
+      // adds NO draws/geometry. Alloc-free, iterating ONLY live chunks. Drift the shared phase by dt so the
+      // motion is continuous; sin/cos keep arms/plume on bounded loops.
+      if (activeSection === 'factory'){
+        worldAnimT += dt;
+        const T = worldAnimT;
+        for (const [,g] of chunks){ const ud = g.userData; if (!ud) continue;
+          // ROBOT ARMS (reg1): gently oscillate each segment about its captured base angle (small, slow).
+          const arms = ud.arms;
+          if (arms) for (let i=0;i<arms.length;i++){ const a = arms[i];
+            a.seg1.rotation.z = a.baseZ1 + Math.sin(T*0.9 + a.phase) * 0.30;
+            a.seg2.rotation.z = a.baseZ2 + Math.sin(T*1.1 + a.phase + 1.0) * 0.30; }
+          // DRILL BITS (reg3): slow continuous spin about Y (phase offsets desync neighbouring rigs).
+          const drl = ud.drills;
+          if (drl) for (let i=0;i<drl.length;i++){ const d = drl[i];
+            d.mesh.rotation.y = T * d.speed + d.phase; }
+          // FURNACE SMOKE (reg2): each puff rises from baseY, grows + fades over its loop, then resets.
+          const sm = ud.smoke;
+          if (sm) for (let i=0;i<sm.length;i++){ const p = sm[i];
+            const u = ((T*0.35 + p.phase) % 1 + 1) % 1;          // 0..1 normalised loop progress (rise cycle)
+            p.mesh.position.y = p.baseY + u * p.rise;            // rise a few units over the cycle
+            const sc = 0.6 + u * 1.6;                            // grow as it climbs
+            p.mesh.scale.setScalar(sc);
+            p.mesh.material.opacity = 0.42 * (1 - u) * Math.min(1, u * 6);  // fade in fast, fade out toward 0
+          }
+          // PEDESTRIANS (factory workers): walk along the run-axis (wrap at the 64m edge → continuous flow
+          // into the neighbour's sidewalk), gentle body BOB, and SWING legs/arms (legs vs arms in anti-phase
+          // about the local X axis). Alloc-free — only EXISTING cloned meshes mutated. Facing is baked in at
+          // build (rotation.y), so direction never reverses mid-edge → swing stays consistent.
+          const pd = ud.peds;
+          if (pd) for (let i=0;i<pd.length;i++){ const w = pd[i];
+            w.pos += w.dir*w.speed*dt;
+            if (w.pos > w.hi) w.pos = w.lo; else if (w.pos < w.lo) w.pos = w.hi;
+            w.grp.position[w.axis] = w.pos;
+            const s = Math.sin(T*w.stride + w.phase);
+            w.grp.position.y = w.baseY + Math.abs(s) * 0.05;     // small step bob (always >= base)
+            const swing = s * 0.5;                               // leg/arm swing amplitude
+            w.legA.rotation.x =  swing;  w.legB.rotation.x = -swing;
+            w.armA.rotation.x = -swing;  w.armB.rotation.x =  swing;  // arms anti-phase to legs
+          }
+        }
+      }
     }
 
     // ===== SECTION SCENES: when a non-factory diorama is active, drive the orbit-stage camera
