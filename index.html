@@ -1630,26 +1630,66 @@
   }
 
   function makeExchange(){
+    // GRAND EXCHANGE typology: stepped plinth → 6-column peripteral arcade → entablature →
+    // higher-res glowing dome with an inner truss lattice reading as the trading-floor volume.
+    // Persistent low-count fixture, so it may be richer (~10 added meshes); keeps the NPC_DESK pick tag.
     const grp = new THREE.Group(); grp.position.set(0, 0, 0);
-    const base = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 8),
-      new THREE.MeshStandardMaterial({ color: 0x223152, roughness: 0.7 }));
-    base.position.y = 0.5; base.castShadow = base.receiveShadow = true; grp.add(base);
-    for (let cx = -2.7; cx <= 2.7; cx += 1.8){
-      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 4, 12),
-        new THREE.MeshStandardMaterial({ color: 0xd8e0ee, roughness: 0.5 }));
-      col.position.set(cx, 3, 2.6); grp.add(col);
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0xd8e0ee, roughness: 0.5 });
+    // stepped stylobate (two-tier base) so the platform reads as masonry, not a flat slab
+    const base = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.7, 8.4),
+      new THREE.MeshStandardMaterial({ color: 0x1d2c4a, roughness: 0.75 }));
+    base.position.y = 0.35; base.castShadow = base.receiveShadow = true; grp.add(base);
+    const step = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.6, 7.4),
+      new THREE.MeshStandardMaterial({ color: 0x26385c, roughness: 0.7 }));
+    step.position.y = 0.95; step.receiveShadow = true; grp.add(step);
+    // 6-column peripteral arcade (one ring of fluted columns) with a base + capital per column
+    const colGeo = new THREE.CylinderGeometry(0.24, 0.28, 4, 14);
+    const collarGeo = new THREE.CylinderGeometry(0.4, 0.32, 0.32, 14);
+    const RAD = 3.1, NCOL = 6;
+    for (let i = 0; i < NCOL; i++){
+      const a = (i / NCOL) * Math.PI * 2 + Math.PI / NCOL;
+      const cx = Math.cos(a) * RAD, cz = Math.sin(a) * RAD;
+      const col = new THREE.Mesh(colGeo, stoneMat);
+      col.position.set(cx, 3.3, cz); col.castShadow = true; grp.add(col);
+      const cap = new THREE.Mesh(collarGeo, stoneMat);   // Doric-ish capital
+      cap.position.set(cx, 5.4, cz); grp.add(cap);
+      const foot = new THREE.Mesh(collarGeo, stoneMat);  // column base
+      foot.position.set(cx, 1.4, cz); foot.rotation.z = Math.PI; grp.add(foot);
     }
-    const ped = new THREE.Mesh(new THREE.BoxGeometry(8, 0.7, 8),
+    // entablature ring (architrave) resting on the capitals — a flat torus band ties the columns
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(RAD, 0.34, 8, 30),
+      new THREE.MeshStandardMaterial({ color: 0x2b3e66, roughness: 0.55 }));
+    arch.rotation.x = Math.PI / 2; arch.position.y = 5.7; grp.add(arch);
+    // pedestal drum the dome springs from
+    const ped = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.9, 0.7, 24),
       new THREE.MeshStandardMaterial({ color: 0x2b3e66 }));
-    ped.position.y = 5.4; grp.add(ped);
+    ped.position.y = 6.0; grp.add(ped);
+    // higher-res emissive dome (24×16, was 18×12)
     const domeMat = new THREE.MeshStandardMaterial({
       color: 0x88b0ff, emissive: new THREE.Color(0x2a4a7a),
       emissiveIntensity: 0.5, roughness: 0.4 });
     const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(2.4, 18, 12, 0, Math.PI*2, 0, Math.PI/2), domeMat);
-    dome.position.y = 5.8; grp.add(dome);
+      new THREE.SphereGeometry(2.6, 24, 16, 0, Math.PI*2, 0, Math.PI/2), domeMat);
+    dome.position.y = 6.3; grp.add(dome);
+    // inner truss/lattice: a few thin emissive meridian ribs + a lantern ring read as the
+    // trading-floor's spatial complexity inside the glass dome (additive glow, no bloom)
+    const ribMat = new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.5,
+      blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2), depthWrite: false });
+    const ribGeo = new THREE.TorusGeometry(2.2, 0.045, 6, 24, Math.PI);   // half-arc meridian
+    for (let i = 0; i < 4; i++){
+      const rib = new THREE.Mesh(ribGeo, ribMat);
+      rib.position.y = 6.3; rib.rotation.y = (i / 4) * Math.PI;            // splay ribs around the dome
+      rib.rotation.x = Math.PI / 2; grp.add(rib);
+    }
+    const lantern = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.06, 6, 20),
+      ribMat);
+    lantern.rotation.x = Math.PI / 2; lantern.position.y = 8.4; grp.add(lantern);   // crown lantern ring
+    const finial = new THREE.Mesh(new THREE.CylinderGeometry(0.0, 0.22, 0.9, 12),
+      new THREE.MeshStandardMaterial({ color: 0x9be7ff, emissive: new THREE.Color(0x9be7ff),
+        emissiveIntensity: 0.8, roughness: 0.3 }));
+    finial.position.y = 9.1; grp.add(finial);                              // beacon spire atop the dome
     const lbl = labelSprite('📈 EXCHANGE', '#cfe0ff', 9);
-    lbl.position.set(0, 10, 0); grp.add(lbl);
+    lbl.position.set(0, 10.4, 0); grp.add(lbl);
     grp.add(new THREE.PointLight(0x88b0ff, 1.0, 60, 2));
     // ---- pick tagging: the exchange resolves to the NPC_DESK inspector (the market-maker account) ----
     grp.userData.firmId = 'NPC_DESK';
@@ -1824,12 +1864,20 @@
       ventMat:    new THREE.MeshStandardMaterial({ color: 0x5a6470, roughness:.55, metalness:.6 }),
       // robot-arm joints (reg1 fabrication topper)
       armMat:     new THREE.MeshStandardMaterial({ color: 0x9fb0c4, roughness:.5, metalness:.5 }),
-      // GOODS riding the belts, one emissive material per supply-chain STAGE
+      // GOODS riding the belts, one BODY material per supply-chain STAGE (theme base).
       goodMat: [
-        new THREE.MeshBasicMaterial({ color: 0x6cf0ff }),   // reg0 FINISHED PRODUCTS — bright cyan
-        new THREE.MeshBasicMaterial({ color: 0x3fe0d4 }),   // reg1 PARTS — clean teal
-        new THREE.MeshStandardMaterial({ color: 0xff8a2a, emissive: 0xff5a0e, emissiveIntensity:1.2 }), // reg2 molten INGOTS — hot orange
+        new THREE.MeshStandardMaterial({ color: 0x2a3a52, roughness:.85, metalness:.2 }),                 // reg0 PACKAGED CRATE — kraft/dark body (lit by emissive strap)
+        new THREE.MeshStandardMaterial({ color: 0x1c3b3a, roughness:.45, metalness:.55 }),                // reg1 FABRICATED CHIP — dark green-metal substrate
+        new THREE.MeshStandardMaterial({ color: 0xff8a2a, emissive: 0xff5a0e, emissiveIntensity:1.2 }),   // reg2 molten INGOT bar — hot orange
         new THREE.MeshStandardMaterial({ color: 0x9a7a48, emissive: 0x3a2810, emissiveIntensity:.25, roughness:1 }), // reg3 RAW ORE — earthy
+      ],
+      // Distinct EMISSIVE per-stage ACCENTS for the goods themes (crisp glow, no bloom). Built ONCE,
+      // reused by every good of that stage. Indexed by reg, same order as goodMat.
+      goodGlowMat: [
+        new THREE.MeshBasicMaterial({ color: 0x6cf0ff }),                                                 // reg0 crate banding/seal — bright cyan
+        new THREE.MeshBasicMaterial({ color: 0x46ffd0 }),                                                 // reg1 chip traces/die — clean teal
+        new THREE.MeshStandardMaterial({ color: 0xffd27a, emissive: 0xffae3a, emissiveIntensity:1.7 }),   // reg2 molten core glow — white-hot
+        new THREE.MeshStandardMaterial({ color: 0xb89058, emissive: 0x6a4a1e, emissiveIntensity:.5, roughness:1 }), // reg3 ore flecks — warm mineral
       ],
     };
     // 4 prebuilt truck templates (one per body colour). Built ONCE here; buildChunk CLONEs the
@@ -1872,6 +1920,50 @@
       }
     }
     return g;
+  }
+
+  /* makeGood(reg, gi, gsize) → a THREE.Group "unit" riding the conveyor, themed per supply-chain STAGE.
+   * Each stage reads as its product: reg3 rough ORE cluster, reg2 glowing molten INGOT/bar stack,
+   * reg1 a fabricated PART/chip, reg0 a wrapped/packaged CRATE. The animation loop slides the GROUP
+   * along the belt (group.position[axis]) exactly as before, so children are positioned in LOCAL space
+   * about the group origin (good centre). <=3 child meshes; built from the SHARED geos/mats only
+   * (goodMat[reg] body + goodGlowMat[reg] emissive accent) — NO new geometry/material here. ALL per-unit
+   * variation is derived from (reg, gi, gsize): NO r() draws (keeps chunkSignature in step). */
+  function makeGood(reg, gi, gsize){
+    const A = chunkAssets, grp = new THREE.Group();
+    const body = A.goodMat[reg], glow = A.goodGlowMat[reg];
+    const add = (geo, mat, sx,sy,sz, px,py,pz, ry) => {
+      const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz);
+      if (ry) m.rotation.y = ry; grp.add(m); return m;
+    };
+    // gi-keyed deterministic spin so the run doesn't look like clones (no r()).
+    const spin = (gi % 3 - 1) * 0.5;
+    if (reg === 3){
+      // ROUGH ORE CLUSTER: 3 irregular lumps (shared sphere, squashed/offset by gi) on the earthy ore body,
+      // peppered with a warmer fleck via the glow accent (mineral specks catching light).
+      add(A.sphere, body, gsize*0.62, gsize*0.5, gsize*0.6, -gsize*0.22, gsize*0.0, gsize*0.18);
+      add(A.sphere, body, gsize*0.5, gsize*0.44, gsize*0.52, gsize*0.26, gsize*0.12, -gsize*0.14);
+      add(A.sphere, glow, gsize*0.3, gsize*0.26, gsize*0.3, gsize*0.05, gsize*0.3, gsize*0.05).rotation.y = spin;
+    } else if (reg === 2){
+      // MOLTEN INGOT/BAR STACK: 2 trapezoid-ish bars (flat boxes) stacked + offset, with a white-hot
+      // core sliver glowing between them (just-poured metal).
+      add(A.box, body, gsize*1.5, gsize*0.42, gsize*0.78, 0, gsize*-0.12, 0, spin*0.2);
+      add(A.box, body, gsize*1.25, gsize*0.4, gsize*0.66, gsize*0.12, gsize*0.34, 0, spin*0.2);
+      add(A.box, glow, gsize*1.55, gsize*0.12, gsize*0.5, 0, gsize*0.08, 0, spin*0.2);
+    } else if (reg === 1){
+      // FABRICATED PART / CHIP: a flat substrate (dark green-metal box) topped by a glowing die +
+      // a thin trace strip (emissive teal) → reads as a circuit/chip blank.
+      add(A.box, body, gsize*1.1, gsize*0.3, gsize*1.1, 0, 0, 0, spin*0.3);
+      add(A.box, glow, gsize*0.5, gsize*0.22, gsize*0.5, gsize*0.12, gsize*0.24, gsize*0.05, spin*0.3);
+      add(A.box, glow, gsize*0.9, gsize*0.06, gsize*0.12, -gsize*0.15, gsize*0.2, -gsize*0.3, spin*0.3);
+    } else {
+      // WRAPPED / PACKAGED CRATE: a closed crate (dark body box) with two crossed emissive banding
+      // straps (cyan) → a sealed shipment ready to leave the line.
+      add(A.box, body, gsize*1.05, gsize*0.95, gsize*1.05, 0, 0, 0, spin*0.25);
+      add(A.box, glow, gsize*1.1, gsize*0.16, gsize*0.2, 0, gsize*0.05, 0, spin*0.25);
+      add(A.box, glow, gsize*0.2, gsize*0.16, gsize*1.1, 0, gsize*0.05, 0, spin*0.25);
+    }
+    return grp;
   }
 
   // Keep the FIXED central economy district clear of streamed content. Generous box
@@ -1964,6 +2056,16 @@
       const belt = new THREE.Mesh(chunkAssets.box, chunkAssets.beltMat);
       if (onX) belt.scale.set(len, 0.9, 3.0); else belt.scale.set(3.0, 0.9, len);
       belt.position.set(bx, beltTopY - 0.45, bz); belt.castShadow = true; g.add(belt);
+      // SUPPORT LEGS (brushed-metal cyl stands) at ~1/4 + ~3/4 of the run so the conveyor reads as
+      // grounded structure instead of a floating slab. Positions derived ONLY from belt geometry
+      // (ctrA/len/ctrC) — NO r() draws → goods/machine RNG order + chunkSignature unchanged. 2 meshes/belt.
+      for (let lg = -1; lg <= 1; lg += 2){
+        const leg = new THREE.Mesh(chunkAssets.cyl, chunkAssets.ventMat);
+        leg.scale.set(0.28, beltTopY - 0.45, 0.28);   // stand from ground up to under the belt body
+        const la = ctrA + lg * len * 0.32;            // ~1/4 and ~3/4 along the run
+        leg.position.set(onX ? la : ctrC, (beltTopY - 0.45) / 2, onX ? ctrC : la);
+        g.add(leg);
+      }
       // raised side rails so the belt reads as a trough
       for (let sgn = -1; sgn <= 1; sgn += 2){
         const rail = new THREE.Mesh(chunkAssets.box, chunkAssets.beltSideMat);
@@ -2086,23 +2188,30 @@
           const hh = 1.4 + r()*2.4;
           const heap = new THREE.Mesh(chunkAssets.cone, chunkAssets.oreMat);
           heap.scale.set(hh*1.4, hh, hh*1.4); heap.position.set(hx, hh/2, hz); g.add(heap);
+          // SPILLED ORE LUMP at the heap's foot + a glinting MINERAL FLECK near the peak — both
+          // derived ONLY from (h, hh, hx, hz): NO r() draws, so chunkSignature stays in step. 2 meshes.
+          const off = (h % 2 ? -1 : 1) * hh * 0.9;
+          const lump = new THREE.Mesh(chunkAssets.sphere, chunkAssets.oreMat);
+          lump.scale.setScalar(hh*0.42); lump.position.set(hx + off, hh*0.34, hz - off*0.6); g.add(lump);
+          const fleck = new THREE.Mesh(chunkAssets.sphere, chunkAssets.goodGlowMat[3]);
+          fleck.scale.setScalar(hh*0.16); fleck.position.set(hx, hh*0.9, hz); g.add(fleck);
         }
       }
 
-      // GOODS riding the belt (emissive per-stage units). Like the trucks: per frame we only
-      // update mesh.position[axis]; cross-coord + y baked into the initial position here.
+      // GOODS riding the belt — per-stage THEMED units (makeGood: <=3 shared-asset meshes each,
+      // distinct emissive per stage). Like the trucks, per frame we only slide the whole unit GROUP
+      // along the run-axis (group.position[axis]); cross-coord + y baked into the initial position
+      // here. ALL per-unit variation is derived from (reg, gi) — NO new r() draws in this loop, so
+      // the goods/machine RNG draw order (and chunkSignature) is unchanged.
       const nGoods = 3 + ((r()*3)|0);                 // 3–6 units per belt
       const gsize = reg === 3 ? 0.85 : (reg === 2 ? 0.7 : 0.6);
-      const goodMat = chunkAssets.goodMat[reg];
-      const goodGeo = (reg === 3 || reg === 2) ? chunkAssets.sphere : chunkAssets.box;
       const gy = beltTopY + 0.5 + gsize/2;
       const gspeed = 3 + r()*3, gdir = r() < 0.5 ? 1 : -1;
       const axis = onX ? 'x' : 'z';
       for (let gi = 0; gi < nGoods; gi++){
         const t = (gi + 0.5) / nGoods;
         const pos = beltLo + t * len;                 // start spaced evenly along the run
-        const mesh = new THREE.Mesh(goodGeo, goodMat);
-        mesh.scale.setScalar(gsize);
+        const mesh = makeGood(reg, gi, gsize);        // a Group (themed unit); slides as one rigid body
         if (onX) mesh.position.set(pos, gy, ctrC); else mesh.position.set(ctrC, gy, pos);
         g.add(mesh);
         g.userData.beltGoods.push({ mesh, axis, pos, dir: gdir, speed: gspeed, lo: beltLo, hi: beltHi });
@@ -3838,20 +3947,44 @@
       new THREE.MeshStandardMaterial({ color: new THREE.Color(hex).multiplyScalar(0.28),
         emissive: new THREE.Color(hex), emissiveIntensity: 0.18, roughness: 0.7, metalness: 0.2 }));
     base.position.y = 0.6; grp.add(base);
-    // body: a unit-height rounded cylinder column scaled in Y to the node value (capsule-like read)
+    // base plinth molding: a slim brighter torus ring at the foot of the column (masonry molding read).
+    // Purely decorative — does NOT participate in the value→extent scaling (only `body` does).
+    const plinth = new THREE.Mesh(new THREE.TorusGeometry(R * 1.05, R * 0.10, 8, 28),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(brightenHex(hex, 0.25)),
+        emissive: new THREE.Color(hex), emissiveIntensity: 0.3, roughness: 0.5, metalness: 0.35 }));
+    plinth.rotation.x = Math.PI / 2; plinth.position.y = 1.2; grp.add(plinth);
+    // body: a unit-height rounded cylinder column scaled in Y to the node value (capsule-like read).
+    // *** node extent / width semantics LIVE HERE: update() does body.scale.set(1, hVis, 1) ***
+    // (geometry & radius UNCHANGED — visuals below never touch the extent-bearing dimension).
     const body = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 1, 24),
       new THREE.MeshStandardMaterial({ color: new THREE.Color(hex).multiplyScalar(0.55),
         emissive: new THREE.Color(hex), emissiveIntensity: 0.42, roughness: 0.45, metalness: 0.3 }));
     grp.add(body);
-    // accent cap: a brighter beveled cap (cone-ish cylinder) that sits on the pillar top — a lit beacon
+    // rounded shoulder cap: a hemisphere seated on the column top each frame (capsule read) — it
+    // tracks p.top in update() and never scales the body, so node extent is exactly value*k still.
+    const shoulderMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex).multiplyScalar(0.62),
+      emissive: new THREE.Color(hex), emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.3 });
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(R, 20, 10, 0, Math.PI*2, 0, Math.PI/2), shoulderMat);
+    grp.add(shoulder);
+    // accent crown: a brighter beveled cap (cone-ish cylinder) that sits on the pillar top — a lit beacon
     const capHex = brightenHex(hex, 0.55);
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.78, R * 1.05, 1.8, 24),
       new THREE.MeshStandardMaterial({ color: new THREE.Color(capHex), emissive: new THREE.Color(capHex),
         emissiveIntensity: 0.9, roughness: 0.3, metalness: 0.4 }));
     grp.add(cap);
+    // multi-ring beacon crown: a brighter disc ring + an emissive finial spire above the cap. These
+    // are positioned relative to the cap each frame (cap.position.y + offsets) → purely decorative.
+    const crownRing = new THREE.Mesh(new THREE.TorusGeometry(R * 0.9, R * 0.10, 8, 26),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(capHex), emissive: new THREE.Color(capHex),
+        emissiveIntensity: 0.85, roughness: 0.3, metalness: 0.4 }));
+    crownRing.rotation.x = Math.PI / 2; grp.add(crownRing);
+    const finial = new THREE.Mesh(new THREE.CylinderGeometry(0.0, R * 0.34, R * 0.9, 16),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(capHex), emissive: new THREE.Color(capHex),
+        emissiveIntensity: 1.0, roughness: 0.25, metalness: 0.45 }));
+    grp.add(finial);
     // crisp additive halo around the cap (glow without bloom)
     const halo = makeHalo(R * 1.4, capHex); grp.add(halo);
-    return { grp, base, body, cap, halo, capHex };
+    return { grp, base, body, cap, halo, capHex, shoulder, crownRing, finial };
   }
 
   // Build a shared 3D ribbon-Sankey diorama for `section` (mode 'market' | 'finance').
@@ -3989,7 +4122,8 @@
       pil.grp.userData.firmId = (n.id === 'NPC_DESK') ? 'NPC_DESK' : null;
       st.g.add(pil.grp);
       st.pillars[n.id] = { grp: pil.grp, base: pil.base, body: pil.body, cap: pil.cap, halo: pil.halo,
-        capHex: pil.capHex, lbl, vlbl, col, x, z, hex };
+        capHex: pil.capHex, shoulder: pil.shoulder, crownRing: pil.crownRing, finial: pil.finial,
+        lbl, vlbl, col, x, z, hex };
     }
     // column-header labels (tier names for market, account groups for finance) above each column
     const headerSet = SANKEY_COL_HEADERS[st.mode] || [];
@@ -4033,8 +4167,13 @@
       const hVis = Math.max(0.6, extent);                  // visual-only floor (geometry safety)
       if (p.body){ p.body.scale.set(1, hVis, 1); p.body.position.y = BASE_Y + hVis/2; }
       p.base0 = BASE_Y; p.extent = extent; p.top = BASE_Y + hVis;
-      // seat the accent cap + its halo on the pillar top; pulse the cap emissive (crisp, no bloom)
+      // seat the rounded shoulder hemisphere flush on the column top (capsule read — purely cosmetic,
+      // never alters the extent-bearing body scale).
+      if (p.shoulder) p.shoulder.position.y = p.top;
+      // seat the accent cap + multi-ring beacon crown + its halo on the pillar top; pulse emissives.
       if (p.cap){ p.cap.position.y = p.top + 0.9; if (p.cap.material) p.cap.material.emissiveIntensity = 0.9 * pulse; }
+      if (p.crownRing){ p.crownRing.position.y = p.top + 1.9; if (p.crownRing.material) p.crownRing.material.emissiveIntensity = 0.85 * pulse; }
+      if (p.finial){ p.finial.position.y = p.top + 2.7; if (p.finial.material) p.finial.material.emissiveIntensity = 1.0 * pulse; }
       if (p.halo){ p.halo.position.y = p.top + 0.9; if (p.halo.material) p.halo.material.opacity = 0.18 + 0.14 * pulse; }
       if (p.lbl) p.lbl.position.y = p.top + 5;
       if (p.vlbl){ p.vlbl.position.y = p.top + 9; setSpriteText(p.vlbl, sankeyValueLabel(st.mode, n.value)); }
@@ -4092,6 +4231,24 @@
     const g = buildSceneRoot('network');
     g.add(labelSpriteSafe('🕸 NETWORK · trade interconnection', '#cfe0ff', 26, 0, 64, 0));
     const spin = new THREE.Group(); spin.position.y = 34; g.add(spin);
+    // central pivot column + glow orb at the graph's heart, conveying the desk-centred topology
+    const pivot = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 64, 12),
+      new THREE.MeshBasicMaterial({ color: 0x6ea8ff, transparent: true, opacity: 0.22, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+    g.add(pivot); pivot.position.y = 34;
+    const core = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.3, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+    g.add(core); core.position.y = 34;
+    // two orbital rings (a tilted torus pair at the node-sphere radius) ride INSIDE the spin group so
+    // they turn with the graph and frame it as a rotating constellation.
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x6ea8ff, transparent: true, opacity: 0.3,
+      depthWrite: false, blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2),
+      side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2) });
+    const ringA = new THREE.Mesh(new THREE.TorusGeometry(34, 0.25, 8, 64), ringMat);
+    ringA.rotation.x = Math.PI / 2; spin.add(ringA);
+    const ringB = new THREE.Mesh(new THREE.TorusGeometry(30, 0.18, 8, 64), ringMat);
+    ringB.rotation.x = Math.PI / 2.3; ringB.rotation.z = 0.5; spin.add(ringB);
     sceneState.network = { spin, nodes: {}, edges: [], seed: '', edgePool: [], built: false };
   }
   function ensureNetworkGraph(){
@@ -4113,12 +4270,29 @@
       const pos = new THREE.Vector3(Math.cos(theta)*rad*R, y*R, Math.sin(theta)*rad*R);
       const grp = new THREE.Group(); grp.position.copy(pos);
       const hex = nd.isDesk ? 0x9be7ff : TIER_HEX[Math.max(0, nd.tier)];
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10),
-        new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(hex), emissiveIntensity: 0.35, roughness: 0.4 }));
+      // primary node mesh (the one scaled by net worth in update()): a faceted crystal/gem. The DESK
+      // hub gets a denser, brighter star-like icosphere (detail 1) to read as the market-maker pivot;
+      // firm nodes are a faceted icosahedron gem. Keeps grp.userData.firmId pick tag intact.
+      const gemGeo = nd.isDesk ? new THREE.IcosahedronGeometry(1, 1) : new THREE.IcosahedronGeometry(1, 0);
+      const ball = new THREE.Mesh(gemGeo,
+        new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(hex),
+          emissiveIntensity: nd.isDesk ? 0.55 : 0.38, roughness: 0.35, metalness: 0.35,
+          flatShading: true }));
       grp.add(ball);
+      // soft emissive rim ring around the gem (orients to camera-ish via a torus on the node) +
+      // an additive glow shell — both scale WITH the node so size still reads net worth.
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.10, 8, 22),
+        new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.5), transparent: true, opacity: 0.6,
+          depthWrite: false, blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+      grp.add(rim);
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(1.5, 12, 10),
+        new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.16, depthWrite: false,
+          blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2),
+          side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2) }));
+      grp.add(glow);
       grp.userData.firmId = nd.id;                         // firm node / desk hub → inspector
       st.spin.add(grp);
-      st.nodes[nd.id] = { grp, ball, pos, isDesk: !!nd.isDesk };
+      st.nodes[nd.id] = { grp, ball, rim, glow, pos, isDesk: !!nd.isDesk };
     });
     // edge cylinders pool (rebuilt lazily; sized to current edge count)
     for (const e of st.edgePool){ st.spin.remove(e.m); }
@@ -4134,22 +4308,29 @@
     let vHi = 1; for (const n of data.nodes) vHi = Math.max(vHi, n.value);
     for (const id in st.nodes){
       const nd = byId[id]; if (!nd) continue;
+      const node = st.nodes[id];
       const s = 2 + (nd.value / vHi) * 7;                  // node SIZE ∝ net worth (real)
-      st.nodes[id].ball.scale.setScalar(s);
+      node.ball.scale.setScalar(s);
+      if (node.rim) node.rim.scale.setScalar(s);           // rim + glow track size → still reads net worth
+      if (node.glow) node.glow.scale.setScalar(s);
     }
     // edges ∝ co-traded volume. Reuse/grow a cylinder pool; thickness/opacity ∝ weight.
+    // higher-res tube (12 sides, was 6) + a thin additive glow core sleeve per edge.
     let wHi = 1; for (const e of data.edges) wHi = Math.max(wHi, e.weight);
     const need = data.edges.length;
     while (st.edgePool.length < need){
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 6),
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 12),
         new THREE.MeshBasicMaterial({ color: 0x6ea8ff, transparent: true, opacity: 0.5 }));
-      st.spin.add(m); st.edgePool.push({ m });
+      const glow = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 12),
+        new THREE.MeshBasicMaterial({ color: 0xaecbff, transparent: true, opacity: 0.22, depthWrite: false,
+          blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+      st.spin.add(m); st.spin.add(glow); st.edgePool.push({ m, glow });
     }
     for (let i=0;i<st.edgePool.length;i++){
       const e = st.edgePool[i], ed = data.edges[i];
-      if (!ed){ e.m.visible = false; continue; }
+      if (!ed){ e.m.visible = false; if (e.glow) e.glow.visible = false; continue; }
       const a = st.nodes[ed.a], b = st.nodes[ed.b];
-      if (!a || !b){ e.m.visible = false; continue; }
+      if (!a || !b){ e.m.visible = false; if (e.glow) e.glow.visible = false; continue; }
       e.m.visible = true;
       const A = a.pos, B = b.pos, mid = A.clone().add(B).multiplyScalar(0.5);
       const len = A.distanceTo(B) || 1;
@@ -4159,6 +4340,12 @@
       const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
       e.m.quaternion.copy(q);
       e.m.material.opacity = 0.25 + (ed.weight / wHi) * 0.55;
+      // additive glow sleeve hugging the core tube (soft edge-glow, no bloom)
+      if (e.glow){
+        e.glow.visible = true; e.glow.position.copy(mid);
+        e.glow.scale.set(thick * 2.1, len, thick * 2.1); e.glow.quaternion.copy(q);
+        e.glow.material.opacity = 0.10 + (ed.weight / wHi) * 0.22;
+      }
     }
   }
 
@@ -4181,14 +4368,38 @@
       if (!pd){
         const grp = new THREE.Group();
         const hex = r.isPlayer ? 0x9be7ff : TIER_HEX[world.GOODS[r.specialty].tier];
+        const tier = world.GOODS[r.specialty].tier;
+        // FIXED-height stepped plinth (does NOT scale with net worth) — grounds the column as a
+        // tiered podium. The value-bearing `body` rises on top of it.
+        const stepLo = dioBox(15, 1.2, 15, brightenHex(hex, 0.05), 0x10203a);
+        stepLo.position.y = 0.6; grp.add(stepLo);
+        const stepHi = dioBox(13, 1.0, 13, brightenHex(hex, 0.12), 0x142848);
+        stepHi.position.y = 1.6; grp.add(stepHi);
+        // value-bearing column (scaled Y by net worth in the update below). Geometry/semantics intact.
         const body = dioBox(12, 1, 12, hex, r.isPlayer ? 0x2a4a7a : undefined);
         grp.add(body);
+        // beveled top cap + rim molding seated on the column top each frame (cosmetic; tracks platH)
+        const cap = dioBox(12.6, 0.5, 12.6, brightenHex(hex, 0.3), brightenHex(hex, 0.0));
+        grp.add(cap);
+        // tier-coloured MONUMENT above the podium (the previously-missing firm figure): a tier-specific
+        // emissive obelisk/finial — cone for raw tiers, tall finial cylinder for higher tiers.
+        const monMat = new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.25),
+          emissive: new THREE.Color(hex), emissiveIntensity: 0.6, roughness: 0.3, metalness: 0.4 });
+        const monGeo = (tier <= 1)
+          ? new THREE.ConeGeometry(2.6, 7, 18)
+          : new THREE.CylinderGeometry(0.6, 1.8, 8, 16);
+        const monument = new THREE.Mesh(monGeo, monMat); grp.add(monument);
+        // rank medal disc above the monument (recoloured per rank in the update: gold/silver/bronze)
+        const medalMat = new THREE.MeshStandardMaterial({ color: 0xffd35a, emissive: new THREE.Color(0xffd35a),
+          emissiveIntensity: 0.7, roughness: 0.35, metalness: 0.6 });
+        const medal = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.4, 20), medalMat);
+        medal.rotation.x = Math.PI / 2; grp.add(medal);
         const lbl = labelSpriteSafe((r.isPlayer ? '★ ' : '') + r.id, r.isPlayer ? '#9be7ff' : '#cfe0ff', 14, 0, 4, 0);
         grp.userData.lbl = lbl; grp.add(lbl);
         const nwLbl = labelSpriteSafe('', '#eaf0fb', 12, 0, 7, 0); grp.userData.nwLbl = nwLbl; grp.add(nwLbl);
         grp.userData.firmId = r.id;                        // podium → firm inspector
         g.add(grp);
-        pd = st.podia[r.id] = { grp, body, lbl, nwLbl };
+        pd = st.podia[r.id] = { grp, body, cap, monument, medal, medalMat, lbl, nwLbl };
       }
       // rank 1 front+tallest. Lay #1 at the front-centre, others fanning back by rank.
       const rank = i + 1;
@@ -4196,9 +4407,19 @@
       const col = (i % 2 === 0) ? Math.ceil(i/2) : -Math.ceil(i/2);  // 0,+1,-1,+2,-2…
       const x = col * 18, z = -10 - i * 9;                 // #1 nearest the viewer, deeper as rank falls
       pd.grp.position.set(x, 0, z);
-      pd.body.scale.y = platH; pd.body.position.y = platH/2;
-      if (pd.lbl) pd.lbl.position.y = platH + 4;
-      if (pd.nwLbl){ pd.nwLbl.position.y = platH + 8; setSpriteText(pd.nwLbl, '#' + rank + ' · ' + fmt$(r.netWorth)); }
+      pd.body.scale.y = platH; pd.body.position.y = platH/2;   // *** net worth → height (unchanged) ***
+      const top = platH;                                       // column top sits at y = platH
+      if (pd.cap) pd.cap.position.y = top + 0.25;
+      if (pd.monument) pd.monument.position.y = top + 4.5;     // obelisk stands on the podium top
+      if (pd.medal){
+        pd.medal.position.y = top + 9.5;
+        // gold / silver / bronze for the top three, else a cool tier tint
+        const medalHex = rank === 1 ? 0xffd35a : rank === 2 ? 0xcfd6e0 : rank === 3 ? 0xcd7f32 : 0x6ea8ff;
+        if (pd.medalMat){ pd.medalMat.color.setHex(medalHex); pd.medalMat.emissive.setHex(medalHex); }
+        pd.medal.visible = rank <= 3;                          // medal only for the podium top three
+      }
+      if (pd.lbl) pd.lbl.position.y = platH + 12;            // above the monument + medal stack
+      if (pd.nwLbl){ pd.nwLbl.position.y = platH + 16; setSpriteText(pd.nwLbl, '#' + rank + ' · ' + fmt$(r.netWorth)); }
     });
     st.order = ranked.map(r => r.id);
   }
