@@ -1746,10 +1746,15 @@
       heatMat:   new THREE.MeshStandardMaterial({ color: 0xff7a3a, emissive: 0xff5a1a, emissiveIntensity:1.1 }),
       oreMat:    new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness:1 }),
       derrickMat:new THREE.MeshStandardMaterial({ color: 0x6a5a44, roughness:.7, metalness:.4 }),
-      // logistics trucks ride the roads between rings
-      truckGeo:  new THREE.BoxGeometry(2.4, 0.9, 1.1),
+      // logistics trucks ride the roads between rings — now procedural box-lorries assembled
+      // from the SHARED box/cyl geometries (see makeTruck). truckMats = 4 body/cab colours;
+      // wheels/glass/lights are shared sub-materials (built once, reused by every truck clone).
       truckMats: [0xff9a46,0x9fb0ff,0x4fd896,0xffd35a].map(c =>
                    new THREE.MeshStandardMaterial({ color: c, roughness:.5, metalness:.2 })),
+      wheelMat:  new THREE.MeshStandardMaterial({ color: 0x141414, roughness:.95, metalness:.1 }),
+      glassMat:  new THREE.MeshStandardMaterial({ color: 0x0c1018, roughness:.2, metalness:.4 }),
+      headMat:   new THREE.MeshBasicMaterial({ color: 0xfff0c0 }),   // warm headlights (crisp glow, no bloom)
+      tailMat:   new THREE.MeshBasicMaterial({ color: 0xff2a1a }),   // red taillights
 
       // ---- PRODUCTION LINE assets (shared once; reused by every chunk) ----
       // dark matte conveyor belt body + an emissive centerline strip so the belt reads as active/directional
@@ -1775,6 +1780,46 @@
         new THREE.MeshStandardMaterial({ color: 0x9a7a48, emissive: 0x3a2810, emissiveIntensity:.25, roughness:1 }), // reg3 RAW ORE — earthy
       ],
     };
+    // 4 prebuilt truck templates (one per body colour). Built ONCE here; buildChunk CLONEs the
+    // matching template per truck (Object3D.clone shares geometry + material refs → no per-truck
+    // GPU allocation). Clones are freed when their chunk group is dropped during recycle.
+    chunkAssets.truckTemplates = chunkAssets.truckMats.map(m => makeTruck(m));
+  }
+
+  /* makeTruck(bodyMat) → a THREE.Group box-lorry assembled from the SHARED box/cyl geometries.
+   * Oriented LENGTH along +X with the CAB toward +X (so buildChunk's existing rotation.y aims it),
+   * GROUP ORIGIN at GROUND level (wheels rest at y≈0). Overall ≈ 2.6 long (X) × 1.1 wide (Z) × 1.5 tall.
+   * Body/cab use bodyMat; wheels/glass/lights use shared sub-materials. ~11 child meshes; headless-safe
+   * (only Group/Mesh + scale/position from the shared geos — no new geometry/material allocated). */
+  function makeTruck(bodyMat){
+    const A = chunkAssets, g = new THREE.Group();
+    const W = 1.1, wheelR = 0.33;                         // body width (Z) + wheel radius
+    const part = (geo, mat, sx,sy,sz, px,py,pz) => {       // scaled box/cyl placed in the group
+      const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); g.add(m); return m;
+    };
+    // chassis/under-body: thin slab tying cab + cargo together, sitting just above the axles
+    part(A.box, bodyMat, 2.5, 0.18, W*0.9, 0.05, wheelR+0.02, 0);
+    // cargo box / trailer: tall box behind the cab (toward -X), raised onto the chassis
+    part(A.box, bodyMat, 1.6, 1.0, W, -0.45, wheelR+0.11+0.5, 0);
+    // cab: short box at the front (+X), a bit lower than the cargo box
+    part(A.box, bodyMat, 0.8, 0.72, W*0.98, 0.92, wheelR+0.11+0.36, 0);
+    // windshield: dark thin box on the cab's front/top face
+    part(A.box, A.glassMat, 0.06, 0.4, W*0.8, 1.33, wheelR+0.11+0.5, 0);
+    // 2 headlights at the very front (+X)
+    part(A.box, A.headMat, 0.05, 0.12, 0.14, 1.36, wheelR+0.02, -0.32);
+    part(A.box, A.headMat, 0.05, 0.12, 0.14, 1.36, wheelR+0.02,  0.32);
+    // 2 taillights at the rear (-X)
+    part(A.box, A.tailMat, 0.05, 0.14, 0.16, -1.25, wheelR+0.18, -0.34);
+    part(A.box, A.tailMat, 0.05, 0.14, 0.16, -1.25, wheelR+0.18,  0.34);
+    // 4 wheels: cylinders rotated so the axle runs along Z (wheels roll along X); bottoms touch y≈0
+    const wz = W*0.52;
+    for (const wx of [0.78, -0.8]){                        // front axle + rear axle
+      for (const sgn of [-1, 1]){
+        const w = part(A.cyl, A.wheelMat, wheelR, 0.18, wheelR, wx, wheelR, sgn*wz);
+        w.rotation.x = Math.PI/2;                          // CylinderGeometry axis Y → Z (axle along Z)
+      }
+    }
+    return g;
   }
 
   // Keep the FIXED central economy district clear of streamed content. Generous box
@@ -1976,17 +2021,19 @@
     for (let i=0;i<nTrucks;i++){
       const onX = r() < 0.5, dir = r() < 0.5 ? 1 : -1, speed = 6 + r()*6;
       let axis, lane, lo, hi, pos, mesh;
-      const matT = chunkAssets.truckMats[(r()*chunkAssets.truckMats.length)|0];
+      // SINGLE r() draw for the body-colour pick (keep position/count so chunkSignature stays in step).
+      const ci = (r()*chunkAssets.truckMats.length)|0;
+      // CLONE the prebuilt template (shares geometry + material refs → no per-truck GPU alloc).
+      // Group origin is at the wheels, so y = ground (≈0.05) instead of the old box centre (0.5).
+      mesh = chunkAssets.truckTemplates[ci].clone();
       if (onX){
         axis='x'; lane = (oz-HALF) + dir*1.4; lo = ox-HALF; hi = ox+HALF; pos = lo + r()*(hi-lo);
         if (inArena(pos, lane)) continue;
-        mesh = new THREE.Mesh(chunkAssets.truckGeo, matT);
-        mesh.position.set(pos, 0.5, lane); if (dir<0) mesh.rotation.y = Math.PI;
+        mesh.position.set(pos, 0.05, lane); if (dir<0) mesh.rotation.y = Math.PI;
       } else {
         axis='z'; lane = (ox-HALF) + dir*1.4; lo = oz-HALF; hi = oz+HALF; pos = lo + r()*(hi-lo);
         if (inArena(lane, pos)) continue;
-        mesh = new THREE.Mesh(chunkAssets.truckGeo, matT);
-        mesh.position.set(lane, 0.5, pos); mesh.rotation.y = dir>0 ? Math.PI/2 : -Math.PI/2;
+        mesh.position.set(lane, 0.05, pos); mesh.rotation.y = dir>0 ? -Math.PI/2 : Math.PI/2;
       }
       g.add(mesh);
       g.userData.trucks.push({ mesh, axis, pos, dir, speed, lo, hi });
