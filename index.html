@@ -1512,12 +1512,26 @@
     const c = document.createElement('canvas'); c.width = 64; c.height = 128;
     const g = c.getContext('2d');
     if (g && g.fillRect){
-      g.fillStyle = '#26344e'; g.fillRect(0,0,64,128);
-      for (let y=6; y<124; y+=10) for (let x=5; x<60; x+=11){
+      // glazed-facade base: warmer/darker spandrel glass for upper tiers
+      g.fillStyle = warm ? '#2a3142' : '#26344e'; g.fillRect(0,0,64,128);
+      // window grid: 5 columns x ~12 floors, lit/unlit per cell (canvas-only randomness; towers persist)
+      const COLW = 11, ROWH = 10, X0 = 5, Y0 = 6, WW = 7, WH = 6;
+      for (let y=Y0; y<124; y+=ROWH) for (let x=X0; x<60; x+=COLW){
         const lit = Math.random() < 0.55;
         g.fillStyle = lit ? (warm ? 'rgba(255,228,170,.95)' : 'rgba(180,216,255,.95)')
-                          : 'rgba(70,90,120,.85)';
-        g.fillRect(x, y, 7, 6);
+                          : (warm ? 'rgba(86,80,70,.85)'    : 'rgba(70,90,120,.85)');
+        g.fillRect(x, y, WW, WH);
+        // subtle inner reflection highlight on lit glass for a glassier read
+        if (lit){ g.fillStyle = 'rgba(255,255,255,.18)'; g.fillRect(x, y, WW, 2); }
+      }
+      // horizontal floor lines (spandrel band between window rows) + vertical mullions between columns
+      if (g.fillRect){
+        g.fillStyle = warm ? 'rgba(20,18,16,.55)' : 'rgba(14,20,32,.55)';
+        for (let y=Y0+WH; y<124; y+=ROWH) g.fillRect(0, y, 64, ROWH - WH);     // floor slabs
+        for (let x=X0+WW; x<60; x+=COLW) g.fillRect(x, 0, COLW - WW, 128);     // mullions
+        // a brighter outer frame so the facade reads as a glazed curtain wall
+        g.fillStyle = warm ? 'rgba(120,110,90,.4)' : 'rgba(120,150,200,.4)';
+        g.fillRect(0, 0, 2, 128); g.fillRect(62, 0, 2, 128);
       }
     }
     const t = new THREE.CanvasTexture(c);
@@ -1546,6 +1560,11 @@
    * ============================================================ */
   let centralGroup = null;           // holds the live economy; persists regardless of roaming
 
+  // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
+  // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
+  // both add PODIUM_H so rooftops + flow endpoints land at PODIUM_H + h (the true shaft top).
+  const PODIUM_H = 1.2;
+
   function makeBuilding(firm){
     const tier = tierOf(firm), hex = TIER_HEX[tier];
     const isYou = firm.id === world.PLAYER;
@@ -1558,8 +1577,34 @@
     const body = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 4), mat);
     body.castShadow = body.receiveShadow = true;
     grp.add(body);
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 2.6),
-      new THREE.MeshStandardMaterial({ color: 0x202c44 }));
+    // ---- PODIUM: fixed-height, slightly wider, darker lobby base. Does NOT scale with height. ----
+    const podium = new THREE.Mesh(new THREE.BoxGeometry(4.8, PODIUM_H, 4.8),
+      new THREE.MeshStandardMaterial({ color: 0x18223a, roughness: 0.75, metalness: 0.2,
+        emissive: new THREE.Color(hex).multiplyScalar(0.25), emissiveIntensity: 0.25 }));
+    podium.position.y = PODIUM_H / 2;
+    podium.castShadow = podium.receiveShadow = true;
+    grp.add(podium);
+    // ---- CROWN: thin tier-coloured emissive band near the shaft top (repositioned each frame) ----
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(4.12, 0.45, 4.12),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(hex),
+        emissive: new THREE.Color(hex), emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.4 }));
+    grp.add(crown);
+    grp.userData.crown = crown;
+    // ---- ROOFTOP DETAIL GROUP: parapet rim + mechanical penthouse + spire + warning light ----
+    const roof = new THREE.Group();
+    const parapet = new THREE.Mesh(new THREE.BoxGeometry(4.05, 0.35, 4.05),
+      new THREE.MeshStandardMaterial({ color: 0x2a3650, roughness: 0.7, metalness: 0.3 }));
+    parapet.position.y = 0.15; roof.add(parapet);
+    const penthouse = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 2.2),
+      new THREE.MeshStandardMaterial({ color: 0x202c44, roughness: 0.65, metalness: 0.35 }));
+    penthouse.position.y = 0.75; penthouse.castShadow = true; roof.add(penthouse);
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.12, 2.4, 6),
+      new THREE.MeshStandardMaterial({ color: 0xc8d2e6, roughness: 0.5, metalness: 0.6 }));
+    spire.position.y = 2.4; roof.add(spire);
+    const warnLight = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xff4d4d,
+        emissive: 0xff2a2a, emissiveIntensity: 1.0 }));
+    warnLight.position.y = 3.7; roof.add(warnLight);
     grp.add(roof);
     grp.userData.roof = roof;
     let marker = null;
@@ -1568,7 +1613,7 @@
       grp.add(marker);
       const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.18, 8, 28),
         new THREE.MeshBasicMaterial({ color: 0x9be7ff }));
-      ring.rotation.x = Math.PI/2; ring.position.y = 0.05;
+      ring.rotation.x = Math.PI/2; ring.position.y = PODIUM_H + 0.05;   // sit on the podium rim
       grp.add(ring);
     }
     const lbl = labelSprite((isYou ? '◆ ' : '') + firm.id + ' · ' + firm.specialty,
@@ -1662,7 +1707,7 @@
   function tierTopY(tier){
     let top = 0;
     for (const f of world.firms){ if (tierOf(f) === tier){ const h = targets.cur[f.id]; if (h > top) top = h; } }
-    return (top > 0 ? top : 12) + 2;
+    return PODIUM_H + (top > 0 ? top : 12) + 2;
   }
   function tierCentre(tier){ return new THREE.Vector3(0, tierTopY(tier), ROW_Z[tier]); }
   function firmPos(id){ const l = layout[id]; return new THREE.Vector3(l.x, (targets.cur[id]||4), l.z); }
@@ -1770,6 +1815,13 @@
       ],
       // small emissive accent panel on each machine (per-stage tint), MeshBasic = crisp glow, no bloom
       accentMat:  BIOME.map(b => new THREE.MeshBasicMaterial({ color: b.accent })),
+      // ---- MACHINE DETAIL assets (shared once; reused by every machine) ----
+      // dark base plinth grounding each housing (slightly wider, low, matte)
+      plinthMat:  new THREE.MeshStandardMaterial({ color: 0x16191f, roughness:.95, metalness:.25 }),
+      // tiny indicator lights on the control panel — MeshBasic = crisp glow, no bloom
+      indicatorMat: new THREE.MeshBasicMaterial({ color: 0x7dff8a }),
+      // brushed-metal vent / exhaust pipe + collar/rim detail on toppers
+      ventMat:    new THREE.MeshStandardMaterial({ color: 0x5a6470, roughness:.55, metalness:.6 }),
       // robot-arm joints (reg1 fabrication topper)
       armMat:     new THREE.MeshStandardMaterial({ color: 0x9fb0c4, roughness:.5, metalness:.5 }),
       // GOODS riding the belts, one emissive material per supply-chain STAGE
@@ -1934,28 +1986,63 @@
         const mx = onX ? ma : mc, mz = onX ? mc : ma;
         if (inArena(mx, mz)) continue;
         const mw = 4 + r()*3, md = 4 + r()*3, mh = (3 + r()*3) * (0.85 + dens*0.3);
+        // BASE PLINTH: a darker, slightly-wider, low slab under the housing (grounds the machine).
+        // Size/placement derived only from mw/md (no r()).
+        const plinth = new THREE.Mesh(chunkAssets.box, chunkAssets.plinthMat);
+        plinth.scale.set(mw + 0.8, 0.6, md + 0.8); plinth.position.set(mx, 0.3, mz); g.add(plinth);
         const housing = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[reg]);
-        housing.scale.set(mw, mh, md); housing.position.set(mx, mh/2, mz); housing.castShadow = true; g.add(housing);
+        housing.scale.set(mw, mh, md); housing.position.set(mx, mh/2 + 0.3, mz); housing.castShadow = true; g.add(housing);
         // emissive accent panel on the housing face toward the belt
         const panel = new THREE.Mesh(chunkAssets.box, chunkAssets.accentMat[reg]);
-        if (onX){ panel.scale.set(mw*0.6, mh*0.3, 0.12); panel.position.set(mx, mh*0.62, mz - side*md*0.5 - 0.07); }
-        else    { panel.scale.set(0.12, mh*0.3, md*0.6); panel.position.set(mx - side*mw*0.5 - 0.07, mh*0.62, mz); }
+        if (onX){ panel.scale.set(mw*0.6, mh*0.3, 0.12); panel.position.set(mx, mh*0.62 + 0.3, mz - side*md*0.5 - 0.07); }
+        else    { panel.scale.set(0.12, mh*0.3, md*0.6); panel.position.set(mx - side*mw*0.5 - 0.07, mh*0.62 + 0.3, mz); }
         g.add(panel);
+        // CONTROL PANEL with INDICATOR LIGHTS on the belt-facing side: a small emissive strip
+        // plus 3 tiny indicator dots. Positions derived from mi/mw (deterministic, no r()).
+        const indicator = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+        // strip sits low on the belt-facing face, offset along the face by an mi-keyed amount
+        const stripOff = ((mi % 3) - 1) * mw * 0.18;     // -1/0/+1 buckets across the face
+        const ay = 0.3 + mh * 0.32;                      // panel height above ground
+        if (onX){ indicator.scale.set(mw*0.34, mh*0.16, 0.1); indicator.position.set(mx + stripOff, ay, mz - side*(md*0.5 + 0.08)); }
+        else    { indicator.scale.set(0.1, mh*0.16, md*0.34); indicator.position.set(mx - side*(mw*0.5 + 0.08), ay, mz + stripOff); }
+        g.add(indicator);
+        // 3 tiny indicator dots in a row across the strip (mi-keyed lateral fan, no r())
+        const dots = new THREE.Group();
+        for (let di = 0; di < 3; di++){
+          const dot = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+          dot.scale.setScalar(0.22);
+          const lat = (di - 1) * mw * 0.14;              // spread across the face
+          const dy = ay + mh * 0.12;                     // just above the strip
+          if (onX) dot.position.set(mx + stripOff + lat, dy, mz - side*(md*0.5 + 0.14));
+          else     dot.position.set(mx - side*(mw*0.5 + 0.14), dy, mz + stripOff + lat);
+          dots.add(dot);
+        }
+        g.add(dots);
+        // ONE vent / exhaust pipe on the machine top, offset to a back corner (sized from mw/md, no r()).
+        const vent = new THREE.Mesh(chunkAssets.cyl, chunkAssets.ventMat);
+        const vr = Math.min(mw, md) * 0.12 + 0.18, vH = mh * 0.45 + 0.6;
+        vent.scale.set(vr, vH, vr);
+        vent.position.set(mx + mw*0.28, 0.3 + mh + vH*0.5, mz - md*0.28); g.add(vent);
         // per-stage TOPPER
+        const topY = mh + 0.3;                          // top surface of the housing (sits on the plinth)
         if (reg === 2){
           // furnace heat cap (glowing vent) + a short smokestack or two
           const cap = new THREE.Mesh(chunkAssets.sphere, chunkAssets.heatMat);
-          cap.scale.setScalar(0.7 + dens*0.35); cap.position.set(mx, mh + 0.3, mz); g.add(cap);
+          cap.scale.setScalar(0.7 + dens*0.35); cap.position.set(mx, topY + 0.3, mz); g.add(cap);
+          // metal COLLAR/RIM around the cap base (deterministic, no r())
+          const collar = new THREE.Mesh(chunkAssets.cyl, chunkAssets.ventMat);
+          const cr = 0.5 + dens*0.25;
+          collar.scale.set(cr, 0.3, cr); collar.position.set(mx, topY, mz); g.add(collar);
           const nStk = 1 + (r() < 0.45 ? 1 : 0);
           for (let s = 0; s < nStk; s++){
             const sh = 3 + r()*4;
             const stack = new THREE.Mesh(chunkAssets.cyl, chunkAssets.stackMat);
             const sx = mx + (r()-0.5)*mw*0.5, sz = mz + (r()-0.5)*md*0.5;
-            stack.scale.set(0.6, sh, 0.6); stack.position.set(sx, mh + sh/2, sz); g.add(stack);
+            stack.scale.set(0.6, sh, 0.6); stack.position.set(sx, topY + sh/2, sz); g.add(stack);
           }
         } else if (reg === 1){
           // simple articulated robot arm: a base + 2 rotated boxes
-          const ax = mx, az = mz, baseY = mh;
+          const ax = mx, az = mz, baseY = topY;
           const base = new THREE.Mesh(chunkAssets.cyl, chunkAssets.armMat);
           base.scale.set(0.5, 0.6, 0.5); base.position.set(ax, baseY + 0.3, az); g.add(base);
           const seg1 = new THREE.Mesh(chunkAssets.box, chunkAssets.armMat);
@@ -1964,17 +2051,27 @@
           const seg2 = new THREE.Mesh(chunkAssets.box, chunkAssets.armMat);
           seg2.scale.set(0.35, 1.6, 0.35);
           seg2.position.set(ax + 0.9, baseY + 2.1, az); seg2.rotation.z = -0.8 - r()*0.5; g.add(seg2);
+          // GRIPPER TIP box at the end of seg2 (deterministic offset along the arm, no r())
+          const grip = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+          grip.scale.set(0.45, 0.3, 0.45); grip.position.set(ax + 1.4, baseY + 2.7, az); g.add(grip);
         } else if (reg === 3){
           // drill tower over a crusher: a tall box mast + a wider feed head
           const dh = 4 + r()*4;
           const mast = new THREE.Mesh(chunkAssets.box, chunkAssets.derrickMat);
-          mast.scale.set(0.9, dh, 0.9); mast.position.set(mx, mh + dh/2, mz); g.add(mast);
+          mast.scale.set(0.9, dh, 0.9); mast.position.set(mx, topY + dh/2, mz); g.add(mast);
           const head = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[3]);
-          head.scale.set(1.8, 0.8, 1.8); head.position.set(mx, mh + dh, mz); g.add(head);
+          head.scale.set(1.8, 0.8, 1.8); head.position.set(mx, topY + dh, mz); g.add(head);
+          // DRILL BIT / TEETH box just under the feed head (deterministic, no r())
+          const bit = new THREE.Mesh(chunkAssets.box, chunkAssets.ventMat);
+          bit.scale.set(1.0, 0.7, 1.0); bit.position.set(mx, topY + dh - 0.6, mz); g.add(bit);
         } else {
           // metropolis: a packaging block stacked on the machine (loading bay reads on belt below)
           const pack = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[0]);
-          pack.scale.set(mw*0.7, 1.4, md*0.7); pack.position.set(mx, mh + 0.7, mz); g.add(pack);
+          pack.scale.set(mw*0.7, 1.4, md*0.7); pack.position.set(mx, topY + 0.7, mz); g.add(pack);
+          // banding STRAP across the packaging block (emissive accent, deterministic, no r())
+          const strap = new THREE.Mesh(chunkAssets.box, chunkAssets.accentMat[0]);
+          if (onX) strap.scale.set(mw*0.72, 0.5, 0.16); else strap.scale.set(0.16, 0.5, md*0.72);
+          strap.position.set(mx, topY + 0.7, mz); g.add(strap);
         }
       }
 
@@ -2476,10 +2573,15 @@
       const tgt = targets.height[id] || H_MIN;
       targets.cur[id] = lerp(targets.cur[id] || tgt, tgt, 1 - Math.pow(0.02, dt));
       const h = Math.max(0.5, targets.cur[id]);
-      b.body.scale.y = h; b.body.position.y = h/2;
-      if (b.grp.userData.roof)  b.grp.userData.roof.position.y  = h + 0.15;
-      if (b.grp.userData.label) b.grp.userData.label.position.y = h + 3;
-      if (b.marker) b.marker.position.y = h + 5.5;
+      // shaft tracks net worth (city harness invariant) and sits ON the fixed podium
+      b.body.scale.y = h; b.body.position.y = PODIUM_H + h/2;
+      // height-tracking facade: keep windows/floors ~constant size as the tower grows/shrinks
+      // (map and emissiveMap are the SAME texture object, so one repeat.set covers both maps)
+      if (b.mat.map) b.mat.map.repeat.set(1, Math.max(2, Math.round(h/4)));
+      if (b.grp.userData.roof)  b.grp.userData.roof.position.y  = PODIUM_H + h;          // shaft top
+      if (b.grp.userData.crown) b.grp.userData.crown.position.y = PODIUM_H + h - 0.4;    // band near top
+      if (b.grp.userData.label) b.grp.userData.label.position.y = PODIUM_H + h + 3;
+      if (b.marker) b.marker.position.y = PODIUM_H + h + 5.5;
       const glow = targets.glow[id] || 0;
       // trade-partner pulse: a partner of the selected firm glows in a distinct cyan trade-color,
       // sinusoidally pulsing so you can see WHO the selected firm traded with this tick.
