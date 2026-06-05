@@ -260,9 +260,12 @@
        Five DATA-DRIVEN 3D background scenes. Selecting one ROTATES the camera/stage to that
        scene (animated; SNAP under prefers-reduced-motion). View-only: never steps the economy. -->
   <nav class="sections" id="sections" role="group" aria-label="3D scene sections">
-    <button class="secbtn" id="sec-market"      type="button" data-section="market"      aria-pressed="false"><span class="ico" aria-hidden="true">🏛</span>Market</button>
-    <button class="secbtn" id="sec-factory"     type="button" data-section="factory"     aria-pressed="true"><span class="ico" aria-hidden="true">🏭</span>Factory</button>
-    <button class="secbtn" id="sec-finance"     type="button" data-section="finance"     aria-pressed="false"><span class="ico" aria-hidden="true">💰</span>Finance</button>
+    <button class="secbtn" id="sec-market"        type="button" data-section="market"        aria-pressed="false"><span class="ico" aria-hidden="true">🏛</span>Market</button>
+    <button class="secbtn" id="sec-factory"       type="button" data-section="factory"       aria-pressed="true"><span class="ico" aria-hidden="true">🏭</span>Factory</button>
+    <button class="secbtn" id="sec-smart-city"    type="button" data-section="smart-city"    aria-pressed="false"><span class="ico" aria-hidden="true">🏙️</span>Smart City</button>
+    <button class="secbtn" id="sec-smart-factory" type="button" data-section="smart-factory" aria-pressed="false"><span class="ico" aria-hidden="true">🏗️</span>Smart Factory</button>
+    <button class="secbtn" id="sec-shopping-mall" type="button" data-section="shopping-mall" aria-pressed="false"><span class="ico" aria-hidden="true">🛍️</span>Shopping Mall</button>
+    <button class="secbtn" id="sec-finance"       type="button" data-section="finance"       aria-pressed="false"><span class="ico" aria-hidden="true">💰</span>Finance</button>
     <button class="secbtn" id="sec-network"     type="button" data-section="network"     aria-pressed="false"><span class="ico" aria-hidden="true">🕸</span>Network</button>
     <button class="secbtn" id="sec-leaderboard" type="button" data-section="leaderboard" aria-pressed="false"><span class="ico" aria-hidden="true">🏆</span>Leaderboard</button>
   </nav>
@@ -1459,8 +1462,19 @@
    *  Streaming is paused (frame-loop guard) when a non-factory scene
    *  is active; the __worldHeadless streaming contract is untouched.
    * ============================================================ */
-  const SECTIONS = ['market', 'factory', 'finance', 'network', 'leaderboard'];
+  const SECTIONS = ['market', 'factory', 'smart-city', 'smart-factory', 'shopping-mall', 'finance', 'network', 'leaderboard'];
   let activeSection = 'factory';     // default = the existing world (factory)
+  // ----- WORLD SECTIONS: the four sections that share the ONE streamed origin world (central economy
+  // district + streamed production chunks + retail district). They are alternate FRAMED VIEWS of the same
+  // world, not separate dioramas: each just toggles per-theme visibility + frames the camera at the area
+  // it focuses on. 'factory' = everything-in-one (KEPT byte-identical); the other three focus a slice:
+  //   smart-city    -> economy district (firm towers + exchange + plaza) ONLY
+  //   smart-factory -> streamed production chunks (machines/belts/goods/trucks + workers) ONLY
+  //   shopping-mall -> retail district (mall + storefronts + shoppers) ONLY
+  // The render-loop streamed-world + roam/orbit path runs for ALL FOUR (see WORLD_SECTIONS.includes
+  // guards below); the market/finance/network/leaderboard DATA dioramas keep their own orbit-stage path.
+  const WORLD_SECTIONS = ['factory', 'smart-city', 'smart-factory', 'shopping-mall'];
+  let worldTheme = 'factory';        // active world theme (one of WORLD_SECTIONS); drives applyThemeVisibility
   // Each diorama lives at its own world position (well outside the factory arena so it never
   // collides with streamed chunks). The camera orbits a pivot above each.
   const SCENE_POS = {
@@ -1560,6 +1574,16 @@
    *  These live in `centralGroup`, which is NEVER streamed away.
    * ============================================================ */
   let centralGroup = null;           // holds the live economy; persists regardless of roaming
+  // PHASE 2 — two toggleable sub-groups under centralGroup so a focused world theme can show/hide one slice
+  // without rebuilding anything (regrouping only changes the PARENT — the firm/exchange pick tags +
+  // `pickables` + `buildings`/`firmMeshes` registries are unchanged):
+  //   economyGroup : the firm towers + the NPC_DESK exchange + the particle pools + tether + plaza life
+  //   retailGroup  : the shopping district (mall + storefronts + shoppers + parking)
+  // The streamed PRODUCTION chunks are the third slice; they live in the scene (not centralGroup) and are
+  // toggled per-frame via `chunksVisible` (see the render loop + applyThemeVisibility).
+  let economyGroup = null;
+  let retailGroup = null;
+  let chunksVisible = true;          // PHASE 2: whether streamed production chunks are the focus (render-loop sets each live chunk's .visible)
 
   // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
   // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
@@ -1624,7 +1648,7 @@
     grp.position.set(pos.x, 0, pos.z);
     // ---- pick tagging: stamp the firm id on the tower root + register a plain-JS pickable ----
     grp.userData.firmId = firm.id;
-    centralGroup.add(grp);
+    economyGroup.add(grp);                // PHASE 2: live-economy slice (toggled per theme; tag/pickable unchanged)
     buildings[firm.id] = { grp, body, mat, marker, baseHex: hex, isYou };
     firmMeshes[firm.id] = grp;
     pickables.push(grp);
@@ -1694,7 +1718,7 @@
     grp.add(new THREE.PointLight(0x88b0ff, 1.0, 60, 2));
     // ---- pick tagging: the exchange resolves to the NPC_DESK inspector (the market-maker account) ----
     grp.userData.firmId = 'NPC_DESK';
-    centralGroup.add(grp);
+    economyGroup.add(grp);               // PHASE 2: live-economy slice (NPC_DESK tag/pickable unchanged)
     exchange = { grp, dome, mat: domeMat };
     pickables.push(grp);     // a click/tap on the exchange → openInspector('NPC_DESK')
   }
@@ -1703,19 +1727,20 @@
   const flowPool = [], retailPool = [], burstPool = [];
   function makePools(){
     const sg = new THREE.SphereGeometry(0.22, 6, 6);
+    // PHASE 2: the supply-chain / retail-flow / burst particle pools belong to the live-economy slice.
     for (let i=0;i<260;i++){
       const m = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      m.visible = false; centralGroup.add(m);
+      m.visible = false; economyGroup.add(m);
       flowPool.push({ m, active:false, t:0, dur:1, from:new THREE.Vector3(), to:new THREE.Vector3() });
     }
     for (let i=0;i<160;i++){
       const m = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ color: 0x4fd896 }));
-      m.visible = false; centralGroup.add(m);
+      m.visible = false; economyGroup.add(m);
       retailPool.push({ m, active:false, t:0, dur:1, from:new THREE.Vector3(), to:new THREE.Vector3() });
     }
     for (let i=0;i<120;i++){
       const m = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      m.visible = false; centralGroup.add(m);
+      m.visible = false; economyGroup.add(m);
       burstPool.push({ m, active:false, t:0, dur:1, vel:new THREE.Vector3(), origin:new THREE.Vector3() });
     }
   }
@@ -1758,7 +1783,7 @@
   function makeTether(){
     const mat = new THREE.MeshBasicMaterial({ color: 0xffd35a, transparent:true, opacity:0.55 });
     tetherMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1, 8), mat);
-    tetherMesh.visible = false; centralGroup.add(tetherMesh);
+    tetherMesh.visible = false; economyGroup.add(tetherMesh);   // PHASE 2: live-economy slice (PLAYER↔EXCHANGE beam)
   }
   function updateTether(){
     if (!tetherMesh) return;
@@ -2095,7 +2120,7 @@
       const dir = (i % 3 === 0) ? -1 : 1;                   // a third walk the loop the other way
       const speed = 1.1 + (i % 5) * 0.18;                   // gentle 1.1–1.82 u/s walking pace
       const li = grp.userData.pedLimbIdx;
-      centralGroup.add(grp);
+      economyGroup.add(grp);                                // PHASE 2: plaza pedestrians = live-economy slice
       const rec = {
         grp, path, L, dir, speed,
         u: (i / N_PED) * L,                                 // spread start positions around the loop
@@ -2124,7 +2149,7 @@
       const mesh = tpl.clone();                             // shares geo+mat refs (no GPU alloc)
       const path = truckPaths[i % truckPaths.length];
       const L = loopLen(path);
-      centralGroup.add(mesh);
+      economyGroup.add(mesh);                               // PHASE 2: plaza delivery traffic = live-economy slice
       const rec = {
         mesh, path, L,
         dir: 1, speed: 4.5 + (i % 3) * 1.0,                 // slow delivery crawl 4.5–6.5 u/s
@@ -2176,7 +2201,7 @@
    *  chunkAssets/centralGroup so it never throws under the stubbed-THREE harnesses. */
   let retailSign = null;             // { mat, atrium } — emissive refs the frame loop pulses (view-only)
   function makeRetailDistrict(){
-    if (!centralGroup) return;                              // group must exist first
+    if (!centralGroup || !retailGroup) return;              // groups must exist first
     const TG = new THREE.Group();                          // sub-root so the whole district is one add
     // SEPARATE retail PRNG (persistent district → unconstrained; NOT any chunk RNG, so chunkSignature is
     // wholly untouched). Seeded with its own salt so store size/colour variety is stable but free.
@@ -2273,7 +2298,7 @@
       TG.add(parked);
     }
 
-    centralGroup.add(TG);
+    retailGroup.add(TG);                                    // PHASE 2: shopping district = retail slice
 
     // ===== 3) SHOPPERS — clone a few pedestrians that walk the storefront street / mall frontage =====
     // Reuse placeOnPath + the plaza walk/limb-swing animation by pushing into `plazaPeds` (the existing
@@ -2297,9 +2322,9 @@
         const tpl = pedTpl[i % pedTpl.length];
         const grp = tpl.clone();                            // shares geo+mat refs (no GPU alloc)
         const li = grp.userData.pedLimbIdx;
-        centralGroup.add(grp);
+        retailGroup.add(grp);                               // PHASE 2: shoppers belong to the RETAIL slice
         const rec = {
-          grp, path: shopPath, L,
+          grp, path: shopPath, L, retail: true,             // PHASE 2: animate only when retailGroup is visible
           dir: (i % 2 === 0) ? 1 : -1,                      // mingle both ways along the frontage
           speed: 0.9 + (i % 4) * 0.16,                      // gentle browsing pace
           u: (i / N_SHOP) * L,
@@ -2308,7 +2333,7 @@
           armA: grp.children[li.armA], armB: grp.children[li.armB],
         };
         placeOnPath(rec, grp);                              // seat at the start pose (also under reduce-motion)
-        plazaPeds.push(rec);                                // existing plaza animation drives them
+        plazaPeds.push(rec);                                // existing plaza animation drives them (gated by rec.retail)
       }
     }
 
@@ -2705,7 +2730,11 @@
     // load ring within VIEW_R
     for (let dx=-VIEW_R; dx<=VIEW_R; dx++) for (let dz=-VIEW_R; dz<=VIEW_R; dz++){
       const k = (tx+dx) + ',' + (tz+dz);
-      if (!chunks.has(k)){ const g = buildChunk(tx+dx, tz+dz); chunks.set(k, g); if (scene) scene.add(g); }
+      if (!chunks.has(k)){ const g = buildChunk(tx+dx, tz+dz); chunks.set(k, g); if (scene) scene.add(g);
+        // PHASE 2: a chunk streamed in while a theme HIDES production is built hidden; one streamed while a
+        // theme SHOWS production is visible. Only in a WORLD section (a data diorama hides the world entirely).
+        g.visible = WORLD_SECTIONS.includes(activeSection) ? chunksVisible : false;
+      }
     }
     // recycle anything beyond VIEW_R+1 (hysteresis band avoids thrash on the boundary)
     for (const [k, g] of chunks){
@@ -2903,15 +2932,22 @@
     // ===== FIXED CENTRAL ECONOMY DISTRICT (never streamed) =====
     centralGroup = new THREE.Group();
     scene.add(centralGroup);
+    // PHASE 2 sub-groups: economy (towers/exchange/pools/tether/plaza) + retail (shopping district). Added
+    // under centralGroup so the master world toggle (centralGroup.visible) still covers both, while a focused
+    // theme can show/hide each slice independently. The make*() builders below add into these sub-groups.
+    economyGroup = new THREE.Group();
+    retailGroup  = new THREE.Group();
+    centralGroup.add(economyGroup);
+    centralGroup.add(retailGroup);
 
-    // district labels (one per tier row) + downtown ring marker
+    // district labels (one per tier row) + downtown ring marker — part of the ECONOMY district
     for (let t=0; t<4; t++){
       const lbl = labelSprite('T'+t+' · '+TIER_NAME[t],
         '#' + TIER_HEX[t].toString(16).padStart(6,'0'), 11);
-      lbl.position.set(-44, 6, ROW_Z[t]); centralGroup.add(lbl);
+      lbl.position.set(-44, 6, ROW_Z[t]); economyGroup.add(lbl);
     }
     const downtownLbl = labelSprite('🏙️ CONSUMER METROPOLIS · downtown', '#9be7ff', 16);
-    downtownLbl.position.set(0, 24, -44); centralGroup.add(downtownLbl);
+    downtownLbl.position.set(0, 24, -44); economyGroup.add(downtownLbl);
 
     computeLayout();
     world.firms.forEach(makeBuilding);   // >=11 firm towers
@@ -3230,8 +3266,9 @@
    * ============================================================ */
   let lastTs = 0;
   let worldAnimT = 0;   // per-frame accumulating phase for streamed-machine motion polish (arms/drills/smoke).
-                        // Advances ONLY when factory motion is allowed (activeSection==='factory' && !reduceMotion)
-                        // so the plume/arm/drill phase freezes under reduced-motion or while a diorama is active.
+                        // Advances ONLY when a WORLD section is active + motion allowed
+                        // (WORLD_SECTIONS.includes(activeSection) && !reduceMotion) so the plume/arm/drill
+                        // phase freezes under reduced-motion or while a DATA diorama is active.
   function frame(ts){
     requestAnimationFrame(frame);
     if (!ready || !renderer) return;
@@ -3241,6 +3278,14 @@
     // sky/sun/ambient applies GLOBALLY to every section. Held at a pleasant midday under
     // reduced-motion. View-only (lights/background/fog only) + alloc-free.
     updateDayNight(dt);
+
+    // PHASE 2 per-slice visibility (recomputed each frame; alloc-free booleans). A focused theme hides a
+    // slice's GROUP; here we use that to gate the slice's DECORATIVE motion so a hidden slice's economy/retail
+    // pulses freeze. In 'factory' both groups are visible ⇒ every gate below is true ⇒ BYTE-IDENTICAL to before.
+    // The tower-HEIGHT ease itself is NOT gated (it must keep tracking net worth so towers are correctly
+    // sized whenever economyGroup is shown again, and the city harness's heights-track-NW invariant holds).
+    const econVisF   = !economyGroup || economyGroup.visible !== false;   // factory / smart-city
+    const retailVisF = !retailGroup  || retailGroup.visible  !== false;   // factory / shopping-mall
 
     // ease central tower heights + glow
     for (const f of world.firms){
@@ -3266,7 +3311,8 @@
       if (pulse > 0.02) b.mat.emissive.setHex(0x9be7ff);     // trade-partner color
       else              b.mat.emissive.setHex(b.baseHex);    // revert to the firm's tier color
     }
-    if (exchange){
+    // EXCHANGE dome pulse — an ECONOMY bit: animate only when economyGroup is visible (factory/smart-city).
+    if (exchange && econVisF){
       const dpg = targets.deskPartnerGlow || 0;
       const dpulse = dpg * (0.6 + 0.4*Math.abs(Math.sin(ts*0.006)));
       exchange.mat.emissiveIntensity = 0.5 + targets.deskGlow * 1.4 + dpulse * 1.4;
@@ -3276,13 +3322,15 @@
     // (targets.retailGlow, decayed in syncScene from ev.retail.sold). VIEW-ONLY; mirrors the deskGlow
     // pattern. Under reduce-motion the sine shimmer freezes (factor→1) so it holds a STEADY lit level;
     // a base floor keeps the signs lit even with zero recent sales (so day/night still reads them).
-    if (retailSign){
+    // RETAIL signage pulse — a RETAIL bit: animate only when retailGroup is visible (factory/shopping-mall).
+    if (retailSign && retailVisF){
       const rg = targets.retailGlow || 0;
       const shimmer = reduceMotion ? 1 : (0.85 + 0.15*Math.abs(Math.sin(ts*0.0022)));   // gentle ambient breath
       retailSign.mat.emissiveIntensity     = (retailSign.base       + rg * 1.3) * shimmer;
       retailSign.atrium.emissiveIntensity  = (retailSign.baseAtrium + rg * 0.7) * shimmer;
     }
-    updateTether();
+    // PLAYER↔EXCHANGE gold tether — an ECONOMY bit: update only when economyGroup is visible.
+    if (econVisF) updateTether();
 
     // central particle pools. While a firm is selected, brighten + thicken the supply-chain
     // lanes carrying its highlighted goods and DIM the rest for contrast; otherwise normal.
@@ -3303,22 +3351,33 @@
         if (p.baseHex !== undefined) p.m.material.color.setHex(p.baseHex);
       }
       if (p.t >= 1){ p.active = false; p.m.visible = false; } } };
+    // The 3D supply-chain Sankey + retail-flow + trade-burst particle pools live in economyGroup → ECONOMY
+    // bits: step them only when economyGroup is visible (factory/smart-city). Hidden ⇒ they hold in place.
+    if (econVisF){
     stepPool(flowPool, true); stepPool(retailPool, false);
     for (const p of burstPool){ if (!p.active) continue;
       p.t += dt/p.dur;
       p.m.position.set(p.origin.x + p.vel.x*p.t, p.origin.y + p.vel.y*p.t - 16*p.t*p.t, p.origin.z + p.vel.z*p.t);
       if (p.t >= 1){ p.active = false; p.m.visible = false; } }
+    }
 
     // streamed world traffic (alloc-free; wrap → continuous flow). Frozen under prefers-reduced-motion.
     if (!reduceMotion){
+      // PHASE 2 per-slice motion gates: production motion runs only when the production chunks are the focus
+      // (factory/smart-factory ⇒ chunksVisible); the economy/retail crowds are gated by their group's
+      // visibility (reusing the per-frame booleans above). A theme that hides a slice freezes that slice's
+      // motion (cheap booleans, alloc-free).
+      const econVis   = econVisF;     // factory / smart-city
+      const retailVis = retailVisF;   // factory / shopping-mall
+      const prodVis   = chunksVisible; // factory / smart-factory
       // logistics trucks ride the edge roads (inter-stage transport, wrapping across the 64m edge)
-      for (const [,g] of chunks){ const ts2 = g.userData && g.userData.trucks; if (!ts2) continue;
+      if (prodVis) for (const [,g] of chunks){ const ts2 = g.userData && g.userData.trucks; if (!ts2) continue;
         for (let i=0;i<ts2.length;i++){ const t = ts2[i];
           t.pos += t.dir*t.speed*dt;
           if (t.pos > t.hi) t.pos = t.lo; else if (t.pos < t.lo) t.pos = t.hi;
           t.mesh.position[t.axis] = t.pos; } }
       // GOODS riding the conveyor belts (the production line in motion; free-roam, not tied to ticks)
-      for (const [,g] of chunks){ const gd = g.userData && g.userData.beltGoods; if (!gd) continue;
+      if (prodVis) for (const [,g] of chunks){ const gd = g.userData && g.userData.beltGoods; if (!gd) continue;
         for (let i=0;i<gd.length;i++){ const u = gd[i];
           u.pos += u.dir*u.speed*dt;
           if (u.pos > u.hi) u.pos = u.lo; else if (u.pos < u.lo) u.pos = u.hi;
@@ -3327,10 +3386,14 @@
       // hides the world, so skip then). Animates EXISTING meshes (arms/drills) + the tiny shared smoke puffs;
       // adds NO draws/geometry. Alloc-free, iterating ONLY live chunks. Drift the shared phase by dt so the
       // motion is continuous; sin/cos keep arms/plume on bounded loops.
-      if (activeSection === 'factory'){
+      // Runs for any WORLD section (factory + the three focused views are alternate views of the same world);
+      // PHASE 2's applyThemeVisibility hides whatever a theme doesn't show, so motion is effectively gated to
+      // the VISIBLE content (an off-screen/hidden mesh still advances cheaply but is never drawn).
+      if (WORLD_SECTIONS.includes(activeSection)){
         worldAnimT += dt;
         const T = worldAnimT;
-        for (const [,g] of chunks){ const ud = g.userData; if (!ud) continue;
+        // PRODUCTION machine/worker motion: only when production chunks are the focus (factory/smart-factory).
+        if (prodVis) for (const [,g] of chunks){ const ud = g.userData; if (!ud) continue;
           // ROBOT ARMS (reg1): gently oscillate each segment about its captured base angle (small, slow).
           const arms = ud.arms;
           if (arms) for (let i=0;i<arms.length;i++){ const a = arms[i];
@@ -3366,11 +3429,14 @@
           }
         }
 
-        // CENTRAL-PLAZA LIFE: drive the PERSISTENT decorative crowd + delivery vehicles around their
-        // closed plaza paths. Same dt + worldAnimT (T) phase as the streamed workers, so everything
-        // freezes together under reduced-motion (this whole block is gated by !reduceMotion above) and
-        // pauses outside the factory view. Alloc-free — only cursor maths + position/rotation writes.
-        for (let i = 0; i < plazaPeds.length; i++){ const w = plazaPeds[i];
+        // CENTRAL-PLAZA LIFE + RETAIL SHOPPERS: drive the PERSISTENT decorative crowd + delivery vehicles
+        // around their closed paths. Same dt + worldAnimT (T) phase as the streamed workers, so everything
+        // freezes together under reduced-motion (this whole block is gated by !reduceMotion above).
+        // PHASE 2: a record is gated by its OWNING slice's visibility — economy plaza peds run when
+        // economyGroup is visible (factory/smart-city); retail shoppers (rec.retail) run when retailGroup is
+        // visible (factory/shopping-mall). Alloc-free — only cursor maths + position/rotation writes.
+        if (econVis || retailVis) for (let i = 0; i < plazaPeds.length; i++){ const w = plazaPeds[i];
+          if (w.retail ? !retailVis : !econVis) continue;     // skip a crowd whose slice is hidden this theme
           w.u += w.speed * dt;                                // advance arc-length cursor (placeOnPath wraps mod L)
           placeOnPath(w, w.grp);                              // resolve (x,z) + travel heading on the loop
           const s = Math.sin(T * w.stride + w.phase);
@@ -3379,7 +3445,7 @@
           w.legA.rotation.x =  swing;  w.legB.rotation.x = -swing;
           w.armA.rotation.x = -swing;  w.armB.rotation.x =  swing;  // arms anti-phase to legs
         }
-        for (let i = 0; i < plazaTraffic.length; i++){ const v = plazaTraffic[i];
+        if (econVis) for (let i = 0; i < plazaTraffic.length; i++){ const v = plazaTraffic[i];
           v.u += v.speed * dt;                                // advance arc-length cursor (wraps mod L)
           placeOnPath(v, v.mesh);                             // resolve (x,z) + travel heading (faces the way it drives)
         }
@@ -3389,7 +3455,10 @@
     // ===== SECTION SCENES: when a non-factory diorama is active, drive the orbit-stage camera
     //       (animated rotate-to + idle turntable), animate that scene, and SKIP world streaming.
     //       Factory keeps the existing map/roam camera + streaming below, fully unchanged. =====
-    if (activeSection !== 'factory'){
+    // The four WORLD_SECTIONS (factory + smart-city/-factory + shopping-mall) are alternate framed views
+    // of the SAME streamed origin world, so they ALL take the streamed-world + roam/orbit path below; only
+    // the data dioramas (market/finance/network/leaderboard) take the orbit-stage diorama path here.
+    if (!WORLD_SECTIONS.includes(activeSection)){
       // refresh the active diorama's data magnitudes each frame (cheap rescale; view-only)
       updateSectionScenes();
       // rotation transition 0..1 (snap when reduced-motion); then a gentle idle turntable.
@@ -4118,6 +4187,13 @@
     gl.addEventListener('pointerup', e => {
       if (moved) return;                       // it was a pan/orbit drag, not a click → ignore
       if (typeof THREE === 'undefined' || !cam) return;
+      // PHASE 2: the firm towers + NPC_DESK exchange are the ONLY pickables, and they live in economyGroup
+      // (under centralGroup). When that slice isn't on screen — economyGroup hidden (smart-factory /
+      // shopping-mall) or the whole world hidden (a data diorama is active) — a click must NOT resolve a
+      // tower/exchange, so skip picking. When the economy is visible (factory / smart-city, world active)
+      // picking works EXACTLY as before (all 11 firms + NPC_DESK).
+      if (economyGroup && economyGroup.visible === false) return;
+      if (centralGroup && centralGroup.visible === false) return;
       const rect = gl.getBoundingClientRect ? gl.getBoundingClientRect() : { left:0, top:0, width:window.innerWidth, height:window.innerHeight };
       const ndc = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -5121,41 +5197,105 @@
     }
   }
 
-  // VIEW-ONLY section selection: set active, show only its diorama (factory = the world),
+  // PHASE 2: per-theme visibility of the ONE streamed origin world's slices. The four WORLD sections are
+  // alternate framed views of the SAME world, so switching theme just shows/hides which slice is the focus.
+  // Slice → group table (each slice toggled INDEPENDENTLY; nothing is rebuilt — only `.visible`/a flag):
+  //   factory       : economy ON , retail ON , production ON   (everything-in-one; BYTE-IDENTICAL to original)
+  //   smart-city    : economy ON , retail OFF, production OFF  (firm towers + exchange + plaza only)
+  //   smart-factory : economy OFF, retail OFF, production ON   (streamed production chunks only)
+  //   shopping-mall : economy OFF, retail ON , production OFF  (retail district only)
+  // Production chunks keep STREAMING regardless (so __worldHeadless.streamAround is unaffected); we only flip
+  // `chunksVisible`, which the render loop applies to each LIVE chunk group's `.visible` — and to any chunk
+  // streamed in while a theme is active (built hidden if the theme doesn't show production, visible if it does).
+  // VIEW-ONLY + headless-safe (only boolean `.visible` writes on stubbed objects; no geometry, no economy).
+  function applyThemeVisibility(theme){
+    const econ = (theme === 'factory' || theme === 'smart-city');
+    const retail = (theme === 'factory' || theme === 'shopping-mall');
+    const prod = (theme === 'factory' || theme === 'smart-factory');
+    if (economyGroup) economyGroup.visible = econ;
+    if (retailGroup)  retailGroup.visible  = retail;
+    chunksVisible = prod;
+    // apply the production flag to whatever chunks are currently live (the render loop keeps them in sync,
+    // and reflects it onto chunks streamed in later); under a non-world/diorama theme the master
+    // centralGroup/chunk visibility set by selectSection still wins.
+    for (const [,cg] of chunks){ if (cg) cg.visible = prod; }
+  }
+
+  // VIEW-ONLY section selection: set active, show only its diorama (a WORLD section = the streamed world),
   // arm the animated camera rotation, sync HUD button state. Never steps/mutates the economy.
   function selectSection(section){
     if (SECTIONS.indexOf(section) < 0) return;
     activeSection = section;
-    // visibility: factory uses the existing world (central + streamed chunks); the four dioramas
-    // are shown only when active. Toggling visibility does NOT touch the economy.
+    const isWorld = WORLD_SECTIONS.includes(section);
+    // visibility: the four WORLD sections (factory + smart-city/-factory + shopping-mall) all reveal the
+    // ONE streamed origin world (central economy + streamed chunks + sky floor); the data dioramas are
+    // shown only when their own section is active. Toggling visibility does NOT touch the economy.
     if (typeof THREE !== 'undefined'){
       for (const s in sceneGroups) sceneGroups[s].visible = (s === section);
-      // factory bits (central economy + streamed chunks + sky floor) visible only in factory
-      const factoryOn = (section === 'factory');
-      if (centralGroup) centralGroup.visible = factoryOn;
-      if (skyFloor) skyFloor.visible = factoryOn;
-      for (const [,cg] of chunks) cg.visible = factoryOn;
+      // master world visibility: ON for ANY world section (factory keeps everything; the focused themes
+      // hide the slices they don't show via applyThemeVisibility below — PHASE 2). OFF for data dioramas.
+      if (centralGroup) centralGroup.visible = isWorld;
+      if (skyFloor) skyFloor.visible = isWorld;
+      for (const [,cg] of chunks) cg.visible = isWorld;
     }
-    if (section !== 'factory'){
-      // dioramas are orbit-controllable: if we were roaming the factory world, leave roam so drag-to-orbit
-      // works on the diorama (roam is a factory-world traversal mode only)
+    if (isWorld){
+      // A WORLD section: keep the factory-style map/roam/orbit cam (no orbit-stage diorama spin), set the
+      // active world theme, FRAME the camera at the area this theme focuses on, then apply theme visibility.
+      worldTheme = section;
+      sectionAnimT = 1;                       // world sections use the map/roam/orbit cam — no stage turntable
+      frameWorldTheme(section);
+      applyThemeVisibility(worldTheme);       // PHASE 2 fills this in (per-theme show/hide of world slices)
+    } else {
+      // dioramas are orbit-controllable: if we were roaming the world, leave roam so drag-to-orbit
+      // works on the diorama (roam is a world-traversal mode only)
       if (camMode === 'roam') setCamMode('map');
       else if (useOrbit && controls) controls.enabled = true;
       // give the new scene a fresh turntable start angle + arm the rotate-to flourish
       stageCam.targetYaw = stageCam.yaw;     // continue from current angle (smooth)
       aimStageAt(section);
-    } else {
-      sectionAnimT = 1;                       // factory uses its own orbit/map/roam cam — no stage spin
-      // returning to the factory: re-home the orbit camera on downtown + stop the diorama turntable
+    }
+    // keep the diorama data current for the scene we just revealed
+    updateSectionScenes();
+    syncSectionUI();
+  }
+
+  // FRAME THE CAMERA for a WORLD section. These are alternate VIEWS of the same origin world, so we just
+  // aim the orbit target / re-home the roam start at the area the theme focuses on (no new geometry):
+  //   factory       : the live-economy metropolis at the world ORIGIN — BYTE-IDENTICAL to the original
+  //                   factory homing (re-home orbit to ORBIT_DEFAULT, stop the diorama turntable; do NOT
+  //                   touch mapCam/roam so the default factory camera is exactly as before).
+  //   smart-city    : the live-economy metropolis at the world ORIGIN (firm towers + exchange)
+  //   smart-factory : the streamed PRODUCTION world (orbit target / roam start nudged into the chunked grid)
+  //   shopping-mall : the RETAIL district near the consumer skyline (~x48, ROW_Z[3])
+  // VIEW-ONLY: only camera/orbit-target/roam-start writes; never the economy.
+  function frameWorldTheme(section){
+    if (section === 'factory'){
+      // EXACT original factory homing (keeps the default world camera byte-identical).
       if (useOrbit && controls){
         controls.autoRotate = false;
         const d = ORBIT_DEFAULT;
         orbitTo(d.tx, d.ty, d.tz, d.dist, d.polar, d.azimuth);
       }
+      return;
     }
-    // keep the diorama data current for the scene we just revealed
-    updateSectionScenes();
-    syncSectionUI();
+    // focus point per FOCUSED theme (world-space x,z + a pleasant look-at height + orbit distance)
+    let fx = 0, fz = 0, fy = 26, dist = ORBIT_DEFAULT.dist;
+    if (section === 'shopping-mall'){
+      // the retail district: mall + storefronts sit by the consumer skyline endpoint (see makeRetailDistrict)
+      fx = 48; fz = ROW_Z[3]; fy = 14; dist = 110;
+    } else if (section === 'smart-factory'){
+      // the streamed production world: aim just outside the central arena so the chunked machines/belts fill
+      // the frame (the metropolis stays behind the camera). Same origin world — only the framing differs.
+      fx = 0; fz = 140; fy = 18; dist = 130;
+    } /* smart-city → origin metropolis (defaults fx=fz=0, fy=26) */
+    if (useOrbit && controls){
+      controls.autoRotate = false;            // focused world views don't auto-spin (that's the diorama flourish)
+      const d = ORBIT_DEFAULT;
+      orbitTo(fx, fy, fz, dist, d.polar, d.azimuth);
+    }
+    // also re-home the hand-rolled MAP rig + ROAM start so V (roam) drops you at the framed area
+    mapCam.tx = fx; mapCam.tz = fz;
+    if (roam.pos) roam.pos.set(fx, Math.max(12, fy + 6), fz + 96);
   }
   function syncSectionUI(){
     for (const s of SECTIONS){
@@ -5285,6 +5425,16 @@
     liveChunks(){ return chunks.size; },                  // # streamed chunk groups currently live
     chunkSignature(cx, cz){ return chunkSignature(cx, cz); },   // PURE deterministic content hash
     centralBuildings(){ return Object.keys(buildings).length; }, // live-economy towers (>=11 always)
+    // PHASE 2 introspection (view-only): which world slices the active theme shows. economy = firm towers +
+    // exchange + plaza; retail = shopping district; production = streamed chunks; world = the whole streamed
+    // origin world (hidden when a data diorama is active). Reads booleans only; mutates nothing.
+    themeVisibility(){ return {
+      theme: worldTheme, active: activeSection,
+      economy:    !!(economyGroup && economyGroup.visible !== false),
+      retail:     !!(retailGroup  && retailGroup.visible  !== false),
+      production: !!chunksVisible,
+      world:      !!(centralGroup && centralGroup.visible !== false),
+    }; },
   };
 
   /* ============================================================
