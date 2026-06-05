@@ -1820,6 +1820,13 @@
   const HALF = CHUNK/2;
   const chunks = new Map();              // "cx,cz" -> THREE.Group currently in the scene
   let lastTileKey = null;
+  // The CHUNK-CONTENT theme the live chunks were built for. buildChunk is theme-aware: 'smart-factory' yields
+  // the FACTORY-FLOOR build, every other world theme ('factory'/'smart-city'/'shopping-mall') yields the
+  // default biome/production build. We collapse to those two CONTENT classes so a theme switch that changes
+  // chunk CONTENT (factory<->smart-factory) can clear + re-stream, while smart-city/shopping-mall (which only
+  // HIDE production) need no re-stream. Null until the first chunk is built.
+  const chunkContentClass = t => (t === 'smart-factory' ? 'smart-factory' : 'factory');
+  let builtChunkTheme = null;
 
   // Region/ring math. A chunk's Chebyshev distance (in chunks) from center is its ring.
   const REGIONS = [
@@ -1939,6 +1946,22 @@
         new THREE.MeshStandardMaterial({ color: 0xff4438, roughness:.5 }),   // red hard-hat
         new THREE.MeshStandardMaterial({ color: 0x3a6bff, roughness:.5 }),   // blue hard-hat
       ],
+
+      // ---- SMART-FACTORY FLOOR assets (shared once; used ONLY by buildFactoryFloorChunk; never touched by
+      // the default factory/ chunk path so its draw order + chunkSignature stay byte-identical) ----
+      // Light concrete/metal shop floor (replaces the dark biome ground tile + the city road grid).
+      floorMat:     new THREE.MeshStandardMaterial({ color: 0x8b94a2, roughness:.92, metalness:.18 }),
+      // Painted AISLE GUIDE-LANES the AMRs travel — emissive-tinted thin strips (safety yellow / white),
+      // MeshBasic = crisp glow, NO bloom. NOT the city road grid + NO street lane-dashes.
+      aisleMat:     new THREE.MeshBasicMaterial({ color: 0xffd24a }),         // safety-yellow guide lane
+      aisleEdgeMat: new THREE.MeshBasicMaterial({ color: 0xeef2ff }),         // white lane edge stripe
+      // AMR (Autonomous Mobile Robot) body + small wheel/caster + glowing status LED. Reuse goodMat/
+      // goodGlowMat for the carried tote so totes read per supply-chain stage.
+      amrBodyMat:   new THREE.MeshStandardMaterial({ color: 0x2c3340, roughness:.55, metalness:.5 }),
+      amrTopMat:    new THREE.MeshStandardMaterial({ color: 0x3a4658, roughness:.6, metalness:.4 }),
+      amrLedMat:    new THREE.MeshBasicMaterial({ color: 0x46ffd0 }),         // glowing status LED (crisp)
+      // overhead GANTRY robot rails + travelling carriage (shared structural mats)
+      gantryMat:    new THREE.MeshStandardMaterial({ color: 0x586273, roughness:.5, metalness:.6 }),
     };
     // 4 prebuilt truck templates (one per body colour). Built ONCE here; buildChunk CLONEs the
     // matching template per truck (Object3D.clone shares geometry + material refs → no per-truck
@@ -1948,6 +1971,43 @@
     // template per worker (clone shares geometry + material refs → no per-pedestrian GPU allocation).
     // Clones are freed when their chunk group is dropped during recycle.
     chunkAssets.pedTemplates = chunkAssets.pedVestMat.map((vest, i) => makePedestrian(vest, chunkAssets.pedHatMat[i]));
+    // AMR templates: one per supply-chain STAGE (4), each carrying a stage-themed tote (goodMat/goodGlowMat).
+    // Built ONCE here; buildFactoryFloorChunk CLONEs the matching template per AMR (clone shares geometry +
+    // material refs → no per-AMR GPU allocation). Clones are freed when their chunk group is recycled. ONLY
+    // used by the smart-factory floor path (never the default factory path) → chunkSignature is untouched.
+    chunkAssets.amrTemplates = chunkAssets.goodMat.map((_, reg) => makeAMR(reg));
+  }
+
+  /* makeAMR(reg) → a small Autonomous Mobile Robot as a THREE.Group: a low flat mobile BASE + 4 small
+   * wheels/casters + a glowing status LED + a carried TOTE/good on top (stage-themed via goodMat/goodGlowMat
+   * so the AMR reads as moving that ring's product). Oriented LENGTH along +X (faces travel direction via
+   * rotation.y like the trucks), GROUP ORIGIN at GROUND level (wheels rest at y≈0). Overall ≈ 1.5 long (X)
+   * × 1.1 wide (Z), much SMALLER/lower than a logistics truck. ~9 child meshes; headless-safe (only
+   * Group/Mesh + scale/position from the SHARED geos — no new geometry/material allocated). */
+  function makeAMR(reg){
+    const A = chunkAssets, g = new THREE.Group();
+    const wheelR = 0.16, baseTopY = wheelR + 0.18;
+    const part = (geo, mat, sx,sy,sz, px,py,pz) => {
+      const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); g.add(m); return m;
+    };
+    // low flat mobile base slab (the chassis the cargo deck sits on)
+    const base = part(A.box, A.amrBodyMat, 1.5, 0.3, 1.05, 0, baseTopY, 0); base.castShadow = true;
+    // slightly recessed top deck (lighter) so the silhouette reads as a flatbed AMR
+    part(A.box, A.amrTopMat, 1.2, 0.1, 0.8, 0, baseTopY + 0.2, 0);
+    // glowing status LED dome at the front (+X) — crisp emissive beacon, no bloom
+    part(A.sphere, A.amrLedMat, 0.12, 0.1, 0.12, 0.62, baseTopY + 0.24, 0);
+    // carried TOTE / good on the deck: a stage-themed box + an emissive band (reuse the goods palette)
+    part(A.box, A.goodMat[reg], 0.7, 0.5, 0.62, -0.1, baseTopY + 0.55, 0);
+    part(A.box, A.goodGlowMat[reg], 0.74, 0.1, 0.66, -0.1, baseTopY + 0.7, 0);
+    // 4 small wheels/casters (cylinders, axle along Z so they roll along X); bottoms touch y≈0
+    const wz = 0.46;
+    for (const wx of [0.5, -0.5]){
+      for (const sgn of [-1, 1]){
+        const w = part(A.cyl, A.wheelMat, wheelR, 0.12, wheelR, wx, wheelR, sgn*wz);
+        w.rotation.x = Math.PI/2;
+      }
+    }
+    return g;
   }
 
   /* makePedestrian(vestMat, hatMat) → a small low-poly humanoid factory worker as a THREE.Group, ≈1.6
@@ -2379,6 +2439,12 @@
    *  are identical. Biome chosen by ring. Returns the THREE.Group.
    * ---------------------------------------------------------------- */
   function buildChunk(cx, cz){
+    // THEME-AWARE: the smart-factory world reads as a MODERN FACTORY FLOOR (production lines + robots + AMRs
+    // on aisle lanes) — NO city road grid, NO street lane-dashes, NO logistics trucks. It is a SEPARATE build
+    // path; the default 'factory'/biome build below is UNCHANGED (same RNG draw order → chunkSignature stable,
+    // which the world+city harnesses probe at worldTheme==='factory'). The branch only runs once the
+    // smart-factory theme is active (never during the harness).
+    if (worldTheme === 'smart-factory') return buildFactoryFloorChunk(cx, cz);
     const g = new THREE.Group();
     g.userData.trucks = [];            // streamed logistics — freed when the chunk is recycled
     g.userData.beltGoods = [];         // goods riding conveyor belts — freed when the chunk is recycled
@@ -2704,6 +2770,293 @@
     return g;
   }
 
+  /* makeRobotArm(g, ax, az, baseY, bend1, bend2) — assemble ONE articulated robot arm (base cylinder +
+   * 2 rotated segment boxes + a gripper tip) onto group `g` at (ax,az) standing on baseY, returning the
+   * { seg1, seg2 } meshes so the caller can register them for the render-loop oscillation. The two joint
+   * bend angles are PASSED IN (not drawn here) so the caller controls the RNG draw order. Shared geos/mats
+   * only (armMat + indicatorMat) — headless-safe, no new geometry/material. Used by buildFactoryFloorChunk
+   * to put robot ARMS at MANY stations; the default factory path keeps its own inline arm build (unchanged). */
+  function makeRobotArm(g, ax, az, baseY, bend1, bend2){
+    const base = new THREE.Mesh(chunkAssets.cyl, chunkAssets.armMat);
+    base.scale.set(0.5, 0.6, 0.5); base.position.set(ax, baseY + 0.3, az); g.add(base);
+    const seg1 = new THREE.Mesh(chunkAssets.box, chunkAssets.armMat);
+    seg1.scale.set(0.4, 2.0, 0.4); seg1.position.set(ax, baseY + 1.3, az);
+    seg1.rotation.z = bend1; g.add(seg1);
+    const seg2 = new THREE.Mesh(chunkAssets.box, chunkAssets.armMat);
+    seg2.scale.set(0.35, 1.6, 0.35);
+    seg2.position.set(ax + 0.9, baseY + 2.1, az); seg2.rotation.z = bend2; g.add(seg2);
+    const grip = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+    grip.scale.set(0.45, 0.3, 0.45); grip.position.set(ax + 1.4, baseY + 2.7, az); g.add(grip);
+    return { seg1, seg2 };
+  }
+
+  /* ----------------------------------------------------------------
+   *  buildFactoryFloorChunk(cx,cz) — the SMART-FACTORY presentation of one chunk: a MODERN FACTORY FLOOR.
+   *  Same streamed-world contract as buildChunk (deterministic from tileRng → identical on revisit, shared
+   *  assets only, respects inArena), but presented as a factory FLOOR instead of a city block:
+   *    - GROUND: light concrete/metal shop floor (NOT the dark biome ground tile, NO city road grid).
+   *    - AISLE GUIDE-LANES: painted emissive-tinted strips along this chunk's owned edges where AMRs travel
+   *      (NOT street lane-dashes).
+   *    - PRODUCTION: the SAME conveyor belts + goods + machines + per-stage toppers as the factory path, so
+   *      each ring still reads as a production stage — but with ROBOT ARMS at MORE stations + an overhead
+   *      GANTRY robot, presented on the factory floor.
+   *    - AMRs (replace the logistics trucks): small autonomous mobile robots carrying stage-themed totes,
+   *      driving the aisle lanes (looping/ wrapping, facing travel) → g.userData.amrs.
+   *    - WORKERS: the same chunk pedestrians (pedRng) — they fit a factory floor.
+   *  This path is INDEPENDENT of chunkSignature (the signature replays the factory path only, used at
+   *  worldTheme==='factory'); it is free to draw RNG in its own order. Headless-safe (Group/Mesh + shared
+   *  geos/mats; clones only). NEVER runs during the harness (worldTheme==='factory' there).
+   * ---------------------------------------------------------------- */
+  function buildFactoryFloorChunk(cx, cz){
+    const g = new THREE.Group();
+    g.userData.trucks = [];            // none on the factory floor (the truck loop simply finds none here)
+    g.userData.beltGoods = [];
+    g.userData.arms = []; g.userData.drills = []; g.userData.smoke = [];
+    g.userData.amrs = [];              // autonomous mobile robots on the aisle lanes (freed on recycle)
+    g.userData.peds = [];
+    const r = tileRng(cx, cz);
+    const ox = cx*CHUNK, oz = cz*CHUNK;
+    const ring = ringOf(cx, cz), reg = regionIndex(ring);
+    g.userData.ring = ring; g.userData.region = reg;
+
+    // GROUND: an industrial shop FLOOR (shared light concrete/metal material) — replaces the biome tile.
+    g.add(flatStrip(chunkAssets.floorMat, ox, oz, -0.02, CHUNK, CHUNK));
+
+    // PAINTED AISLE GUIDE-LANES along this chunk's owned south (z=oz-HALF) + west (x=ox-HALF) edges — the
+    // lanes the AMRs drive. Anchored to ABSOLUTE world coords so they tile seamlessly across borders. A
+    // bright safety-yellow centre strip flanked by thin white edge stripes (emissive, crisp; NOT a road).
+    if (!inArena(ox, oz-HALF)){
+      g.add(flatStrip(chunkAssets.aisleMat, ox, oz-HALF, 0.015, CHUNK, 1.0));
+      g.add(flatStrip(chunkAssets.aisleEdgeMat, ox, oz-HALF-1.1, 0.015, CHUNK, 0.16));
+      g.add(flatStrip(chunkAssets.aisleEdgeMat, ox, oz-HALF+1.1, 0.015, CHUNK, 0.16));
+    }
+    if (!inArena(ox-HALF, oz)){
+      g.add(flatStrip(chunkAssets.aisleMat, ox-HALF, oz, 0.015, 1.0, CHUNK));
+      g.add(flatStrip(chunkAssets.aisleEdgeMat, ox-HALF-1.1, oz, 0.015, 0.16, CHUNK));
+      g.add(flatStrip(chunkAssets.aisleEdgeMat, ox-HALF+1.1, oz, 0.015, 0.16, CHUNK));
+    }
+
+    // Don't decorate the central arena — the live economy lives there untouched.
+    if (inArena(ox, oz)) return g;
+
+    const M = 9, span = CHUNK - 2*M;
+    const dens = priceBoost(BIOME[reg].tier);
+
+    // ---- PRODUCTION LINES (reuse the factory builders, presented on the floor) ----
+    const beltTopY = 1.05;
+    const nBelts = 1 + (r() < 0.5 ? 1 : 0);
+    for (let bi = 0; bi < nBelts; bi++){
+      const onX = r() < 0.5;
+      const len = span * (0.6 + r()*0.2);
+      const cross = (bi === 0 ? -1 : 1) * span * (0.12 + r()*0.16);
+      const ctrA = (onX ? ox : oz) + (r()-0.5) * (span - len);
+      const ctrC = (onX ? oz : ox) + cross;
+      const bx = onX ? ctrA : ctrC, bz = onX ? ctrC : ctrA;
+      if (inArena(bx, bz)) continue;
+      const beltLo = ctrA - len/2, beltHi = ctrA + len/2;
+
+      // belt body + legs + side rails + emissive centerline (identical structure to the factory path)
+      const belt = new THREE.Mesh(chunkAssets.box, chunkAssets.beltMat);
+      if (onX) belt.scale.set(len, 0.9, 3.0); else belt.scale.set(3.0, 0.9, len);
+      belt.position.set(bx, beltTopY - 0.45, bz); belt.castShadow = true; g.add(belt);
+      for (let lg = -1; lg <= 1; lg += 2){
+        const leg = new THREE.Mesh(chunkAssets.cyl, chunkAssets.ventMat);
+        leg.scale.set(0.28, beltTopY - 0.45, 0.28);
+        const la = ctrA + lg * len * 0.32;
+        leg.position.set(onX ? la : ctrC, (beltTopY - 0.45) / 2, onX ? ctrC : la);
+        g.add(leg);
+      }
+      for (let sgn = -1; sgn <= 1; sgn += 2){
+        const rail = new THREE.Mesh(chunkAssets.box, chunkAssets.beltSideMat);
+        if (onX){ rail.scale.set(len, 0.55, 0.4); rail.position.set(bx, beltTopY, bz + sgn*1.3); }
+        else    { rail.scale.set(0.4, 0.55, len); rail.position.set(bx + sgn*1.3, beltTopY, bz); }
+        g.add(rail);
+      }
+      const line = new THREE.Mesh(chunkAssets.box, chunkAssets.beltLineMat);
+      if (onX) line.scale.set(len*0.96, 0.06, 0.4); else line.scale.set(0.4, 0.06, len*0.96);
+      line.position.set(bx, beltTopY + 0.5, bz); g.add(line);
+
+      // MACHINES / STATIONS straddling the belt
+      const nMach = Math.min(4, 2 + ((r()*2 + dens*0.6)|0));
+      for (let mi = 0; mi < nMach; mi++){
+        const t = (mi + 0.5) / nMach;
+        const ma = beltLo + t * len;
+        const side = (r() < 0.5 ? -1 : 1);
+        const mc = ctrC + side * 3.2;
+        const mx = onX ? ma : mc, mz = onX ? mc : ma;
+        if (inArena(mx, mz)) continue;
+        const mw = 4 + r()*3, md = 4 + r()*3, mh = (3 + r()*3) * (0.85 + dens*0.3);
+        const plinth = new THREE.Mesh(chunkAssets.box, chunkAssets.plinthMat);
+        plinth.scale.set(mw + 0.8, 0.6, md + 0.8); plinth.position.set(mx, 0.3, mz); g.add(plinth);
+        const housing = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[reg]);
+        housing.scale.set(mw, mh, md); housing.position.set(mx, mh/2 + 0.3, mz); housing.castShadow = true; g.add(housing);
+        const panel = new THREE.Mesh(chunkAssets.box, chunkAssets.accentMat[reg]);
+        if (onX){ panel.scale.set(mw*0.6, mh*0.3, 0.12); panel.position.set(mx, mh*0.62 + 0.3, mz - side*md*0.5 - 0.07); }
+        else    { panel.scale.set(0.12, mh*0.3, md*0.6); panel.position.set(mx - side*mw*0.5 - 0.07, mh*0.62 + 0.3, mz); }
+        g.add(panel);
+        const indicator = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+        const stripOff = ((mi % 3) - 1) * mw * 0.18;
+        const ay = 0.3 + mh * 0.32;
+        if (onX){ indicator.scale.set(mw*0.34, mh*0.16, 0.1); indicator.position.set(mx + stripOff, ay, mz - side*(md*0.5 + 0.08)); }
+        else    { indicator.scale.set(0.1, mh*0.16, md*0.34); indicator.position.set(mx - side*(mw*0.5 + 0.08), ay, mz + stripOff); }
+        g.add(indicator);
+        const dots = new THREE.Group();
+        for (let di = 0; di < 3; di++){
+          const dot = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+          dot.scale.setScalar(0.22);
+          const lat = (di - 1) * mw * 0.14;
+          const dy = ay + mh * 0.12;
+          if (onX) dot.position.set(mx + stripOff + lat, dy, mz - side*(md*0.5 + 0.14));
+          else     dot.position.set(mx - side*(mw*0.5 + 0.14), dy, mz + stripOff + lat);
+          dots.add(dot);
+        }
+        g.add(dots);
+        const vent = new THREE.Mesh(chunkAssets.cyl, chunkAssets.ventMat);
+        const vr = Math.min(mw, md) * 0.12 + 0.18, vH = mh * 0.45 + 0.6;
+        vent.scale.set(vr, vH, vr);
+        vent.position.set(mx + mw*0.28, 0.3 + mh + vH*0.5, mz - md*0.28); g.add(vent);
+        const topY = mh + 0.3;
+        // per-stage TOPPER (matches the factory path's read)
+        if (reg === 2){
+          const cap = new THREE.Mesh(chunkAssets.sphere, chunkAssets.heatMat);
+          cap.scale.setScalar(0.7 + dens*0.35); cap.position.set(mx, topY + 0.3, mz); g.add(cap);
+          const collar = new THREE.Mesh(chunkAssets.cyl, chunkAssets.ventMat);
+          const cr = 0.5 + dens*0.25;
+          collar.scale.set(cr, 0.3, cr); collar.position.set(mx, topY, mz); g.add(collar);
+        } else if (reg === 3){
+          const dh = 4 + r()*4;
+          const mast = new THREE.Mesh(chunkAssets.box, chunkAssets.derrickMat);
+          mast.scale.set(0.9, dh, 0.9); mast.position.set(mx, topY + dh/2, mz); g.add(mast);
+          const head = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[3]);
+          head.scale.set(1.8, 0.8, 1.8); head.position.set(mx, topY + dh, mz); g.add(head);
+          const bit = new THREE.Mesh(chunkAssets.box, chunkAssets.ventMat);
+          bit.scale.set(1.0, 0.7, 1.0); bit.position.set(mx, topY + dh - 0.6, mz); g.add(bit);
+          g.userData.drills.push({ mesh: bit, speed: 1.1 + (mi % 3) * 0.25,
+                                   phase: (mi * 2.3 + mx * 0.05 + mz * 0.09) });
+        } else if (reg === 0){
+          const pack = new THREE.Mesh(chunkAssets.box, chunkAssets.machineMat[0]);
+          pack.scale.set(mw*0.7, 1.4, md*0.7); pack.position.set(mx, topY + 0.7, mz); g.add(pack);
+          const strap = new THREE.Mesh(chunkAssets.box, chunkAssets.accentMat[0]);
+          if (onX) strap.scale.set(mw*0.72, 0.5, 0.16); else strap.scale.set(0.16, 0.5, md*0.72);
+          strap.position.set(mx, topY + 0.7, mz); g.add(strap);
+        }
+        // ROBOTS ARE PROMINENT on the smart-factory floor: a robot ARM works at EVERY station (not only the
+        // fab tier). Joint bends are drawn here (own RNG order — no signature constraint) and the segments are
+        // registered for the render-loop oscillation, exactly like the factory fab arms.
+        const armBaseY = (reg === 2 || reg === 3) ? topY + 0.2 : topY;
+        const a = makeRobotArm(g, mx, mz, armBaseY, 0.5 + r()*0.4, -0.8 - r()*0.5);
+        g.userData.arms.push({ seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z,
+                               phase: (mi * 1.7 + mx * 0.13 + mz * 0.07) });
+      }
+
+      // GOODS riding the belt (stage-themed units; slide as rigid groups in the render loop)
+      const nGoods = 3 + ((r()*3)|0);
+      const gsize = reg === 3 ? 0.85 : (reg === 2 ? 0.7 : 0.6);
+      const gy = beltTopY + 0.5 + gsize/2;
+      const gspeed = 3 + r()*3, gdir = r() < 0.5 ? 1 : -1;
+      const axis = onX ? 'x' : 'z';
+      for (let gi = 0; gi < nGoods; gi++){
+        const tt = (gi + 0.5) / nGoods;
+        const pos = beltLo + tt * len;
+        const mesh = makeGood(reg, gi, gsize);
+        if (onX) mesh.position.set(pos, gy, ctrC); else mesh.position.set(ctrC, gy, pos);
+        g.add(mesh);
+        g.userData.beltGoods.push({ mesh, axis, pos, dir: gdir, speed: gspeed, lo: beltLo, hi: beltHi });
+      }
+
+      // OVERHEAD GANTRY ROBOT spanning the FIRST belt: two end posts + a cross-rail + a travelling carriage
+      // with a hanging gripper. Static structure (the carriage rides the goods motion visually); reuse the
+      // gantry/arm/indicator mats. Built only for bi===0 so each chunk gets at most one gantry.
+      if (bi === 0){
+        const gH = beltTopY + 4.2;                       // rail height above the floor
+        for (let pp = -1; pp <= 1; pp += 2){
+          const post = new THREE.Mesh(chunkAssets.box, chunkAssets.gantryMat);
+          post.scale.set(0.4, gH, 0.4);
+          if (onX) post.position.set(ctrA + pp*len*0.42, gH/2, ctrC);
+          else     post.position.set(ctrC, gH/2, ctrA + pp*len*0.42);
+          g.add(post);
+        }
+        const rail = new THREE.Mesh(chunkAssets.box, chunkAssets.gantryMat);
+        if (onX) rail.scale.set(len*0.88, 0.35, 0.45); else rail.scale.set(0.45, 0.35, len*0.88);
+        rail.position.set(bx, gH, bz); g.add(rail);
+        const cart = new THREE.Mesh(chunkAssets.box, chunkAssets.armMat);
+        cart.scale.set(0.7, 0.5, 0.7); cart.position.set(bx, gH - 0.4, bz); g.add(cart);
+        const hook = new THREE.Mesh(chunkAssets.box, chunkAssets.indicatorMat);
+        hook.scale.set(0.22, 1.0, 0.22); hook.position.set(bx, gH - 1.1, bz); g.add(hook);
+        // travel the carriage + hook back and forth along the rail (alloc-free, like the belt goods).
+        g.userData.amrs.push({ kind:'gantry', mesh: cart, hook, axis, base: (onX?bx:bz),
+                               lo: beltLo, hi: beltHi, dir: gdir, speed: gspeed*0.5,
+                               pos: beltLo + len*0.5, baseY: gH - 0.4 });
+      }
+    }
+
+    // ---- AMRs (replace the logistics trucks): autonomous mobile robots driving the AISLE LANES, carrying
+    // stage-themed totes. Looping/ wrapping like the trucks but SMALLER/SLOWER + facing travel. Determinism
+    // from a SEPARATE amr-salt RNG so adding/tuning AMRs never perturbs the production 'r()' draw order. ----
+    const ar = pedRng(cx + 101, cz - 57);              // separate salt (offset the ped seed) → own stream
+    const LANE = HALF - 0;                             // the aisle sits on the owned south/west edges
+    const nAmr = 1 + (ar() < 0.65 ? 1 : 0);            // 1–2 AMRs / chunk
+    for (let i = 0; i < nAmr; i++){
+      const tpl = chunkAssets.amrTemplates[reg];       // tote themed to this ring's stage
+      const mesh = tpl.clone();                         // shares geo + material refs (no per-AMR GPU alloc)
+      const onX = ar() < 0.5, dir = ar() < 0.5 ? 1 : -1, speed = 2.2 + ar()*1.6;  // slower than trucks
+      let axis, lane, lo, hi, pos;
+      if (onX){
+        axis = 'x'; lane = (oz - LANE); lo = ox - HALF; hi = ox + HALF; pos = lo + ar()*(hi - lo);
+        if (inArena(pos, lane)) continue;
+        mesh.position.set(pos, 0, lane); if (dir < 0) mesh.rotation.y = Math.PI;
+      } else {
+        axis = 'z'; lane = (ox - LANE); lo = oz - HALF; hi = oz + HALF; pos = lo + ar()*(hi - lo);
+        if (inArena(lane, pos)) continue;
+        mesh.position.set(lane, 0, pos); mesh.rotation.y = dir > 0 ? -Math.PI/2 : Math.PI/2;
+      }
+      g.add(mesh);
+      g.userData.amrs.push({ kind:'amr', mesh, axis, pos, dir, speed, lo, hi });
+    }
+
+    // ---- FACTORY WORKERS — same chunk pedestrians as the factory path (pedRng → byte-stable revisits),
+    // walking beside this chunk's owned edges. They fit a factory floor, so keep them. ----
+    const pr = pedRng(cx, cz);
+    const nPed = 1 + (pr() < 0.55 ? 1 : 0);
+    const SW = 5.6;
+    for (let i = 0; i < nPed; i++){
+      const tpl = chunkAssets.pedTemplates[(pr() * chunkAssets.pedTemplates.length) | 0];
+      const grp = tpl.clone();
+      const onX = pr() < 0.5;
+      const dir = pr() < 0.5 ? 1 : -1;
+      const speed = 1.1 + pr() * 0.9;
+      const side = pr() < 0.5 ? -1 : 1;
+      const phase = pr() * 6.283;
+      const stride = 6.5 + pr() * 1.5;
+      let axis, lo, hi, pos, px, pz;
+      if (onX){
+        axis = 'x'; lo = ox - HALF; hi = ox + HALF;
+        const lane = (oz - HALF) + side * SW;
+        pos = lo + pr() * (hi - lo);
+        if (inArena(pos, lane)) continue;
+        px = pos; pz = lane;
+        grp.rotation.y = dir > 0 ? Math.PI/2 : -Math.PI/2;
+      } else {
+        axis = 'z'; lo = oz - HALF; hi = oz + HALF;
+        const lane = (ox - HALF) + side * SW;
+        pos = lo + pr() * (hi - lo);
+        if (inArena(lane, pos)) continue;
+        px = lane; pz = pos;
+        grp.rotation.y = dir > 0 ? 0 : Math.PI;
+      }
+      const baseY = 0;
+      grp.position.set(px, baseY, pz);
+      g.add(grp);
+      const li = grp.userData.pedLimbIdx;
+      g.userData.peds.push({
+        grp, axis, pos, dir, speed, lo, hi, phase, stride, baseY,
+        legA: grp.children[li.legA], legB: grp.children[li.legB],
+        armA: grp.children[li.armA], armB: grp.children[li.armB],
+      });
+    }
+    return g;
+  }
+
   /* ----------------------------------------------------------------
    *  streamChunks(px,pz) — the per-frame load/recycle around (px,pz).
    *  Loads tiles within VIEW_R, recycles (scene.remove + dispose refs)
@@ -2717,16 +3070,19 @@
       // dispose the few per-puff smoke material CLONES (bounded ≤2/chunk) before dropping refs → no leak
       const sm = g.userData.smoke;
       if (sm) for (let i=0;i<sm.length;i++){ const mt = sm[i].mesh && sm[i].mesh.material; if (mt && mt.dispose) mt.dispose(); }
-      // drop streamed-traffic + belt-goods + MOTION-POLISH + PEDESTRIAN refs (keeps roaming bounded, no leak)
+      // drop streamed-traffic + belt-goods + MOTION-POLISH + PEDESTRIAN + AMR refs (keeps roaming bounded, no leak)
       g.userData.trucks = null; g.userData.beltGoods = null;
       g.userData.arms = null; g.userData.drills = null; g.userData.smoke = null;
-      g.userData.peds = null;
+      g.userData.peds = null; g.userData.amrs = null;
     }
   }
   function streamChunks(px, pz, force){
     const tx = Math.round(px/CHUNK), tz = Math.round(pz/CHUNK), key = tx+','+tz;
     if (!force && key === lastTileKey) return;
     lastTileKey = key;
+    // record the CONTENT class the chunks built this pass belong to (factory vs smart-factory floor), so a
+    // later theme switch can detect a content change and re-stream (see restreamIfThemeChanged).
+    builtChunkTheme = chunkContentClass(worldTheme);
     // load ring within VIEW_R
     for (let dx=-VIEW_R; dx<=VIEW_R; dx++) for (let dz=-VIEW_R; dz<=VIEW_R; dz++){
       const k = (tx+dx) + ',' + (tz+dz);
@@ -3426,6 +3782,17 @@
             const swing = s * 0.5;                               // leg/arm swing amplitude
             w.legA.rotation.x =  swing;  w.legB.rotation.x = -swing;
             w.armA.rotation.x = -swing;  w.armB.rotation.x =  swing;  // arms anti-phase to legs
+          }
+          // SMART-FACTORY AMRs (autonomous mobile robots) + the overhead GANTRY carriage: drive each along
+          // its aisle/rail axis and WRAP at the chunk edge (continuous flow into the neighbour's identical
+          // aisle). Alloc-free — only the cloned base group's position is mutated (the factory floor has no
+          // trucks, so the truck loop above finds none here). Empty/absent on the default factory chunks.
+          const amr = ud.amrs;
+          if (amr) for (let i=0;i<amr.length;i++){ const m = amr[i];
+            m.pos += m.dir*m.speed*dt;
+            if (m.pos > m.hi) m.pos = m.lo; else if (m.pos < m.lo) m.pos = m.hi;
+            m.mesh.position[m.axis] = m.pos;
+            if (m.kind === 'gantry' && m.hook) m.hook.position[m.axis] = m.pos;
           }
         }
 
@@ -5208,10 +5575,27 @@
   // `chunksVisible`, which the render loop applies to each LIVE chunk group's `.visible` — and to any chunk
   // streamed in while a theme is active (built hidden if the theme doesn't show production, visible if it does).
   // VIEW-ONLY + headless-safe (only boolean `.visible` writes on stubbed objects; no geometry, no economy).
+  // RE-STREAM when a world theme switch changes the chunk CONTENT (factory<->smart-factory): the smart-factory
+  // floor build is different geometry from the default biome/production build, so the LIVE chunks must be
+  // cleared + repopulated with the new theme's content. smart-city/shopping-mall only HIDE production (same
+  // content class as factory) → no re-stream. Recycle frees every per-chunk ref (incl. amrs) so no leak; we
+  // reset lastTileKey + force one streamChunks around the CURRENT viewpoint to refill immediately.
+  function restreamIfThemeChanged(theme){
+    const wantClass = chunkContentClass(theme);
+    if (builtChunkTheme !== null && builtChunkTheme === wantClass) return;   // content unchanged → nothing to do
+    for (const [,cg] of chunks) recycleChunk(cg);      // scene.remove + drop refs (bounded; no leak)
+    chunks.clear();
+    lastTileKey = null;                                // so the forced stream below re-evaluates the tile
+    const vp = (typeof activeViewpoint === 'function') ? activeViewpoint() : { x: 0, z: 0 };
+    streamChunks(vp.x, vp.z, true);                    // repopulate with the active theme's chunk content
+  }
   function applyThemeVisibility(theme){
     const econ = (theme === 'factory' || theme === 'smart-city');
     const retail = (theme === 'factory' || theme === 'shopping-mall');
     const prod = (theme === 'factory' || theme === 'smart-factory');
+    // first, re-stream if the chunk CONTENT class changed (factory<->smart-factory). This rebuilds `chunks`
+    // with the right build before we set per-chunk visibility below.
+    restreamIfThemeChanged(theme);
     if (economyGroup) economyGroup.visible = econ;
     if (retailGroup)  retailGroup.visible  = retail;
     chunksVisible = prod;
@@ -5435,6 +5819,24 @@
       production: !!chunksVisible,
       world:      !!(centralGroup && centralGroup.visible !== false),
     }; },
+  };
+
+  // SMART-FACTORY introspection (view-only; harness use). Reports the per-chunk content counts of the LIVE
+  // chunk at (cx,cz) under the ACTIVE theme so a harness can confirm the factory-floor build carries AMRs +
+  // robot arms + belt goods and NO logistics trucks. Reads only the live `chunks` Map + userData arrays;
+  // mutates nothing. `builtTheme` is the content class the live chunks were built for.
+  globalThis.__smartFactoryHeadless = {
+    builtTheme(){ return builtChunkTheme; },
+    inspectChunk(cx, cz){
+      const g = chunks.get(cx + ',' + cz); if (!g || !g.userData) return null;
+      const u = g.userData;
+      const n = a => (a && a.length) ? a.length : 0;
+      // AMRs minus the gantry carriage record so 'amrs' reads as the mobile-robot count
+      const amrMobile = (u.amrs || []).filter(m => m.kind !== 'gantry').length;
+      return { region: u.region, ring: u.ring, trucks: n(u.trucks), amrs: amrMobile,
+               beltGoods: n(u.beltGoods), arms: n(u.arms), drills: n(u.drills),
+               smoke: n(u.smoke), peds: n(u.peds) };
+    },
   };
 
   /* ============================================================
