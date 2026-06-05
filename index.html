@@ -1445,6 +1445,7 @@
   const targets = {                  // PLAIN-JS animation targets (source of truth for the probe)
     height: {}, cur: {}, glow: {}, deskGlow: 0,
     partnerGlow: {}, deskPartnerGlow: 0,   // trade-partner pulse driven by the selected firm's last trades
+    retailGlow: 0,                         // RECENT RETAIL SALES pulse for the mall signage (decays each tick; view-only)
   };
   let lastEv = null;                 // last processed tick's events (for trade-link highlighting)
   let selectedFirmId = null;         // firm currently INSPECTED (drives link highlighting; null = none)
@@ -2156,6 +2157,167 @@
     }
   }
 
+  /* ============================================================
+   *  RETAIL / SHOPPING DISTRICT — makeRetailDistrict()
+   *  A wide low MALL + a short STOREFRONT STRIP + decorative SHOPPERS planted in the FIXED central
+   *  district (centralGroup), out to the EAST near the CONSUMER SKYLINE endpoint at (48, tierTopY(3),
+   *  ROW_Z[3]) — exactly where syncScene streams the RETAIL sales flow (ev.retail → retailPool). So the
+   *  finished-goods flow visibly ARRIVES at the stores. The whole cluster sits east of the T3 towers
+   *  (which occupy x∈[-19,19] at z=30), clear of the EXCHANGE (origin, r≈5) and the plaza/ring paths.
+   *
+   *  DECORATIVE / NON-PICKABLE: nothing here is tagged userData.firmId or pushed to `pickables`, so
+   *  click-to-inspect still resolves EXACTLY the 11 firm towers + NPC_DESK (pickables count stays 2),
+   *  and `buildings` (the firm-tower registry the city harness counts) is untouched (stays 11).
+   *
+   *  SHARED ASSETS: this runs ONCE at init, so the geometry/materials built here are created once and
+   *  reused across the stores (a small BRAND palette indexed by store, plus shared window/awning mats).
+   *  Signs/windows are EMISSIVE so the global day/night cycle (updateDayNight) makes them GLOW at night.
+   *  Headless-safe: only Group/Mesh + scaled SHARED geos + Color/position/rotation writes; guarded on
+   *  chunkAssets/centralGroup so it never throws under the stubbed-THREE harnesses. */
+  let retailSign = null;             // { mat, atrium } — emissive refs the frame loop pulses (view-only)
+  function makeRetailDistrict(){
+    if (!centralGroup) return;                              // group must exist first
+    const TG = new THREE.Group();                          // sub-root so the whole district is one add
+    // SEPARATE retail PRNG (persistent district → unconstrained; NOT any chunk RNG, so chunkSignature is
+    // wholly untouched). Seeded with its own salt so store size/colour variety is stable but free.
+    let rs = 0x9e3779b9 >>> 0;
+    const rrand = () => { rs = (rs*1597334677 + 1013904223) >>> 0; return rs / 4294967296; };
+
+    const STREET_Z = ROW_Z[3];                             // 30 — the consumer/assembly row the retail flow targets
+    const skylineX = 48;                                   // x of the consumer-skyline flow endpoint (see syncScene ev.retail)
+
+    // ---- SHARED RETAIL GEOMETRY (built ONCE; reused by mall + every store) ----
+    const box = chunkAssets && chunkAssets.box ? chunkAssets.box : new THREE.BoxGeometry(1,1,1);
+    const cyl = chunkAssets && chunkAssets.cyl ? chunkAssets.cyl : new THREE.CylinderGeometry(1,1,1,10);
+    // ---- SHARED RETAIL MATERIALS (built ONCE) ----
+    const wallMat   = new THREE.MeshStandardMaterial({ color: 0x2a3346, roughness:.8, metalness:.2 });
+    const mallMat   = new THREE.MeshStandardMaterial({ color: 0x32405c, roughness:.7, metalness:.25 });
+    const trimMat   = new THREE.MeshStandardMaterial({ color: 0x1a2236, roughness:.85, metalness:.2 });
+    const lotMat    = new THREE.MeshStandardMaterial({ color: 0x12161f, roughness:.95 });
+    const pylonMat  = new THREE.MeshStandardMaterial({ color: 0x202a40, roughness:.6, metalness:.4 });
+    // emissive glazed ATRIUM glass (tinted, glows at night); emissive lit DISPLAY WINDOWS; emissive AWNING band.
+    const atriumMat = new THREE.MeshStandardMaterial({ color: 0x9ec8ff, emissive: new THREE.Color(0x3a6fd0),
+      emissiveIntensity: 0.55, roughness:.25, metalness:.5, transparent:true, opacity:0.85 });
+    const windowMat = new THREE.MeshStandardMaterial({ color: 0xffe9b8, emissive: new THREE.Color(0xffd27a),
+      emissiveIntensity: 0.9, roughness:.4 });
+    const awningMat = new THREE.MeshStandardMaterial({ color: 0xb83a4a, roughness:.7 });
+    // BRAND-SIGN palette: a few EMISSIVE MeshStandard sign materials (crisp glow, no bloom), indexed by
+    // store. Built ONCE and SHARED across stores (no unique material per store). The mall logo band reuses
+    // its own brighter sign material so the frame loop can pulse it with recent retail volume.
+    const brandHex = [0xff3b6b, 0x35d3a6, 0x4d9bff, 0xffb13b, 0xb86bff, 0x36e0e0, 0xff7a3a];
+    const brandMats = brandHex.map(h => new THREE.MeshStandardMaterial({
+      color: new THREE.Color(h), emissive: new THREE.Color(h), emissiveIntensity: 0.85, roughness:.4 }));
+    const logoMat = new THREE.MeshStandardMaterial({ color: 0x9be7ff, emissive: new THREE.Color(0x9be7ff),
+      emissiveIntensity: 1.0, roughness:.35, metalness:.2 });
+
+    // little builder: a SHARED-geo Mesh scaled + placed into TG (alloc only at init).
+    const add = (geo, mat, sx,sy,sz, px,py,pz) => {
+      const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz);
+      m.castShadow = m.receiveShadow = true; TG.add(m); return m;
+    };
+
+    // ===== 1) SHOPPING MALL — a wide low box near the consumer skyline, atrium facing the towers (−X) =====
+    const mallX = skylineX + 6, mallY0 = 0, mallW = 14 /*along X*/, mallH = 7, mallD = 20 /*along Z*/;
+    add(box, mallMat, mallW, mallH, mallD, mallX, mallY0 + mallH/2, STREET_Z);             // main volume
+    add(box, trimMat, mallW + 0.6, 0.7, mallD + 0.6, mallX, mallH + 0.35, STREET_Z);       // roof parapet cap
+    // glazed ATRIUM FACADE on the −X (tower-facing) wall — a tall emissive glass curtain
+    const atrium = add(box, atriumMat, 0.5, mallH * 0.82, mallD * 0.7, mallX - mallW/2 - 0.05, mallH*0.45, STREET_Z);
+    // ENTRANCE CANOPY / AWNING projecting from the atrium toward the towers
+    add(box, awningMat, 3.0, 0.4, 7.0, mallX - mallW/2 - 1.6, mallH*0.42, STREET_Z);
+    add(cyl, trimMat, 0.18, mallH*0.42, 0.18, mallX - mallW/2 - 3.0, mallH*0.21, STREET_Z - 3.2);  // canopy post
+    add(cyl, trimMat, 0.18, mallH*0.42, 0.18, mallX - mallW/2 - 3.0, mallH*0.21, STREET_Z + 3.2);  // canopy post
+    // tall SIGNAGE PYLON with a bright emissive mall-logo band (placed at the skyline endpoint so the
+    // arriving retail flow reads as "sales landing at the mall").
+    const pylonH = 13;
+    add(cyl, pylonMat, 0.4, pylonH, 0.4, skylineX, pylonH/2, STREET_Z - mallD*0.36);              // mast
+    const logoBand = add(box, logoMat, 1.0, 2.6, 5.0, skylineX, pylonH - 1.8, STREET_Z - mallD*0.36); // glowing logo band
+    // a soft point light so the mall reads as a lively node at night (crisp, no bloom)
+    const mallLight = new THREE.PointLight(0xffe6c0, 0.8, 44, 2);
+    mallLight.position.set(mallX - mallW*0.3, mallH + 2, STREET_Z); TG.add(mallLight);
+
+    // ===== 2) STOREFRONT STRIP — a short retail street of individual stores flanking the mall =====
+    // The stores line up along Z on the WEST face of the mall row (x just inside the skyline), forming a
+    // little high-street between the T3 towers and the mall. Heights/widths vary deterministically via the
+    // retail PRNG (rrand) — persistent, unconstrained.
+    const N_STORE = 6, storeX = skylineX - 6.5;             // west of the mall, clear of T3 towers (x<=19)
+    const stripZ0 = STREET_Z - mallD/2 + 2;                 // start of the strip (south end)
+    let zc = stripZ0;
+    for (let i = 0; i < N_STORE; i++){
+      const w = 4.2 + rrand() * 1.8;                        // shopfront width (along Z)
+      const h = 3.2 + rrand() * 2.4;                        // shopfront height
+      const dpt = 4.5 + rrand() * 1.0;                      // depth (along X, toward the mall)
+      const cz = zc + w/2;
+      // shopfront body
+      add(box, wallMat, dpt, h, w - 0.5, storeX, h/2, cz);
+      // big EMISSIVE BRAND SIGN above the storefront, distinct colour per store (shared palette)
+      const bm = brandMats[i % brandMats.length];
+      add(box, bm, 0.4, 1.1, w - 1.2, storeX - dpt/2 - 0.1, h + 0.7, cz);
+      // lit EMISSIVE DISPLAY WINDOWS at ground level (two panes flanking a door reveal)
+      add(box, windowMat, 0.25, h*0.5, (w - 2.0)*0.46, storeX - dpt/2 - 0.06, h*0.34, cz - (w-2.0)*0.27);
+      add(box, windowMat, 0.25, h*0.5, (w - 2.0)*0.46, storeX - dpt/2 - 0.06, h*0.34, cz + (w-2.0)*0.27);
+      // AWNING projecting over the shopfront (slanted) — colour alternates with the brand for variety
+      const aw = add(box, awningMat, 1.6, 0.25, w - 1.0, storeX - dpt/2 - 0.85, h*0.62, cz);
+      aw.rotation.z = -0.22;
+      zc = cz + w/2 + 1.0;                                  // gap to the next store
+    }
+
+    // ===== a small PARKING STRIP by the mall + one parked delivery vehicle (decorative scenery) =====
+    const lot = new THREE.Mesh(chunkAssets && chunkAssets.stripGeo ? chunkAssets.stripGeo : new THREE.PlaneGeometry(1,1), lotMat);
+    lot.rotation.x = -Math.PI/2; lot.scale.set(10, 9, 1);
+    lot.position.set(mallX, 0.02, STREET_Z + mallD*0.5 + 5.5); lot.receiveShadow = true; TG.add(lot);
+    const truckTpl = chunkAssets && chunkAssets.truckTemplates;
+    if (truckTpl && truckTpl.length){
+      const parked = truckTpl[0].clone();                  // shares geo+mat refs (no GPU alloc); STATIC scenery
+      parked.position.set(mallX - 2.5, 0.05, STREET_Z + mallD*0.5 + 5.5);
+      parked.rotation.y = Math.PI/2;                        // nose toward the mall
+      TG.add(parked);
+    }
+
+    centralGroup.add(TG);
+
+    // ===== 3) SHOPPERS — clone a few pedestrians that walk the storefront street / mall frontage =====
+    // Reuse placeOnPath + the plaza walk/limb-swing animation by pushing into `plazaPeds` (the existing
+    // central-plaza animation block drives them, alloc-free, frozen under reduce-motion). DECORATIVE.
+    const pedTpl = chunkAssets && chunkAssets.pedTemplates;
+    if (pedTpl && pedTpl.length){
+      // a closed loop running the storefront frontage (in front of the windows) + back along the lot edge,
+      // clear of the store/mall footprints (stores at x≈storeX, mall at x≈mallX).
+      const frontX = storeX - 3.4;                          // walking lane just in front of the shopfronts
+      const backX  = mallX + mallW/2 + 2.5;                 // far lane behind the mall (east edge of arena)
+      const shopPath = [
+        { x: frontX, z: STREET_Z - mallD/2 + 1 },
+        { x: frontX, z: STREET_Z + mallD/2 - 1 },
+        { x: backX,  z: STREET_Z + mallD/2 + 4 },
+        { x: backX,  z: STREET_Z - mallD/2 - 4 },
+      ];
+      const loopLen = (pts) => { let L = 0; for (let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length]; L += Math.hypot(b.x-a.x, b.z-a.z); } return L; };
+      const L = loopLen(shopPath);
+      const N_SHOP = 5;
+      for (let i = 0; i < N_SHOP; i++){
+        const tpl = pedTpl[i % pedTpl.length];
+        const grp = tpl.clone();                            // shares geo+mat refs (no GPU alloc)
+        const li = grp.userData.pedLimbIdx;
+        centralGroup.add(grp);
+        const rec = {
+          grp, path: shopPath, L,
+          dir: (i % 2 === 0) ? 1 : -1,                      // mingle both ways along the frontage
+          speed: 0.9 + (i % 4) * 0.16,                      // gentle browsing pace
+          u: (i / N_SHOP) * L,
+          phase: i * 2.1, stride: 6.0 + (i % 3) * 0.5, baseY: 0,
+          legA: grp.children[li.legA], legB: grp.children[li.legB],
+          armA: grp.children[li.armA], armB: grp.children[li.armB],
+        };
+        placeOnPath(rec, grp);                              // seat at the start pose (also under reduce-motion)
+        plazaPeds.push(rec);                                // existing plaza animation drives them
+      }
+    }
+
+    // OPTIONAL economy tie: expose the mall signage/atrium emissive refs so the frame loop can gently pulse
+    // them with RECENT RETAIL SALES volume (targets.retailGlow, decayed in syncScene from ev.retail.sold —
+    // read-only, VIEW-ONLY). Under reduce-motion / idle the loop holds a STEADY lit level. See the frame loop.
+    retailSign = { mat: logoMat, atrium: atriumMat, base: 1.0, baseAtrium: 0.55 };
+  }
+
   // deterministic per-tile PRNG → a tile looks identical on every revisit (seed = chunk coords)
   function tileRng(cx, cz){
     let s = (cx*73856093 ^ cz*19349663 ^ 0x5f3759df) >>> 0;
@@ -2762,6 +2924,10 @@
     // CENTRAL-PLAZA LIFE: decorative peds + delivery vehicles in the FIXED district. Built RIGHT AFTER
     // buildChunkAssets() so the shared truck/ped templates exist to clone. Persistent (never streamed).
     makePlazaLife();
+    // RETAIL / SHOPPING DISTRICT: decorative mall + storefront strip + shoppers near the consumer
+    // skyline (where ev.retail flow lands). Built right after makePlazaLife() so the shared ped/truck
+    // templates exist to clone. Persistent (never streamed); NON-PICKABLE (no firmId / no pick registration).
+    makeRetailDistrict();
     streamChunks(0, 0, true);
 
     // ===== the four bounded DIORAMAS (market/finance/network/leaderboard) =====
@@ -2946,6 +3112,15 @@
     recomputeTargetHeights();
     for (const id in targets.glow) targets.glow[id] *= 0.6;
     targets.deskGlow *= 0.6;
+    targets.retailGlow *= 0.6;            // decay the mall-signage pulse; re-fed from ev.retail.sold here (view-only)
+    // RECENT RETAIL SALES → mall-signage pulse target. Read-only sum of this tick's units SOLD (ev.retail),
+    // normalised to ~0..1 and EASED UP toward (never below) the decayed value so a burst of sales brightens
+    // the mall signage. NEVER mutates the economy. Guarded so it is safe under the headless stub.
+    if (ev && Array.isArray(ev.retail)){
+      let soldVol = 0; for (const r of ev.retail) if (r && r.sold > 0) soldVol += r.sold;
+      const lvl = Math.min(1, soldVol / 80);                // ~80 units sold/tick reads as a full bright pulse
+      if (lvl > targets.retailGlow) targets.retailGlow = lvl;
+    }
     // decay partner-pulse glow each tick; recomputed below from the selected firm's last trades
     for (const id in targets.partnerGlow) targets.partnerGlow[id] *= 0.5;
     targets.deskPartnerGlow *= 0.5;
@@ -3096,6 +3271,16 @@
       const dpulse = dpg * (0.6 + 0.4*Math.abs(Math.sin(ts*0.006)));
       exchange.mat.emissiveIntensity = 0.5 + targets.deskGlow * 1.4 + dpulse * 1.4;
       exchange.dome.scale.setScalar(1 + targets.deskGlow * 0.18 + dpulse * 0.12);
+    }
+    // RETAIL MALL SIGNAGE — gently scale the logo-band + atrium emissive with RECENT RETAIL SALES volume
+    // (targets.retailGlow, decayed in syncScene from ev.retail.sold). VIEW-ONLY; mirrors the deskGlow
+    // pattern. Under reduce-motion the sine shimmer freezes (factor→1) so it holds a STEADY lit level;
+    // a base floor keeps the signs lit even with zero recent sales (so day/night still reads them).
+    if (retailSign){
+      const rg = targets.retailGlow || 0;
+      const shimmer = reduceMotion ? 1 : (0.85 + 0.15*Math.abs(Math.sin(ts*0.0022)));   // gentle ambient breath
+      retailSign.mat.emissiveIntensity     = (retailSign.base       + rg * 1.3) * shimmer;
+      retailSign.atrium.emissiveIntensity  = (retailSign.baseAtrium + rg * 0.7) * shimmer;
     }
     updateTether();
 
