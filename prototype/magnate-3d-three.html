@@ -764,6 +764,22 @@
         <div class="brow" style="margin-top:6px">
           <button class="bbtn primary" id="dv-generate" type="button" aria-label="Generate the visualization from the data matrix">⚡ Generate</button>
         </div>
+        <!-- ANIMATE mode (P5.2-visible): the placed objects MOVE along a TIMESERIES
+             trajectory matrix [t,n,f] via the engine `trajectory`/`keyframe` dynamic,
+             driven by the existing render loop. Reduced-motion freezes to the t=0
+             resting frame; bounded to the Builder pick set. Additive + guarded. -->
+        <div class="brow" style="margin-top:6px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;flex:1 1 100%;cursor:pointer">
+            <input id="dv-animate" type="checkbox" aria-label="Animate the placed objects along a data trajectory">
+            <span class="vsub" style="margin:0">Animate ← trajectory matrix [t,n,f]</span>
+          </label>
+        </div>
+        <div class="brow" id="dv-anim-row" style="margin-top:3px;display:none">
+          <div style="flex:1 1 100%">
+            <label for="dv-traj">trajectory (timeseries)</label>
+            <select id="dv-traj" aria-label="Animated trajectory dataset"></select>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -4937,6 +4953,14 @@
         // reduceMotion (belt + braces). elapsed = ts seconds. Guarded + headless-safe (no-op when absent).
         try { if (typeof Builder !== 'undefined' && Builder) Builder.update(dt, ts / 1000); } catch(_){}
       }
+      // DATA → VIZ ANIMATE (P5.2-visible): drive the placed objects along the [t,n,f]
+      // trajectory dynamic. Called when the VFX-Lab is active REGARDLESS of motion state —
+      // animateDataViz freezes INTERNALLY to the t=0 resting frame under reduced-motion /
+      // replay (INV-2), so the cloud snaps to its declared resting frame and never advances.
+      // No-op unless ANIMATE is on. Guarded + headless-safe (engine ESM optional). View-only.
+      if (activeSection === 'vfx-lab'){
+        try { if (typeof Builder !== 'undefined' && Builder && Builder.animateDataViz) Builder.animateDataViz(ts / 1000, reduceMotion || replaying()); } catch(_){}
+      }
       // ---- 3D SANKEY edge-flow: dots stream along each band's TWO long edges from source→target.
       // The two parallel dotted streams trace the ribbon outline, and the GAP between them IS the band
       // thickness = the data value. Deterministic placement each frame (no spawn/accumulate); under
@@ -8223,6 +8247,7 @@
     }
     function doClear(){
       const c = ensureCore(); if (!c){ return; }
+      dvStopAnimate(); { const cb = $('dv-animate'); if (cb){ cb.checked = false; } const row = $('dv-anim-row'); if (row) row.style.display = 'none'; }
       c.clear(); syncCount(); syncSelLabel(); msg('Cleared all builder objects + effects.');
     }
     function describeTarget(){ const c = core; const s = c ? c.getSelected() : 'stage'; return (s === 'stage' || s === 'scene') ? s : ('object #' + s); }
@@ -8298,6 +8323,7 @@
         dsSel.onchange = fillDataVizColumns;
       }
       fillDataVizColumns();
+      fillDataVizTrajectories();
     }
     function currentDataset(){
       const dv = window.__dataViz; const dsSel = $('dv-dataset');
@@ -8329,6 +8355,8 @@
         scaleType: ($('dv-scale-type') && $('dv-scale-type').value) || 'sqrt',
         colorColumn: ($('dv-color-col') && $('dv-color-col').value) || 0
       };
+      // a static Generate stops any active ANIMATE (the scatter is the only thing shown).
+      dvStopAnimate(); { const cb = $('dv-animate'); if (cb){ cb.checked = false; } const row = $('dv-anim-row'); if (row) row.style.display = 'none'; }
       let pack = null;
       try { pack = dv.buildDataViz(dsName, ui); } catch(_){ pack = null; }
       if (!pack || !pack.count){ msg('Data → Viz produced nothing (check the dataset/spec).', true); return; }
@@ -8360,6 +8388,90 @@
       msg('Data → Viz: placed ' + ids.length + ' objects (' + dsName + ' · ' + ui.projection + ') via the P3 grammar.');
     }
 
+    /* ---- ANIMATE mode (P5.2-visible) ----------------------------------------
+     *  The placed objects MOVE along a TIMESERIES trajectory matrix [t,n,f] through
+     *  the engine `trajectory` dynamic (buildDataVizTrajectory). Driven by the EXISTING
+     *  render loop via dvAnimateFrame(elapsed). DETERMINISTIC (pure fn of (data,elapsed)),
+     *  REDUCED-MOTION-FROZEN (snaps to the t=0 resting frame), BOUNDED (count <= the
+     *  Builder pick set), ALLOC-FREE per frame (one reused position buffer), and GUARDED
+     *  (no engine ESM / no THREE ⇒ inert). View-only: the economy pickables are untouched.
+     */
+    let dvAnim = null;           // { count, sample, buf, ids0 } — the active animated build (or null)
+    let dvAnimBusy = false;      // guard against overlapping async builds
+
+    function dvStopAnimate(){ dvAnim = null; }
+
+    async function dvStartAnimate(){
+      if (!haveDV() || typeof window.__dataViz.buildDataVizTrajectory !== 'function'){
+        msg('Data → Viz: ANIMATE needs the engine dynamics module (serve from repo root).', true); return;
+      }
+      if (dvAnimBusy) return; dvAnimBusy = true;
+      try {
+        const c = ensureCore(); if (!c){ msg('Builder core not loaded.', true); return; }
+        const dv = window.__dataViz;
+        const tName = ($('dv-traj') && $('dv-traj').value) || (dv.trajectoryNames && dv.trajectoryNames()[0]);
+        let build = null;
+        try { build = await dv.buildDataVizTrajectory(tName, { duration: 8, k: 1 }); } catch(_){ build = null; }
+        if (!build || !build.count){ msg('Data → Viz: trajectory produced nothing.', true); dvStopAnimate(); return; }
+        // place at the RESTING (t=0) frame — same bounded Builder pick set as Generate.
+        c.clear();
+        const rest = build.restingFrame;
+        const place = (i) => [ rest[i*3+0]||0, rest[i*3+1]||0, rest[i*3+2]||0 ];
+        const ids = c.placeObjects({ shape: 'icosa', count: build.count, position: place });
+        dvAnim = { count: build.count, sample: build.sample, buf: new Float32Array(build.count*3),
+                   driver: build.driver, name: tName };
+        // tint the cloud so it reads as a flowing set (sub-white, static colour).
+        const objs = c.objects();
+        for (let kk = 0; kk < objs.length; kk++){
+          const o = objs[kk]; const i = (typeof o.id === 'number' && objs.length) ? (o.id - objs[0].id) : kk;
+          if (i < 0 || i >= build.count) continue;
+          const mesh = o.mesh; if (!mesh || !mesh.material) continue;
+          const t = build.count > 1 ? i/(build.count-1) : 0;       // ramp across the set
+          const r = 0.20 + 0.55*t, g = 0.45 + 0.30*(1-Math.abs(t-0.5)*2), b = 0.75 - 0.35*t;
+          if (mesh.material.color && mesh.material.color.setRGB) mesh.material.color.setRGB(r,g,b);
+          if (mesh.material.emissive && mesh.material.emissive.setRGB) mesh.material.emissive.setRGB(r*0.55,g*0.55,b*0.55);
+        }
+        syncCount(); syncSelLabel();
+        msg('Data → Viz: animating ' + ids.length + ' objects along "' + tName + '" [t,n,f] via the ' + build.driver + ' trajectory dynamic. (Frozen under reduced-motion.)');
+      } finally { dvAnimBusy = false; }
+    }
+
+    /** Per-frame driver — called from the render loop. DETERMINISTIC + alloc-free.
+     *  `frozen` (reduced-motion / replay) snaps to the t=0 resting frame (elapsed 0). */
+    function dvAnimateFrame(elapsed, frozen){
+      const a = dvAnim; if (!a || !a.count) return;
+      const c = ensureCore(); if (!c) return;
+      const buf = a.sample(frozen ? 0 : (+elapsed || 0), a.buf);   // pure: positions for `elapsed`
+      const objs = c.objects(); if (!objs.length) return;
+      const base = objs[0].id;
+      for (let kk = 0; kk < objs.length; kk++){
+        const o = objs[kk]; const i = (typeof o.id === 'number') ? (o.id - base) : kk;
+        if (i < 0 || i >= a.count) continue;
+        const m = o.mesh; if (!m || !m.position) continue;
+        if (m.position.set) m.position.set(buf[i*3+0]||0, buf[i*3+1]||0, buf[i*3+2]||0);
+        else { m.position.x = buf[i*3+0]||0; m.position.y = buf[i*3+1]||0; m.position.z = buf[i*3+2]||0; }
+      }
+    }
+
+    function fillDataVizTrajectories(){
+      if (!haveDV()) return;
+      const dv = window.__dataViz; const sel = $('dv-traj'); if (!sel) return;
+      if (!sel.options.length && dv.trajectoryNames){ for (const nm of dv.trajectoryNames()) dvOption(sel, nm); }
+    }
+
+    function wireDataVizAnimate(){
+      const cb = $('dv-animate'); const row = $('dv-anim-row');
+      if (!cb) return;
+      cb.onchange = () => {
+        const on = !!cb.checked;
+        if (row) row.style.display = on ? '' : 'none';
+        if (on){ fillDataVizTrajectories(); dvStartAnimate(); }
+        else { dvStopAnimate(); }
+      };
+      const tsel = $('dv-traj');
+      if (tsel) tsel.onchange = () => { if (cb.checked) dvStartAnimate(); };
+    }
+
     function buildDom(){
       if (built) return;
       if (typeof document === 'undefined') return;
@@ -8368,6 +8480,7 @@
       fillEffectSelect();
       fillDataVizSelects();
       { const g = $('dv-generate'); if (g) g.onclick = doGenerate; }
+      wireDataVizAnimate();
       // count slider live label
       const nSlider = $('bld-n'), nVal = $('bld-n-val');
       if (nSlider){
@@ -8405,6 +8518,9 @@
       },
       // per-frame: drive the formula-time transforms (gated to the section; BuilderCore freezes under reduceMotion).
       update(dt, elapsed){ if (core) { try { core.update(dt, elapsed); } catch(_){} } },
+      // P5.2-visible: drive the Data->Viz ANIMATE trajectory (no-op unless ANIMATE is on).
+      // `frozen` (reduced-motion / replay) snaps to the t=0 resting frame.
+      animateDataViz(elapsed, frozen){ try { dvAnimateFrame(elapsed, frozen); } catch(_){} },
       // introspection surface for the __magnateHeadless probe (view-only; harness ignores it).
       core(){ return ensureCore(); },
       snapshot(){ const c = core; return c ? c.snapshot() : null; },

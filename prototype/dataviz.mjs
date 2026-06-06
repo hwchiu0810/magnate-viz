@@ -33,8 +33,24 @@ import data from '../engine/data/index.mjs';
 import transform from '../engine/transform/index.mjs';
 import encode from '../engine/encode/index.mjs';
 
+/* engine/dynamics is OPTIONAL here (P5.2-visible). The static Data->Viz pipeline
+ * (engine/data->transform->encode) does NOT need it; only the additive ANIMATE mode
+ * (buildDataVizTrajectory + driveTrajectoryFrame) consumes it. We import it lazily +
+ * guarded so dataviz.mjs degrades GRACEFULLY: if the dynamics ESM is absent/unloadable,
+ * the static panel still works and the trajectory builder returns a safe empty result.
+ * NEVER throws at module load. */
+let _dyn = null;          // the resolved engine/dynamics module (or null if absent)
+let _dynTried = false;    // memoize the (single) import attempt
+async function loadDynamics() {
+  if (_dynTried) return _dyn;
+  _dynTried = true;
+  try { _dyn = (await import('../engine/dynamics/index.mjs')); }
+  catch (_e) { _dyn = null; }   // degrade gracefully — the static path is unaffected
+  return _dyn;
+}
+
 /** Module identity. */
-export const VERSION = '0.1.0-feat-data-to-viz';
+export const VERSION = '0.2.0-feat-data-to-viz-p5visible';
 export const NAME = 'prototype/dataviz';
 
 /** Hard cap on placed objects (bounded — INV-4; matches BuilderCore.MAX_OBJECTS). */
@@ -100,6 +116,51 @@ function buildLattice() {
   });
 }
 
+/** Synthetic TIMESERIES trajectory matrix [t, n, f]  (P5.2-VISIBLE).
+ *  t = TIME steps (frames of the path), n = INSTANCES, f = 3 position features [x,y,z].
+ *  Each instance n rides its OWN swirl/orbit: a circular orbit in the x/z plane whose
+ *  radius + phase + tilt are seeded per-instance, with a gentle vertical bob — so the
+ *  whole set reads as a flowing galaxy/orbit cloud. PURE + DETERMINISTIC (seeded
+ *  mulberry32; NO Math.random, NO wall-clock). meta.t = 0 marks the time axis so the
+ *  engine `trajectory` dynamic samples it as a [t,n,f] timeseries. The t=0 row is the
+ *  RESTING frame the reduced-motion snapshot freezes. */
+function buildOrbits() {
+  const T = 64, n = 90, f = 3;                          // bounded (T<=SAMPLE_CAP, n<=FANOUT_CAP)
+  const buf = new Float32Array(T * n * f);
+  const rng = mulberry32(23);                           // explicit seed (INV-1)
+  // per-instance orbit params, drawn ONCE (deterministic, no per-step RNG).
+  const radius = new Float32Array(n), phase0 = new Float32Array(n),
+        tilt = new Float32Array(n), spin = new Float32Array(n), bob = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    radius[i] = 4 + rng() * 14;                         // orbit radius 4..18
+    phase0[i] = rng() * Math.PI * 2;                    // starting angle
+    tilt[i]   = (rng() - 0.5) * 0.9;                    // orbital-plane tilt
+    spin[i]   = 0.6 + rng() * 1.6;                       // angular speed multiplier
+    bob[i]    = 1.5 + rng() * 3.5;                       // vertical bob amplitude
+  }
+  // stride: time-major [t][n][f]
+  const sN = f, sT = n * f;
+  for (let t = 0; t < T; t++) {
+    const u = t / (T - 1);                              // [0,1] progress along the path
+    const ang = u * Math.PI * 2;                        // ONE loop over the whole timeline
+    for (let i = 0; i < n; i++) {
+      const a = phase0[i] + ang * spin[i];
+      const r = radius[i];
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      const y = Math.sin(a + tilt[i]) * bob[i] + tilt[i] * r * 0.5;  // tilted bob
+      const o = t * sT + i * sN;
+      buf[o + 0] = x;
+      buf[o + 1] = y;
+      buf[o + 2] = z;
+    }
+  }
+  return data.ndarray(buf, [T, n, f], {
+    kind: 'timeseries',
+    meta: { t: 0, axes: ['x', 'y', 'z'], instances: n, steps: T },
+  });
+}
+
 function clampUnit(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 
 /** The registry: descriptor + a memoized matrix builder (pure once built). */
@@ -118,8 +179,30 @@ export const SAMPLE_DATASETS = Object.freeze({
     ['x', 'y', 'z'], buildLattice),
 });
 
+/* -----------------------------------------------------------------------------
+ *  TIMESERIES (trajectory) DATASETS — the P5.2-VISIBLE animated matrices [t,n,f].
+ *  Kept SEPARATE from SAMPLE_DATASETS so the static Data->Viz pipeline + its frozen
+ *  conformance test stay byte-identical; these feed the additive ANIMATE mode only.
+ * ------------------------------------------------------------------------- */
+/** A trajectory descriptor: { name, kind:'timeseries', steps, instances, axes, build() }. */
+function makeTrajectoryDataset(name, steps, instances, axes, builder) {
+  let cached = null;
+  return Object.freeze({
+    name, kind: 'timeseries', steps, instances,
+    axes: Object.freeze(axes.slice()),
+    build() { if (cached === null) cached = builder(); return cached; },
+  });
+}
+
+export const TIMESERIES_DATASETS = Object.freeze({
+  orbits: makeTrajectoryDataset('orbits', 64, 90, ['x', 'y', 'z'], buildOrbits),
+});
+
 /** Names for a UI <select>. */
 export function datasetNames() { return Object.keys(SAMPLE_DATASETS); }
+
+/** Names of the animated trajectory matrices (the ANIMATE mode's <select>). */
+export function trajectoryNames() { return Object.keys(TIMESERIES_DATASETS); }
 
 /* -----------------------------------------------------------------------------
  *  A SAFE EMPTY result — returned for any garbage/empty spec, never a throw.
@@ -349,10 +432,128 @@ function spreadPosition(pos, count, projNd) {
 }
 function clampW(x, w) { return x < -w ? -w : (x > w ? w : x); }
 
+/* =============================================================================
+ *  P5.2-VISIBLE — the ANIMATE mode.  A TIMESERIES matrix [t,n,f] becomes MOTION
+ *  through the REAL engine `trajectory` dynamic: positions are a PURE function of
+ *  (data, elapsed) — the SAME determinism + reduced-motion + alloc-free discipline
+ *  the dynamics conformance vectors freeze.
+ *
+ *  buildDataVizTrajectory(name, opts) — set up the animated build:
+ *    - resolves the timeseries matrix (TIMESERIES_DATASETS[name]);
+ *    - returns { count, instances, steps, k, restingFrame, channels:{position}, sample }
+ *      where:
+ *        * count        = N instances, CAPPED to MAX_COUNT (so the placed object set
+ *                         matches the Builder's own bounded pick set — INV-4);
+ *        * restingFrame = the t=0 position buffer (the reduced-motion snapshot frame);
+ *        * sample(elapsed, out?) = a PURE per-frame sampler: writes the [count*3]
+ *                         proportional position channel for `elapsed` into `out`
+ *                         (a pre-sized Float32Array reused across frames — NO per-frame
+ *                         new; the host passes ONE buffer it owns) and returns it.
+ *
+ *  The sampler drives the engine dynamic when the dynamics ESM is present, else falls
+ *  back to a pure inline [t,n,f] interpolation with the SAME math (graceful degrade).
+ *  PROPORTIONAL: channel = value · k (k defaults 1) — channel(value)/value is the single
+ *  constant the parity check freezes. Returns a SAFE EMPTY result for any bad input.
+ * ------------------------------------------------------------------------- */
+async function buildDataVizTrajectory(name, opts = {}) {
+  try {
+    const desc = TIMESERIES_DATASETS[name];
+    if (!desc) return emptyTrajectory();
+    const matrix = desc.build();
+    if (!data.isNDArray(matrix) || !Array.isArray(matrix.shape) || matrix.shape.length !== 3) return emptyTrajectory();
+
+    const tAxis = (matrix.meta && Number.isInteger(matrix.meta.t)) ? matrix.meta.t : 0;
+    const rest = [0, 1, 2].filter((a) => a !== tAxis);
+    const instances = matrix.shape[rest[0]] | 0;
+    const f = matrix.shape[rest[1]] | 0;
+    const steps = matrix.shape[tAxis] | 0;
+    const count = Math.min(instances, MAX_COUNT);        // bounded to the Builder pick set
+    const k = (typeof opts.k === 'number' && Number.isFinite(opts.k)) ? opts.k : 1;
+    const duration = (typeof opts.duration === 'number' && opts.duration > 0) ? opts.duration : 8;
+    const loop = opts.loop !== false;
+
+    // The engine `trajectory` dynamic (when present) is the source of truth; we keep a
+    // pure inline fallback with identical math so the panel animates even if dynamics
+    // is absent. Both write the SAME proportional [n*f] buffer for a given elapsed.
+    const dyn = await loadDynamics();
+    const sampleEngine = (dyn && typeof dyn.sampleTrajectory === 'function')
+      ? (elapsed) => dyn.sampleTrajectory(matrix, elapsed, { k, duration, loop })
+      : null;
+
+    // PURE inline [t,n,f] sampler (the graceful-degrade twin of the engine dynamic).
+    const off = (matrix.offset | 0) || 0;
+    const st = matrix.stride;
+    const tStride = st[tAxis], nStride = st[rest[0]], fStride = st[rest[1]];
+    const T = Math.min(steps, 8192);
+    const sampleInline = (elapsed) => {
+      const out = new Float32Array(instances * f);
+      writeTimeseries(out, matrix.data, off, T, instances, f, tStride, nStride, fStride, k, elapsed, duration, loop);
+      return out;
+    };
+    const rawSample = sampleEngine || sampleInline;
+
+    // sample(elapsed, out) — write the CAPPED [count*3] position channel in place.
+    const sample = (elapsed, out) => {
+      const want = count * 3;
+      let dst = (out instanceof Float32Array && out.length === want) ? out : new Float32Array(want);
+      const full = rawSample(+elapsed || 0);              // [instances*f] proportional channel
+      const w = Math.min(3, f);
+      for (let i = 0; i < count; i++) {
+        const src = i * f, d = i * 3;
+        dst[d + 0] = clampW(+full[src + 0] || 0, 1e4);
+        dst[d + 1] = w > 1 ? clampW(+full[src + 1] || 0, 1e4) : 0;
+        dst[d + 2] = w > 2 ? clampW(+full[src + 2] || 0, 1e4) : 0;
+      }
+      return dst;
+    };
+
+    const restingFrame = sample(0, new Float32Array(count * 3));   // t=0 = reduced-motion frame
+
+    return {
+      count, instances, steps, k, duration, loop,
+      driver: sampleEngine ? 'engine' : 'inline',
+      restingFrame,
+      channels: { position: restingFrame.slice() },     // initial (resting) channel pack
+      sample,                                            // PURE per-frame sampler (alloc-free if `out` reused)
+    };
+  } catch (_e) {
+    return emptyTrajectory();
+  }
+}
+
+/** PURE [t,n,f] interpolation (the engine-dynamic twin). Writes value·k in place. */
+function writeTimeseries(out, dat, off, T, n, f, tStride, nStride, fStride, k, elapsed, duration, loop) {
+  const dur = Math.max(1e-6, +duration || 1e-6);
+  let u = (+elapsed || 0) / dur;
+  if (loop) u = u - Math.floor(u); else u = Math.min(1, Math.max(0, u));
+  const fi = u * (T - 1);
+  const i0 = Math.min(T - 1, Math.floor(fi));
+  const i1 = Math.min(T - 1, i0 + 1);
+  const frac = fi - i0;
+  const base0 = off + i0 * tStride, base1 = off + i1 * tStride;
+  for (let inst = 0; inst < n; inst++) {
+    const n0 = base0 + inst * nStride, n1 = base1 + inst * nStride, row = inst * f;
+    for (let c = 0; c < f; c++) {
+      const a = +dat[n0 + c * fStride] || 0;
+      const b = +dat[n1 + c * fStride] || 0;
+      out[row + c] = (a + (b - a) * frac) * k;            // PROPORTIONAL (channel = value·k)
+    }
+  }
+}
+
+/** A SAFE EMPTY animated result — count 0, an inert sampler. Never throws. */
+function emptyTrajectory() {
+  const sample = (_e, out) => (out instanceof Float32Array ? out : new Float32Array(0));
+  return { count: 0, instances: 0, steps: 0, k: 1, duration: 8, loop: true, driver: 'none',
+           restingFrame: new Float32Array(0), channels: { position: new Float32Array(0) }, sample };
+}
+
 /* -----------------------------------------------------------------------------
  *  The dataviz surface descriptor — plain, serializable, reflection-friendly.
  *  This is what the browser bridge stashes on window.__dataViz.
  * ------------------------------------------------------------------------- */
+export { buildDataVizTrajectory };
+
 export const dataviz = Object.freeze({
   name: NAME,
   version: VERSION,
@@ -362,6 +563,10 @@ export const dataviz = Object.freeze({
   datasetNames,
   buildSpec,
   buildDataViz,
+  // P5.2-VISIBLE — the additive ANIMATE surface.
+  trajectories: TIMESERIES_DATASETS,
+  trajectoryNames,
+  buildDataVizTrajectory,
 });
 
 export default dataviz;
