@@ -204,6 +204,25 @@
   .twinhud .tmeta{display:flex;justify-content:space-between;font-size:11px;color:#9fd8f5;margin-top:7px}
   .twinhud .tmeta b{color:#dff6ff}
   @media (prefers-reduced-motion: reduce){ .twinhud h3 .tdot{box-shadow:none} }
+  /* PHASE 1: dynamic SUB-SELECTOR — a row of chips inside the Digital-Twin HUD that switches which
+     "dynamic" (multi-physics turbine / power grid / data-center heat / data comms / logistics) is shown.
+     Crisp DOM, outside the bloom. Selecting a chip swaps the in-world scene group + the HUD body below. */
+  .twinhud .tchips{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 9px}
+  .twinhud .tchip{flex:0 0 auto;background:#072233;border:1px solid #16466a;color:#7fd4f2;
+    border-radius:9px;padding:3px 8px;cursor:pointer;font-size:10px;font-weight:700;
+    letter-spacing:.3px;white-space:nowrap;line-height:1.3}
+  .twinhud .tchip:hover{background:#0c3550;color:#bfeaff}
+  .twinhud .tchip:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
+  .twinhud .tchip[aria-pressed="true"]{background:#06405e;border-color:#3fd6ff;color:#e6fbff;
+    box-shadow:0 0 8px rgba(80,230,255,.45)}
+  /* per-dynamic HUD bodies share the #twin-hud anchor; only the active one is shown */
+  .twinhud .tdyn{display:none}
+  .twinhud .tdyn.on{display:block}
+  /* compact utilisation row used by the power-grid dynamic (per-line bars + readouts) */
+  .twinhud .tgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 10px;font-size:11px;
+    color:#9fd8f5;margin:7px 0 2px}
+  .twinhud .tgrid .gv{display:block;font-size:13px;font-weight:700;color:#dff6ff;font-variant-numeric:tabular-nums}
+  .twinhud .tgrid .gk{font-size:9px;color:#5fc8f0;text-transform:uppercase;letter-spacing:.5px}
   /* SMART-FACTORY telemetry HUD (PHASE 2) — reuses the .twinhud chrome; only one of #twin-hud / #sf-hud is
      ever shown (digital-twin vs smart-factory section), so they can share the same anchor. Slightly taller. */
   .twinhud.sfhud{top:128px;left:10px}
@@ -311,16 +330,99 @@
        live OUTSIDE the bloomed WebGL canvas so they stay razor-sharp. View-only, decorative — values are
        derived from the displayed economy frame; nothing here steps or mutates the economy. -->
   <aside class="twinhud" id="twin-hud" aria-label="Digital twin telemetry" aria-hidden="true">
-    <h3><span class="tdot" aria-hidden="true"></span>Digital Twin · Turbine Telemetry</h3>
-    <div class="tgauges">
-      <div class="tgauge"><canvas id="twin-g-load" role="img" aria-label="Twin load gauge"></canvas><div class="tglabel">Load</div></div>
-      <div class="tgauge"><canvas id="twin-g-temp" role="img" aria-label="Twin temperature gauge"></canvas><div class="tglabel">Exhaust °</div></div>
+    <h3><span class="tdot" aria-hidden="true"></span><span id="twin-title">Digital Twin · Turbine Telemetry</span></h3>
+    <!-- PHASE 1: dynamic sub-selector (view-only; swaps the in-world scene group + the HUD body below) -->
+    <div class="tchips" id="twin-chips" role="group" aria-label="Digital twin dynamic">
+      <button class="tchip" type="button" data-dyn="multiphysics" aria-pressed="true">Multi-physics</button>
+      <button class="tchip" type="button" data-dyn="power"        aria-pressed="false">Power Grid</button>
+      <button class="tchip" type="button" data-dyn="datacenter"   aria-pressed="false">Data-Center Heat</button>
+      <button class="tchip" type="button" data-dyn="datacomm"     aria-pressed="false">Data Comms</button>
+      <button class="tchip" type="button" data-dyn="logistics"    aria-pressed="false">Logistics</button>
     </div>
-    <div class="twave-cap">Vibration waveform</div>
-    <canvas class="twave" id="twin-wave" role="img" aria-label="Vibration waveform"></canvas>
-    <div class="tspec-cap">Throughput spectrum</div>
-    <canvas class="tspec" id="twin-spec" role="img" aria-label="Throughput spectrum"></canvas>
-    <div class="tmeta"><span>RPM <b id="twin-rpm">—</b></span><span>Δflow <b id="twin-flow">—</b></span></div>
+
+    <!-- MULTI-PHYSICS (the original turbine telemetry) -->
+    <div class="tdyn on" id="twin-dyn-multiphysics">
+      <div class="tgauges">
+        <div class="tgauge"><canvas id="twin-g-load" role="img" aria-label="Twin load gauge"></canvas><div class="tglabel">Load</div></div>
+        <div class="tgauge"><canvas id="twin-g-temp" role="img" aria-label="Twin temperature gauge"></canvas><div class="tglabel">Exhaust °</div></div>
+      </div>
+      <div class="twave-cap">Vibration waveform</div>
+      <canvas class="twave" id="twin-wave" role="img" aria-label="Vibration waveform"></canvas>
+      <div class="tspec-cap">Throughput spectrum</div>
+      <canvas class="tspec" id="twin-spec" role="img" aria-label="Throughput spectrum"></canvas>
+      <div class="tmeta"><span>RPM <b id="twin-rpm">—</b></span><span>Δflow <b id="twin-flow">—</b></span></div>
+    </div>
+
+    <!-- POWER GRID (PHASE 1): transmission-grid telemetry — load / voltage / frequency / per-line
+         utilisation spectrum / losses. Values are illustrative + lightly tied to the displayed economy
+         frame (view-only). Drawn on DPR-aware canvases outside the bloom canvas. -->
+    <div class="tdyn" id="twin-dyn-power">
+      <div class="tgrid">
+        <div><span class="gk">Load</span><span class="gv" id="pg-load">—</span></div>
+        <div><span class="gk">Voltage</span><span class="gv" id="pg-volt">—</span></div>
+        <div><span class="gk">Frequency</span><span class="gv" id="pg-freq">—</span></div>
+      </div>
+      <div class="tspec-cap">Per-line utilisation</div>
+      <canvas class="tspec" id="pg-spec" role="img" aria-label="Per transmission line utilisation spectrum"></canvas>
+      <div class="twave-cap">Grid frequency trace</div>
+      <canvas class="twave" id="pg-wave" role="img" aria-label="Grid frequency waveform"></canvas>
+      <div class="tmeta"><span>Losses <b id="pg-loss">—</b></span><span>Lines <b id="pg-lines">—</b></span></div>
+    </div>
+
+    <!-- DATA-CENTER HEAT (PHASE 3): server-room THERMAL telemetry — inlet/outlet TEMPERATURE, PUE, IT LOAD
+         (kW), airflow (CFM), HOTSPOT count, a per-rack temperature spectrum (jet-coloured via twinHeatColor —
+         the SAME multi-physics thermal read as the turbine + smart-factory). Values are illustrative + LIGHTLY
+         tied to the displayed economy frame (view-only). Crisp DOM on DPR-aware canvases, outside the bloom. -->
+    <div class="tdyn" id="twin-dyn-datacenter">
+      <div class="tgauges">
+        <div class="tgauge"><canvas id="dx-g-pue" role="img" aria-label="Power usage effectiveness gauge"></canvas><div class="tglabel">PUE</div></div>
+        <div class="tgauge"><canvas id="dx-g-temp" role="img" aria-label="Outlet temperature gauge"></canvas><div class="tglabel">Outlet °</div></div>
+      </div>
+      <div class="tgrid">
+        <div><span class="gk">Inlet</span><span class="gv" id="dx-inlet">—</span></div>
+        <div><span class="gk">IT load</span><span class="gv" id="dx-load">—</span></div>
+        <div><span class="gk">Airflow</span><span class="gv" id="dx-cfm">—</span></div>
+      </div>
+      <div class="tspec-cap">Per-rack temperature</div>
+      <canvas class="tspec" id="dx-spec" role="img" aria-label="Per server-rack temperature spectrum"></canvas>
+      <div class="twave-cap">Return-air temperature trace</div>
+      <canvas class="twave" id="dx-wave" role="img" aria-label="Return air temperature waveform"></canvas>
+      <div class="tmeta"><span>Hotspots <b id="dx-hot">—</b></span><span>ΔT <b id="dx-dt">—</b></span></div>
+    </div>
+
+    <!-- DATA COMMUNICATION (PHASE 2): a network topology (servers/switches/routers) carrying DATA PACKETS
+         over fibre LINKS. THROUGHPUT (Gbps) / packet rate (pps) / LATENCY (ms) / per-link UTILISATION
+         spectrum / active-flows count. Distinct CYAN/GREEN data palette (vs Power's amber/red). Values are
+         illustrative + LIGHTLY tied to the displayed economy frame (view-only). Crisp DOM, outside the bloom. -->
+    <div class="tdyn" id="twin-dyn-datacomm">
+      <div class="tgrid">
+        <div><span class="gk">Throughput</span><span class="gv" id="dc-thru">—</span></div>
+        <div><span class="gk">Packet rate</span><span class="gv" id="dc-pps">—</span></div>
+        <div><span class="gk">Latency</span><span class="gv" id="dc-lat">—</span></div>
+      </div>
+      <div class="tspec-cap">Per-link utilisation</div>
+      <canvas class="tspec" id="dc-spec" role="img" aria-label="Per fibre link utilisation spectrum"></canvas>
+      <div class="twave-cap">Packet-rate trace</div>
+      <canvas class="twave" id="dc-wave" role="img" aria-label="Packet rate waveform"></canvas>
+      <div class="tmeta"><span>Active flows <b id="dc-flows">—</b></span><span>Drop <b id="dc-drop">—</b></span></div>
+    </div>
+
+    <!-- COMPONENT LOGISTICS (PHASE 2): a logistics network (warehouses/ports/factories/retail) carrying
+         COMPONENT SHIPMENTS over ROUTES. IN-TRANSIT count / throughput (units/h) / ON-TIME % / per-route
+         UTILISATION spectrum / inventory + backlog. Distinct AMBER/TEAL goods palette. Throughput is tied
+         READ-ONLY to real sim production/trade volume where available (else illustrative). View-only. -->
+    <div class="tdyn" id="twin-dyn-logistics">
+      <div class="tgrid">
+        <div><span class="gk">In-transit</span><span class="gv" id="lg-transit">—</span></div>
+        <div><span class="gk">Throughput</span><span class="gv" id="lg-thru">—</span></div>
+        <div><span class="gk">On-time</span><span class="gv" id="lg-ontime">—</span></div>
+      </div>
+      <div class="tspec-cap">Per-route utilisation</div>
+      <canvas class="tspec" id="lg-spec" role="img" aria-label="Per route utilisation spectrum"></canvas>
+      <div class="twave-cap">Dispatch-rate trace</div>
+      <canvas class="twave" id="lg-wave" role="img" aria-label="Shipment dispatch waveform"></canvas>
+      <div class="tmeta"><span>Inventory <b id="lg-inv">—</b></span><span>Backlog <b id="lg-routes">—</b></span></div>
+    </div>
   </aside>
 
   <!-- ===== SMART-FACTORY telemetry HUD (PHASE 2): factory KPIs (throughput / per-stage temperature spectrum /
@@ -5876,6 +5978,11 @@
    *  VIEW-ONLY: reads the displayed frame only; never steps/mutates the economy. Motion-gated.
    * ============================================================ */
   let _twinHudPhase = 0;
+  // PHASE 1: which Digital-Twin "dynamic" is active (sub-selector inside the twin HUD). Default = the
+  // original turbine. View-only; switching swaps the in-world scene group + the HUD body. _pgHudPhase is
+  // the power-grid HUD's own crisp-DOM animation phase (motion-gated, frozen under replay/reduced-motion).
+  let twinDynamic = 'multiphysics';
+  let _pgHudPhase = 0;
   function sizeTwinCanvas(cv){
     // match the CSS pixel box (devicePixelRatio-aware) once it differs, so lines stay crisp.
     const dpr = (typeof devicePixelRatio === 'number' && devicePixelRatio > 0) ? devicePixelRatio : 1;
@@ -5902,6 +6009,13 @@
   }
   function drawTwinHud(){
     if (activeSection !== 'digital-twin') return;
+    // PHASE 1/2: only the MULTI-PHYSICS dynamic uses this turbine telemetry body; the others have their own
+    // crisp-DOM HUD draw. Always route the active dynamic so the DOM telemetry tracks the in-world scene.
+    if (twinDynamic === 'power'){ try { drawPowerHud(); } catch(_){} return; }
+    if (twinDynamic === 'datacomm'){ try { drawDataCommHud(); } catch(_){} return; }       // PHASE 2
+    if (twinDynamic === 'logistics'){ try { drawLogisticsHud(); } catch(_){} return; }     // PHASE 2
+    if (twinDynamic === 'datacenter'){ try { drawDataCenterHud(); } catch(_){} return; }   // PHASE 3
+    if (twinDynamic !== 'multiphysics') return;
     const moving = !reduceMotion && !replaying();
     if (moving) _twinHudPhase += 0.05;
     // displayed-frame telemetry (decorative): leaderboard spread → load; ledger deltas → spectrum
@@ -5963,6 +6077,389 @@
       let net = 0; try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; for (const k in fl) net += Math.abs(fl[k]); } catch(_){}
       fEl.textContent = net ? fmt$(net) : '—';
     }
+  }
+
+  /* ============================================================
+   *  POWER-GRID DYNAMIC (PHASE 1) — metrics + crisp DOM HUD (drawPowerHud).
+   *  A transmission grid: one generation SOURCE feeds substations/transformers (flow-graph nodes) over
+   *  catenary transmission LINES; CURRENT PULSES travel the lines, colour/intensity = per-line LOAD
+   *  (twinHeatColor cold→hot). Metrics are illustrative + LIGHTLY tied to the displayed economy frame
+   *  (leaderboard spread → base demand; |finance flow| → swing) — VIEW-ONLY, never steps/mutates anything.
+   *  powerGridMetrics() is the SINGLE SOURCE OF TRUTH shared by the 3D line loads and this HUD.
+   * ============================================================ */
+  const PG_LINES = 9;                 // transmission lines (matches the in-world grid edge count)
+  const PG_BASE_KV = 345;             // nominal transmission voltage (kV)
+  function powerGridMetrics(){
+    // base demand from leaderboard spread (same proxy the turbine HUD uses), swing from |ledger flow|
+    let demand = 0.55, swing = 0;
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){
+        const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        demand = Math.max(0.08, Math.min(1, med ? top / (med * 2.2) : 0.55));
+      }
+    } catch(_){}
+    try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; let n = 0; for (const k in fl) n += Math.abs(fl[k]);
+      swing = Math.max(0, Math.min(0.35, n / 6e7)); } catch(_){}
+    // per-line utilisation: a deterministic fan around the demand (so the spectrum reads varied but stable)
+    const ph = _pgHudPhase;
+    const loads = new Array(PG_LINES);
+    let sum = 0, peak = 0;
+    for (let i = 0; i < PG_LINES; i++){
+      const d = 0.5 + 0.5 * Math.sin(i * 1.27 + 0.6);            // deterministic per-line spread 0..1
+      const ripple = 0.06 * Math.sin(ph * 0.9 + i * 1.7);        // gentle live ripple (motion-gated by caller)
+      const u = Math.max(0.04, Math.min(1, demand * (0.55 + d * 0.7) + swing * d + ripple));
+      loads[i] = u; sum += u; if (u > peak) peak = u;
+    }
+    const avg = sum / PG_LINES;
+    const totalMW = Math.round(180 + avg * 1450 + peak * 240);   // illustrative aggregate load
+    const voltage = +(PG_BASE_KV * (1 - (avg - 0.5) * 0.06)).toFixed(1);  // sags a touch under heavy load
+    const freq = +(60 + Math.sin(ph * 0.6) * 0.03 - (avg - 0.5) * 0.04).toFixed(2); // ~60Hz with tiny ripple
+    const losses = +(1.4 + avg * avg * 4.2).toFixed(1);          // I²R-ish losses % rising with utilisation
+    return { loads, avg, peak, totalMW, voltage, freq, losses };
+  }
+  function drawPowerHud(){
+    const moving = !reduceMotion && !replaying();
+    if (moving) _pgHudPhase += 0.05;
+    const m = powerGridMetrics();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('pg-load', m.totalMW.toLocaleString() + ' MW');
+    set('pg-volt', m.voltage + ' kV');
+    set('pg-freq', m.freq.toFixed(2) + ' Hz');
+    set('pg-loss', m.losses.toFixed(1) + '%');
+    set('pg-lines', String(PG_LINES));
+    // per-line utilisation spectrum — bars coloured cold→hot by load (twinHeatColor, the multi-physics read)
+    try {
+      const cv = $('pg-spec'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        const n = m.loads.length, bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const u = m.loads[i];
+          const bh = Math.max(2, u * (H - 6));
+          const c = twinHeatColor(u);
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+    // grid-frequency trace — a near-flat 60Hz line with a tiny ripple (deviation ∝ load); crisp polyline
+    try {
+      const cv = $('pg-wave'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#3fd6ff';
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W;
+          const ph = _pgHudPhase * 0.8 + i * 0.5;
+          const y = H/2 - Math.sin(ph) * (H * 0.18) * (0.5 + m.avg * 0.8)
+                        - Math.sin(ph * 2.3) * (H * 0.06) * m.peak;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
+  }
+
+  /* ============================================================
+   *  DATA-COMMUNICATION DYNAMIC (PHASE 2) — palette + metrics + crisp DOM HUD (drawDataCommHud).
+   *  A network topology: a CORE switch feeds edge switches/routers (flow-graph nodes) over fibre LINKS;
+   *  DATA PACKETS (the flow units) travel the links, colour = priority/PROTOCOL class + intensity by per-link
+   *  UTILISATION (dataCommColor — a CYAN→GREEN→AMBER data ramp, distinct from Power's blue→red and NEVER
+   *  white, so the bloom threshold 0.85 is respected). Metrics are illustrative + LIGHTLY tied to the
+   *  displayed economy frame (leaderboard spread → base load; |finance flow| → swing) — VIEW-ONLY, never
+   *  steps/mutates anything. dataCommMetrics() is the SINGLE SOURCE OF TRUTH for the 3D link loads + the HUD.
+   * ============================================================ */
+  const DC_LINKS = 10;                // fibre links (matches the in-world topology edge count)
+  let _dcHudPhase = 0;
+  // CYAN/GREEN data palette: cold-link = deep cyan, mid = green, hot/congested = amber. Saturated, sub-white
+  // (max channel ~0.95) so additive packets glow without re-introducing the twin white-out. t∈[0,1] = utilisation.
+  function dataCommColor(t){
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const stops = [
+      [0.00, 0.10, 0.55, 0.80], [0.45, 0.16, 0.85, 0.62],
+      [0.75, 0.55, 0.92, 0.32], [1.00, 0.95, 0.72, 0.18],
+    ];
+    for (let i = 0; i < stops.length - 1; i++){
+      const a = stops[i], b = stops[i+1];
+      if (t >= a[0] && t <= b[0]){ const f = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+        return { r: a[1] + (b[1]-a[1])*f, g: a[2] + (b[2]-a[2])*f, b: a[3] + (b[3]-a[3])*f }; }
+    }
+    return { r: 0.95, g: 0.72, b: 0.18 };
+  }
+  function dataCommMetrics(){
+    let load = 0.5, swing = 0;
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){ const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        load = Math.max(0.08, Math.min(1, med ? top / (med * 2.1) : 0.5)); }
+    } catch(_){}
+    try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; let n = 0; for (const k in fl) n += Math.abs(fl[k]);
+      swing = Math.max(0, Math.min(0.4, n / 5e7)); } catch(_){}
+    const ph = _dcHudPhase;
+    const loads = new Array(DC_LINKS);
+    let sum = 0, peak = 0, congested = 0;
+    for (let i = 0; i < DC_LINKS; i++){
+      const d = 0.5 + 0.5 * Math.sin(i * 1.61 + 0.3);             // deterministic per-link spread 0..1
+      const ripple = 0.07 * Math.sin(ph * 1.3 + i * 2.1);         // gentle live ripple (motion-gated by caller)
+      const u = Math.max(0.05, Math.min(1, load * (0.5 + d * 0.75) + swing * d + ripple));
+      loads[i] = u; sum += u; if (u > peak) peak = u; if (u > 0.8) congested++;
+    }
+    const avg = sum / DC_LINKS;
+    const throughputGbps = +(2.5 + avg * 92 + peak * 14).toFixed(1);   // illustrative aggregate link throughput
+    const pps = Math.round((30 + avg * 470 + peak * 90) * 1000);       // packets/sec (illustrative)
+    const latency = +(0.6 + avg * avg * 9.5 + congested * 0.7).toFixed(1); // ms — rises with utilisation + congestion
+    const drop = +(Math.max(0, (avg - 0.55)) * 2.4 + congested * 0.18).toFixed(2); // packet-drop % under load
+    const activeFlows = Math.round(6 + avg * 40 + congested * 4);      // concurrent active flows
+    return { loads, avg, peak, congested, throughputGbps, pps, latency, drop, activeFlows };
+  }
+  function drawDataCommHud(){
+    const moving = !reduceMotion && !replaying();
+    if (moving) _dcHudPhase += 0.05;
+    const m = dataCommMetrics();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('dc-thru', m.throughputGbps.toFixed(1) + ' Gbps');
+    set('dc-pps', (m.pps >= 1e6 ? (m.pps/1e6).toFixed(2) + 'M' : Math.round(m.pps/1000) + 'k') + ' pps');
+    set('dc-lat', m.latency.toFixed(1) + ' ms');
+    set('dc-flows', String(m.activeFlows));
+    set('dc-drop', m.drop.toFixed(2) + '%');
+    // per-link utilisation spectrum — bars coloured by load via the CYAN/GREEN data ramp (congested = amber)
+    try {
+      const cv = $('dc-spec'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        const n = m.loads.length, bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const u = m.loads[i], bh = Math.max(2, u * (H - 6));
+          const c = dataCommColor(u);
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+    // packet-rate trace — a busy high-frequency waveform whose amplitude tracks throughput; crisp polyline
+    try {
+      const cv = $('dc-wave'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#46ffd0';
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W;
+          const ph = _dcHudPhase * 1.6 + i * 0.7;
+          const y = H/2 - Math.sin(ph) * (H * 0.30) * (0.4 + m.avg * 0.7)
+                        - Math.sin(ph * 3.1) * (H * 0.10) * m.peak;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
+  }
+
+  /* ============================================================
+   *  COMPONENT-LOGISTICS DYNAMIC (PHASE 2) — palette + metrics + crisp DOM HUD (drawLogisticsHud).
+   *  A logistics network: warehouses/ports/factories/retail (flow-graph nodes) connected by ROUTES; COMPONENT
+   *  SHIPMENTS (the flow units) move node→node along the routes, tinted by component CLASS + route UTILISATION
+   *  (logisticsColor — an AMBER→TEAL goods ramp, distinct from Power and Data Comms, NEVER white). Throughput
+   *  is tied READ-ONLY to REAL sim production/trade VOLUME (this tick's cleared Σ vol from the displayed
+   *  snapshot, the SAME proxy drawSfHud uses) where available, else illustrative. VIEW-ONLY: never steps/
+   *  mutates anything. logisticsMetrics() is the SINGLE SOURCE OF TRUTH for the 3D route loads + the HUD.
+   * ============================================================ */
+  const LG_ROUTES = 9;                // logistics routes (matches the in-world network edge count)
+  let _lgHudPhase = 0;
+  // AMBER/TEAL goods palette: low-use route = warm amber (raw freight), mid = gold, busy = teal (fast lane).
+  // Saturated + sub-white so additive crates glow without white-out. t∈[0,1] = route utilisation.
+  function logisticsColor(t){
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const stops = [
+      [0.00, 0.90, 0.55, 0.18], [0.40, 0.95, 0.78, 0.22],
+      [0.72, 0.45, 0.85, 0.62], [1.00, 0.16, 0.86, 0.74],
+    ];
+    for (let i = 0; i < stops.length - 1; i++){
+      const a = stops[i], b = stops[i+1];
+      if (t >= a[0] && t <= b[0]){ const f = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+        return { r: a[1] + (b[1]-a[1])*f, g: a[2] + (b[2]-a[2])*f, b: a[3] + (b[3]-a[3])*f }; }
+    }
+    return { r: 0.16, g: 0.86, b: 0.74 };
+  }
+  function logisticsMetrics(){
+    // REAL throughput proxy (view-only): this tick's cleared trade VOLUME from the displayed snapshot pair —
+    // the SAME read drawSfHud uses. Falls back to an illustrative curve when no trade volume is captured.
+    let thruVol = 0;
+    try {
+      const vt = replaying() ? replayTick : world.tick;
+      const sa = world.snapshotAt(vt);
+      if (sa && sa.ev && Array.isArray(sa.ev.trades)){
+        for (const tr of sa.ev.trades){ if (tr && tr.vol > 0) thruVol += tr.vol; }
+      }
+    } catch(_){}
+    let demand = 0.5, swing = 0;
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){ const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        demand = Math.max(0.08, Math.min(1, med ? top / (med * 2.2) : 0.5)); }
+    } catch(_){}
+    try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; let n = 0; for (const k in fl) n += Math.abs(fl[k]);
+      swing = Math.max(0, Math.min(0.35, n / 6e7)); } catch(_){}
+    // base flow intensity: REAL trade volume saturates a soft curve (read-only); else illustrative from demand.
+    const flowI = thruVol > 0 ? Math.min(1, thruVol / 45) : (0.4 + 0.12 * demand);
+    const ph = _lgHudPhase;
+    const loads = new Array(LG_ROUTES);
+    let sum = 0, peak = 0;
+    for (let i = 0; i < LG_ROUTES; i++){
+      const d = 0.5 + 0.5 * Math.sin(i * 1.37 + 0.9);            // deterministic per-route spread 0..1
+      const ripple = 0.05 * Math.sin(ph * 0.8 + i * 1.5);
+      const u = Math.max(0.06, Math.min(1, flowI * (0.5 + d * 0.7) + swing * d + ripple));
+      loads[i] = u; sum += u; if (u > peak) peak = u;
+    }
+    const avg = sum / LG_ROUTES;
+    const unitsPerH = Math.round(40 + flowI * 920 + peak * 120);  // throughput units/h (tied to real volume)
+    const inTransit = Math.round(8 + avg * 64 + peak * 10);       // shipments currently moving
+    const onTime = +(99.4 - avg * avg * 9 - peak * 2.2).toFixed(1); // on-time % degrades under congestion
+    const inventory = Math.round(120 + (1 - avg) * 680);          // inventory level (falls as routes saturate)
+    const backlog = Math.round(Math.max(0, (avg - 0.6)) * 140 + peak * 22); // backlog rises under load
+    return { loads, avg, peak, flowI, unitsPerH, inTransit, onTime, inventory, backlog, thruVol };
+  }
+  function drawLogisticsHud(){
+    const moving = !reduceMotion && !replaying();
+    if (moving) _lgHudPhase += 0.05;
+    const m = logisticsMetrics();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('lg-transit', String(m.inTransit));
+    set('lg-thru', m.unitsPerH.toLocaleString() + '/h');
+    set('lg-ontime', m.onTime.toFixed(1) + '%');
+    set('lg-inv', m.inventory.toLocaleString());
+    set('lg-routes', String(m.backlog));
+    // per-route utilisation spectrum — bars coloured by load via the AMBER/TEAL goods ramp
+    try {
+      const cv = $('lg-spec'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        const n = m.loads.length, bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const u = m.loads[i], bh = Math.max(2, u * (H - 6));
+          const c = logisticsColor(u);
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+    // dispatch-rate trace — a slower stepped waveform (shipments leaving the hub); amplitude ∝ throughput
+    try {
+      const cv = $('lg-wave'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#ffc24a';
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W;
+          const ph = _lgHudPhase * 0.7 + i * 0.4;
+          const y = H/2 - Math.sin(ph) * (H * 0.26) * (0.45 + m.flowI * 0.7)
+                        - Math.sin(ph * 1.9) * (H * 0.08) * m.peak;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
+  }
+
+  /* ============================================================
+   *  DATA-CENTER HEAT-FLOW DYNAMIC (PHASE 3) — metrics + crisp DOM HUD (drawDataCenterHud).
+   *  A server room: rows of SERVER RACKS in a hot/cold-aisle layout; CRAC/cooling units push COLD air up
+   *  the cold aisle, THROUGH the racks (where the IT load heats it), out the HOT aisle, and back to the
+   *  ceiling return. The AIRFLOW (the flow units / Points stream) is coloured by TEMPERATURE via twinHeatColor
+   *  (cold blue → hot red) — the SAME multi-physics thermal read as the turbine heat-flow + the smart-factory
+   *  thermal shells. Per-rack temperature is a deterministic fan around the IT load (so some racks read as
+   *  HOTSPOTS). Metrics are illustrative + LIGHTLY tied to the displayed economy frame (leaderboard spread →
+   *  base IT load; |finance flow| → swing) — VIEW-ONLY, never steps/mutates anything. dataCenterMetrics() is
+   *  the SINGLE SOURCE OF TRUTH for the 3D per-rack temps + airflow colour + this HUD.
+   * ============================================================ */
+  const DX_RACKS = 12;                // server racks (matches the in-world rack count: 2 rows × 6)
+  let _dxHudPhase = 0;
+  function dataCenterMetrics(){
+    // base IT load from leaderboard spread (same proxy the turbine HUD uses), swing from |ledger flow|
+    let load = 0.55, swing = 0;
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){ const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        load = Math.max(0.08, Math.min(1, med ? top / (med * 2.2) : 0.55)); }
+    } catch(_){}
+    try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; let n = 0; for (const k in fl) n += Math.abs(fl[k]);
+      swing = Math.max(0, Math.min(0.35, n / 6e7)); } catch(_){}
+    // per-rack TEMPERATURE: a deterministic fan around the IT load, 0..1 (so the spectrum reads varied + stable,
+    // and a few racks tip into the HOTSPOT band). These same temps tint the in-world rack shells + airflow.
+    const ph = _dxHudPhase;
+    const temps = new Array(DX_RACKS);
+    let sum = 0, peak = 0, hot = 0;
+    for (let i = 0; i < DX_RACKS; i++){
+      const d = 0.5 + 0.5 * Math.sin(i * 1.43 + 0.4);            // deterministic per-rack spread 0..1
+      const ripple = 0.05 * Math.sin(ph * 1.1 + i * 1.9);        // gentle live ripple (motion-gated by caller)
+      const u = Math.max(0.06, Math.min(1, load * (0.5 + d * 0.7) + swing * d + ripple));
+      temps[i] = u; sum += u; if (u > peak) peak = u; if (u > 0.8) hot++;
+    }
+    const avg = sum / DX_RACKS;
+    // physical-ish thermals: a ~18°C cold-aisle inlet, ΔT rising with utilisation → hotter outlet/return.
+    const inletC  = +(17 + avg * 4).toFixed(1);                  // supply-air inlet temperature °C
+    const deltaT  = +(8 + avg * 14 + peak * 5).toFixed(1);       // cold→hot aisle rise °C
+    const outletC = +(inletC + deltaT).toFixed(1);               // return-air outlet temperature °C
+    const itLoadKW = Math.round(120 + avg * 1180 + peak * 180);  // IT load kW (illustrative aggregate)
+    const cfm     = Math.round(2400 + avg * 14000 + peak * 2600);// airflow CFM (cooling moves more under load)
+    // PUE = 1 + cooling-overhead fraction; rises with utilisation (more cooling work per IT watt). ~1.1..1.6.
+    const pue     = +(1.08 + avg * avg * 0.42 + hot * 0.012).toFixed(2);
+    return { temps, avg, peak, hot, inletC, outletC, deltaT, itLoadKW, cfm, pue };
+  }
+  function drawDataCenterHud(){
+    const moving = !reduceMotion && !replaying();
+    if (moving) _dxHudPhase += 0.05;
+    const m = dataCenterMetrics();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('dx-inlet', m.inletC.toFixed(1) + '°C');
+    set('dx-load', m.itLoadKW.toLocaleString() + ' kW');
+    set('dx-cfm', m.cfm.toLocaleString() + ' CFM');
+    set('dx-hot', String(m.hot));
+    set('dx-dt', '+' + m.deltaT.toFixed(1) + '°');
+    // gauges: PUE (mapped 1.0..2.0 → 0..1, lower is better) + outlet temperature (mapped 15..45°C → 0..1)
+    try {
+      const pg = $('dx-g-pue'); if (pg) twinGauge(pg, Math.max(0, Math.min(1, (m.pue - 1) / 1)), m.pue.toFixed(2), '#46ffd0');
+      const tg = $('dx-g-temp'); if (tg) twinGauge(tg, Math.max(0, Math.min(1, (m.outletC - 15) / 30)), Math.round(m.outletC) + '°', '#ff7a4f');
+    } catch(_){}
+    // per-rack temperature spectrum — bars coloured cold→hot by temp via twinHeatColor (the thermal read);
+    // hotspots (>0.8) read red, just like the in-world rack shells.
+    try {
+      const cv = $('dx-spec'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        const n = m.temps.length, bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const u = m.temps[i], bh = Math.max(2, u * (H - 6));
+          const c = twinHeatColor(u);
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+    // return-air temperature trace — a slow thermal-inertia wave whose amplitude tracks ΔT/peak; crisp polyline
+    try {
+      const cv = $('dx-wave'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#ff8a52';
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W;
+          const ph = _dxHudPhase * 0.5 + i * 0.34;
+          const y = H/2 - Math.sin(ph) * (H * 0.24) * (0.45 + m.avg * 0.7)
+                        - Math.sin(ph * 2.1) * (H * 0.07) * m.peak;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
   }
 
   /* ============================================================
@@ -7052,6 +7549,395 @@
     return { grp, fan, fan2 };
   }
 
+  /* ============================================================
+   *  SHARED FLOW-GRAPH HELPER (PHASE 1) — buildFlowGraph(nodes, edges, opts)
+   *  A small reusable builder the Power / Comms / Logistics dynamics all share. Given:
+   *    nodes : [{ id, x, y, z, kind }]   (kind drives the marker look; 'source' is the big emitter)
+   *    edges : [{ a, b }]               (a,b = node indices; the path is a gentle catenary arc a→b)
+   *  it builds glowing node MARKERS (additive sprites/meshes) + emissive edge LINES + a bounded pool of
+   *  animated FLOW UNITS (a single THREE.Points cloud) that travel a→b along each edge. The per-dynamic
+   *  `opts` set controls: colormap (defaults to twinHeatColor), flow speed/density, unit size, node icon hue,
+   *  and edge sag. Per-frame advance is ALLOC-FREE (it only writes into pre-sized typed arrays) and bounded
+   *  (units per edge × edge count is capped). Returns { grp, animate(dt, moving, loadFn), nodes, edges, units }.
+   *  Motion-gated by the caller. Headless-safe: Points/BufferAttribute/Line are all guarded.
+   * ============================================================ */
+  const FG_SEG = 14;                 // samples per edge catenary (line resolution)
+  function buildFlowGraph(nodes, edges, opts){
+    opts = opts || {};
+    const cmap     = opts.colormap || twinHeatColor;
+    const perEdge  = Math.max(1, Math.min(10, opts.density || 4));    // flow units per edge (bounded)
+    const speed    = opts.speed || 0.22;                              // base param speed (units/sec along edge)
+    const unitSize = opts.unitSize || 2.0;
+    const nodeHue  = (opts.nodeHue !== undefined) ? opts.nodeHue : TWIN_CYAN;
+    const sag      = (opts.sag !== undefined) ? opts.sag : 8;         // catenary droop amount
+    const lineCol  = (opts.lineColor !== undefined) ? opts.lineColor : 0x2f88b8;
+    const grp = new THREE.Group();
+    const add = THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2;
+
+    // pre-sample every edge's catenary path → flat point list per edge (reused by the line + the flow units)
+    const paths = [];                 // paths[e] = [{x,y,z}...] length FG_SEG+1
+    for (let e = 0; e < edges.length; e++){
+      const a = nodes[edges[e].a], b = nodes[edges[e].b];
+      const pts = [];
+      for (let s = 0; s <= FG_SEG; s++){
+        const u = s / FG_SEG;
+        const droop = Math.sin(u * Math.PI) * sag;                  // 0 at ends, max in the middle
+        pts.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u - droop, z: a.z + (b.z - a.z) * u });
+      }
+      paths.push(pts);
+    }
+
+    // NODE markers — a small emissive box (kind 'source' = larger + warmer) + a soft additive halo sprite
+    for (let i = 0; i < nodes.length; i++){
+      const n = nodes[i];
+      const isSrc = n.kind === 'source';
+      const sz = isSrc ? 6 : 3.4;
+      const hue = isSrc ? 0xffd27a : nodeHue;
+      const mat = new THREE.MeshStandardMaterial({ color: 0x0c2a3c, emissive: new THREE.Color(hue),
+        emissiveIntensity: isSrc ? 0.5 : 0.35, roughness: 0.4, metalness: 0.6 });
+      const box = new THREE.Mesh(new THREE.BoxGeometry(sz, sz * (isSrc ? 2.2 : 1.4), sz), mat);
+      box.position.set(n.x, n.y, n.z); grp.add(box);
+      // wireframe overlay (the holographic read)
+      if (typeof THREE.EdgesGeometry === 'function' && typeof THREE.LineSegments === 'function'){
+        const wire = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(sz, sz * (isSrc ? 2.2 : 1.4), sz)),
+          new THREE.LineBasicMaterial({ color: hue, transparent: true, opacity: 0.9, blending: add, depthWrite: false }));
+        wire.position.copy(box.position); grp.add(wire);
+      }
+    }
+
+    // EDGE lines — one emissive polyline per edge (the transmission/route line)
+    if (typeof THREE.Line === 'function' && typeof THREE.BufferAttribute === 'function'){
+      for (let e = 0; e < paths.length; e++){
+        const p = paths[e], arr = new Float32Array((FG_SEG + 1) * 3);
+        for (let s = 0; s <= FG_SEG; s++){ arr[s*3] = p[s].x; arr[s*3+1] = p[s].y; arr[s*3+2] = p[s].z; }
+        const lgeo = new THREE.BufferGeometry();
+        lgeo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        const line = new THREE.Line(lgeo, new THREE.LineBasicMaterial({ color: lineCol,
+          transparent: true, opacity: 0.4, blending: add, depthWrite: false }));
+        grp.add(line);
+      }
+    }
+
+    // FLOW UNITS — ONE Points cloud carrying perEdge units per edge (bounded). Each unit owns an edge index +
+    // a phase 0..1; per-frame we re-evaluate its catenary position + colour by the edge LOAD. Alloc-free.
+    const total = edges.length * perEdge;
+    let units = null, uPos = null, uCol = null, uEdge = null, uPhase = null;
+    if (total > 0 && typeof THREE.BufferAttribute === 'function' && typeof THREE.Points === 'function'){
+      uPos = new Float32Array(total * 3);
+      uCol = new Float32Array(total * 3);
+      uEdge = new Int32Array(total);
+      uPhase = new Float32Array(total);
+      let k = 0;
+      for (let e = 0; e < edges.length; e++){
+        for (let j = 0; j < perEdge; j++){
+          uEdge[k] = e; uPhase[k] = j / perEdge;          // deterministic spread along the edge
+          const p = paths[e][0];
+          uPos[k*3] = p.x; uPos[k*3+1] = p.y; uPos[k*3+2] = p.z;
+          const c = cmap(0.5); uCol[k*3] = c.r; uCol[k*3+1] = c.g; uCol[k*3+2] = c.b;
+          k++;
+        }
+      }
+      const ugeo = new THREE.BufferGeometry();
+      ugeo.setAttribute('position', new THREE.BufferAttribute(uPos, 3));
+      ugeo.setAttribute('color', new THREE.BufferAttribute(uCol, 3));
+      units = new THREE.Points(ugeo, new THREE.PointsMaterial({ size: unitSize, vertexColors: true,
+        transparent: true, opacity: 0.95, depthWrite: false, blending: add }));
+      grp.add(units);
+    }
+
+    // animate — advance every flow unit along its edge; colour by load (loadFn(edgeIndex)->0..1). Alloc-free.
+    function animate(dt, moving, loadFn){
+      if (!units || !uPos) return;
+      if (moving){
+        for (let i = 0; i < total; i++){
+          let ph = uPhase[i] + dt * speed; if (ph >= 1) ph -= Math.floor(ph); uPhase[i] = ph;
+          const e = uEdge[i], path = paths[e];
+          const f = ph * FG_SEG, s0 = f | 0, s1 = Math.min(FG_SEG, s0 + 1), fr = f - s0;
+          const a = path[s0], b = path[s1];
+          uPos[i*3]   = a.x + (b.x - a.x) * fr;
+          uPos[i*3+1] = a.y + (b.y - a.y) * fr;
+          uPos[i*3+2] = a.z + (b.z - a.z) * fr;
+          const load = loadFn ? loadFn(e) : 0.5;
+          const c = cmap(load);
+          uCol[i*3] = c.r; uCol[i*3+1] = c.g; uCol[i*3+2] = c.b;
+        }
+        if (units.geometry && units.geometry.attributes){
+          if (units.geometry.attributes.position) units.geometry.attributes.position.needsUpdate = true;
+          if (units.geometry.attributes.color)    units.geometry.attributes.color.needsUpdate = true;
+        }
+      }
+    }
+    return { grp, animate, nodes, edges, units, paths };
+  }
+
+  /* ============================================================
+   *  POWER-GRID DYNAMIC (PHASE 1) — buildPowerDynamic()
+   *  A transmission grid built on the shared flow-graph: one generation SOURCE (a tall wireframe pylon)
+   *  feeds a ring of substations/transformers (wireframe boxes) over catenary transmission LINES. CURRENT
+   *  PULSES (the flow units) travel the lines; their colour/intensity = per-line LOAD (twinHeatColor
+   *  cold→hot, fed from powerGridMetrics() — the same numbers the HUD shows). Holographic (dark + cyan
+   *  wireframe + bloom-respecting additive). DECORATIVE + VIEW-ONLY: no firmId, never pickable.
+   * ============================================================ */
+  function buildPowerDynamic(){
+    const grp = new THREE.Group(); grp.position.y = 16;
+    grp.add(labelSpriteSafe('⚡ POWER GRID · transmission load', '#8af5ff', 24, 0, 56, 0));
+    // a generation SOURCE at the centre + substations on a ring; PG_LINES edges fan source→substations
+    const nodes = [{ id: 'GEN', x: 0, y: 14, z: 0, kind: 'source' }];
+    const ring = PG_LINES;                       // one line per substation (matches the HUD's PG_LINES)
+    for (let i = 0; i < ring; i++){
+      const a = (i / ring) * Math.PI * 2;
+      nodes.push({ id: 'SUB' + i, x: Math.cos(a) * 46, y: 8, z: Math.sin(a) * 46, kind: 'sub' });
+    }
+    const edges = [];
+    for (let i = 0; i < ring; i++) edges.push({ a: 0, b: i + 1 });
+    // tall wireframe pylons at the source + each substation (decorative transmission towers)
+    const add = THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2;
+    const mkPylon = (x, z, h) => {
+      if (typeof THREE.EdgesGeometry !== 'function' || typeof THREE.LineSegments !== 'function') return;
+      const py = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.ConeGeometry(5, h, 4)),
+        new THREE.LineBasicMaterial({ color: TWIN_CYAN, transparent: true, opacity: 0.6, blending: add, depthWrite: false }));
+      py.position.set(x, h / 2, z); grp.add(py);
+    };
+    mkPylon(0, 0, 26);
+    for (let i = 0; i < ring; i++){ const a = (i / ring) * Math.PI * 2; mkPylon(Math.cos(a) * 46, Math.sin(a) * 46, 16); }
+    // soft additive ground halo (the substation glow field)
+    const halo = new THREE.Mesh(new THREE.CircleGeometry(52, 48),
+      new THREE.MeshBasicMaterial({ color: TWIN_CYAN, transparent: true, opacity: 0.05, depthWrite: false,
+        side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2), blending: add }));
+    halo.rotation.x = -Math.PI / 2; halo.position.y = 0.2; grp.add(halo);
+    // the shared flow-graph: glowing nodes + emissive lines + bounded current-pulse units
+    const fg = buildFlowGraph(nodes, edges, { colormap: twinHeatColor, density: 5, speed: 0.3,
+      unitSize: 2.4, nodeHue: TWIN_CYAN, sag: 10, lineColor: 0x2f88b8 });
+    grp.add(fg.grp);
+    return { grp, fg, t: 0 };
+  }
+
+  /* ============================================================
+   *  DATA-COMMUNICATION DYNAMIC (PHASE 2) — buildDataCommDynamic()
+   *  A network topology built on the shared flow-graph: a CORE switch (source) feeds a ring of edge
+   *  switches/routers over fibre LINKS. DATA PACKETS (the flow units) travel the links; their colour =
+   *  per-link UTILISATION via dataCommColor (cyan→green→amber — congested links read amber/HOT, distinct
+   *  from Power's blue→red and never white). Holographic: thin wireframe server-rack pylons at each node +
+   *  a soft additive ground field. DECORATIVE + VIEW-ONLY: no firmId, never pickable. The packet density is
+   *  HIGHER + faster than Power (lots of small fast packets) and the catenary sag is small (taut fibre).
+   * ============================================================ */
+  function buildDataCommDynamic(){
+    const grp = new THREE.Group(); grp.position.y = 16;
+    grp.add(labelSpriteSafe('📡 DATA COMMS · packet flow', '#8af5ff', 24, 0, 56, 0));
+    const ring = DC_LINKS;                        // one fibre link per edge node (matches the HUD's DC_LINKS)
+    const nodes = [{ id: 'CORE', x: 0, y: 14, z: 0, kind: 'source' }];
+    for (let i = 0; i < ring; i++){ const a = (i / ring) * Math.PI * 2;
+      nodes.push({ id: 'SW' + i, x: Math.cos(a) * 44, y: 7, z: Math.sin(a) * 44, kind: 'sub' }); }
+    const edges = []; for (let i = 0; i < ring; i++) edges.push({ a: 0, b: i + 1 });
+    // a few RING links between adjacent edge switches (mesh redundancy — extra fibre paths)
+    for (let i = 0; i < ring; i += 2) edges.push({ a: i + 1, b: (i + 2) % ring + 1 });
+    // holographic server-rack pylons: thin tall wireframe boxes at the core + each switch
+    const add = THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2;
+    const DC_HUE = 0x46ffd0;                       // cyan/green data accent (distinct from Power's cyan)
+    const mkRack = (x, z, h) => {
+      if (typeof THREE.EdgesGeometry !== 'function' || typeof THREE.LineSegments !== 'function') return;
+      const r = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(5, h, 5)),
+        new THREE.LineBasicMaterial({ color: DC_HUE, transparent: true, opacity: 0.55, blending: add, depthWrite: false }));
+      r.position.set(x, h / 2, z); grp.add(r);
+    };
+    mkRack(0, 0, 22);
+    for (let i = 0; i < ring; i++){ const a = (i / ring) * Math.PI * 2; mkRack(Math.cos(a) * 44, Math.sin(a) * 44, 12); }
+    // soft additive ground field (the data-center floor glow)
+    if (typeof THREE.CircleGeometry === 'function'){
+      const halo = new THREE.Mesh(new THREE.CircleGeometry(50, 48),
+        new THREE.MeshBasicMaterial({ color: DC_HUE, transparent: true, opacity: 0.045, depthWrite: false,
+          side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2), blending: add }));
+      halo.rotation.x = -Math.PI / 2; halo.position.y = 0.2; grp.add(halo);
+    }
+    // shared flow-graph: many small FAST packets over taut fibre (low sag), coloured by per-link utilisation.
+    const fg = buildFlowGraph(nodes, edges, { colormap: dataCommColor, density: 8, speed: 0.6,
+      unitSize: 1.7, nodeHue: DC_HUE, sag: 2, lineColor: 0x1f7a86 });
+    grp.add(fg.grp);
+    return { grp, fg, t: 0 };
+  }
+
+  /* ============================================================
+   *  COMPONENT-LOGISTICS DYNAMIC (PHASE 2) — buildLogisticsDynamic()
+   *  A logistics network built on the shared flow-graph: a central PORT/DISTRIBUTION hub (source) connected
+   *  to warehouses/factories/retail (ring nodes) by ROUTES. COMPONENT SHIPMENTS (the flow units) move along
+   *  the routes, tinted by per-route UTILISATION via logisticsColor (amber→gold→teal — distinct goods
+   *  palette, never white). Each node carries an INVENTORY-LEVEL RING (a thin additive torus whose presence
+   *  reads as stocked). Bigger, SLOWER carrier units (crates) than the data packets; gentle route sag.
+   *  DECORATIVE + VIEW-ONLY: no firmId, never pickable.
+   * ============================================================ */
+  function buildLogisticsDynamic(){
+    const grp = new THREE.Group(); grp.position.y = 16;
+    grp.add(labelSpriteSafe('🚚 LOGISTICS · component shipments', '#ffd9a0', 24, 0, 56, 0));
+    const ring = LG_ROUTES;                        // one route per node (matches the HUD's LG_ROUTES)
+    const nodes = [{ id: 'PORT', x: 0, y: 13, z: 0, kind: 'source' }];
+    for (let i = 0; i < ring; i++){ const a = (i / ring) * Math.PI * 2;
+      nodes.push({ id: 'WH' + i, x: Math.cos(a) * 46, y: 6, z: Math.sin(a) * 46, kind: 'sub' }); }
+    const edges = []; for (let i = 0; i < ring; i++) edges.push({ a: 0, b: i + 1 });
+    const add = THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2;
+    const LG_HUE = 0xffc24a, LG_TEAL = 0x2fd9c0;   // amber goods + teal fast-lane accents (distinct palette)
+    // holographic warehouse sheds: low wide wireframe boxes at each node + inventory-level rings (torus)
+    const mkShed = (x, z, w, h) => {
+      if (typeof THREE.EdgesGeometry === 'function' && typeof THREE.LineSegments === 'function'){
+        const s = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, w)),
+          new THREE.LineBasicMaterial({ color: LG_HUE, transparent: true, opacity: 0.5, blending: add, depthWrite: false }));
+        s.position.set(x, h / 2, z); grp.add(s);
+      }
+      // inventory-level RING — a thin additive torus hovering at the node (reads as a stock gauge)
+      if (typeof THREE.TorusGeometry === 'function'){
+        const torus = new THREE.Mesh(new THREE.TorusGeometry(w * 0.85, 0.35, 6, 22),
+          new THREE.MeshBasicMaterial({ color: LG_TEAL, transparent: true, opacity: 0.5, depthWrite: false, blending: add }));
+        torus.rotation.x = -Math.PI / 2; torus.position.set(x, h + 1.6, z); grp.add(torus);
+      }
+    };
+    mkShed(0, 0, 9, 14);
+    for (let i = 0; i < ring; i++){ const a = (i / ring) * Math.PI * 2; mkShed(Math.cos(a) * 46, Math.sin(a) * 46, 7, 8); }
+    // soft additive ground field (the depot apron glow)
+    if (typeof THREE.CircleGeometry === 'function'){
+      const halo = new THREE.Mesh(new THREE.CircleGeometry(52, 48),
+        new THREE.MeshBasicMaterial({ color: LG_HUE, transparent: true, opacity: 0.04, depthWrite: false,
+          side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2), blending: add }));
+      halo.rotation.x = -Math.PI / 2; halo.position.y = 0.2; grp.add(halo);
+    }
+    // shared flow-graph: fewer, BIGGER, SLOWER carrier units (crates) over gently sagging routes.
+    const fg = buildFlowGraph(nodes, edges, { colormap: logisticsColor, density: 3, speed: 0.16,
+      unitSize: 3.0, nodeHue: LG_HUE, sag: 7, lineColor: 0x8a5a1c });
+    grp.add(fg.grp);
+    return { grp, fg, t: 0 };
+  }
+
+  /* ============================================================
+   *  DATA-CENTER HEAT-FLOW DYNAMIC (PHASE 3) — buildDataCenterDynamic()
+   *  A server room rendered holographically: two ROWS of SERVER RACKS in a hot/cold-aisle layout (solid
+   *  emissive boxes thermally TINTED by twinHeatColor(temp) — hotspots read red — each with a wireframe
+   *  overlay), CRAC/cooling units at the row ends, a perforated RAISED FLOR plenum + a CEILING RETURN plane.
+   *  An AIRFLOW particle stream (THREE.Points — the turbine heat-flow technique applied to a server room)
+   *  runs the thermal loop: cold supply rises in the central COLD AISLE, flows THROUGH the racks (heating as
+   *  it absorbs the IT load), rises as HOT plumes in the outer HOT AISLES to the ceiling return, then loops
+   *  back. Each particle is coloured by its LOCAL temperature via twinHeatColor (cold blue → hot red), so the
+   *  cold aisle reads blue and the hot aisle/plumes read red. Per-rack temps come from dataCenterMetrics() —
+   *  the SAME numbers the HUD shows (single source of truth). DECORATIVE + VIEW-ONLY: no firmId, never picked.
+   *  Headless-safe: every Points/Edges/Plane/Box op is guarded; falls back gracefully under the THREE stub.
+   * ============================================================ */
+  const DX_AIR_N = 520;                 // airflow particles (Points) — bounded, alloc-free per-frame
+  function buildDataCenterDynamic(){
+    const grp = new THREE.Group(); grp.position.y = 6;
+    grp.add(labelSpriteSafe('🌡️ DATA-CENTER · heat-flow (hot/cold aisle)', '#8af5ff', 24, 0, 60, 0));
+    const add = THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2;
+    const DBL = (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2);
+    // ---- LAYOUT: 2 rows × 6 racks. Rows sit at x = ±ROWX facing each other across the central COLD aisle
+    //      (z runs the length of the room). The outer sides (|x| > ROWX) are the HOT aisles. ----
+    const PER_ROW = DX_RACKS / 2 | 0;     // 6 racks per row
+    const ROWX = 14, RW = 6, RH = 26, RD = 8, GAPZ = 11;
+    const z0 = -((PER_ROW - 1) * GAPZ) / 2;
+    const racks = [];                     // { mesh (solid, tinted per-frame), idx } — the thermal shells
+    const mkRack = (x, z, idx) => {
+      // SOLID rack — its own MeshBasicMaterial so we can tint it by twinHeatColor(temp) every frame (hotspots red)
+      const c0 = twinHeatColor(0.4);
+      const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(c0.r, c0.g, c0.b),
+        transparent: true, opacity: 0.42, depthWrite: false, blending: add });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(RW, RH, RD), mat);
+      mesh.position.set(x, RH / 2, z); grp.add(mesh);
+      racks.push({ mesh, idx, x, z });
+      // wireframe overlay (the holographic chassis read)
+      if (typeof THREE.EdgesGeometry === 'function' && typeof THREE.LineSegments === 'function'){
+        const wire = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(RW, RH, RD)),
+          new THREE.LineBasicMaterial({ color: TWIN_CYAN, transparent: true, opacity: 0.65, blending: add, depthWrite: false }));
+        wire.position.set(x, RH / 2, z); grp.add(wire);
+      }
+    };
+    for (let r = 0; r < 2; r++){
+      const x = (r === 0 ? -ROWX : ROWX);
+      for (let i = 0; i < PER_ROW; i++){ mkRack(x, z0 + i * GAPZ, r * PER_ROW + i); }
+    }
+    // ---- CRAC / cooling units at each end of the room (wireframe boxes with a cool blue accent) ----
+    const CRAC_HUE = 0x4fb8ff;
+    const mkCrac = (z) => {
+      if (typeof THREE.EdgesGeometry !== 'function' || typeof THREE.LineSegments !== 'function') return;
+      const cz = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(34, 18, 7)),
+        new THREE.LineBasicMaterial({ color: CRAC_HUE, transparent: true, opacity: 0.6, blending: add, depthWrite: false }));
+      cz.position.set(0, 9, z); grp.add(cz);
+    };
+    mkCrac(z0 - GAPZ); mkCrac(z0 + PER_ROW * GAPZ);
+    const aisleLen = (PER_ROW - 1) * GAPZ + GAPZ * 2;    // floor/ceiling span along z
+    // ---- RAISED FLOOR plenum — a cool perforated tile glow under the COLD aisle (cold supply enters here) ----
+    if (typeof THREE.PlaneGeometry === 'function'){
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROWX * 2 - RW, aisleLen),
+        new THREE.MeshBasicMaterial({ color: CRAC_HUE, transparent: true, opacity: 0.10, depthWrite: false, side: DBL, blending: add }));
+      floor.rotation.x = -Math.PI / 2; floor.position.y = 0.4; grp.add(floor);
+      // ---- CEILING RETURN — a warm plane up top where the hot air is drawn back to the CRACs ----
+      const ceil = new THREE.Mesh(new THREE.PlaneGeometry(ROWX * 2 + RW * 2 + 8, aisleLen),
+        new THREE.MeshBasicMaterial({ color: 0xff7a4f, transparent: true, opacity: 0.06, depthWrite: false, side: DBL, blending: add }));
+      ceil.rotation.x = -Math.PI / 2; ceil.position.y = RH + 6; grp.add(ceil);
+    }
+    // soft additive ground halo (the room glow field)
+    if (typeof THREE.CircleGeometry === 'function'){
+      const halo = new THREE.Mesh(new THREE.CircleGeometry(46, 48),
+        new THREE.MeshBasicMaterial({ color: TWIN_CYAN, transparent: true, opacity: 0.04, depthWrite: false, side: DBL, blending: add }));
+      halo.rotation.x = -Math.PI / 2; halo.position.y = 0.2; grp.add(halo);
+    }
+    // ---- AIRFLOW STREAM (the heat-flow Points) — each particle owns a deterministic thermal LOOP phase 0..1:
+    //      phase 0.00..0.30  COLD supply rises in the central cold aisle (cool, low x, rising y)         — BLUE
+    //      phase 0.30..0.60  flows horizontally THROUGH a rack row toward a hot aisle (heating)          — warming
+    //      phase 0.60..0.85  HOT plume rises in the outer hot aisle to the ceiling return                — HOT/RED
+    //      phase 0.85..1.00  returns along the ceiling back toward the cold aisle (cooling at the CRAC)  — cooling
+    //      We pre-seed positions; updateDigitalTwinScene advances + recolours by twinHeatColor(localTemp). ----
+    let air = null, airPos = null, airPhase = null, airRow = null, airTemp = null;
+    if (typeof THREE.BufferAttribute === 'function' && typeof THREE.Points === 'function'){
+      const geo = new THREE.BufferGeometry();
+      airPos = new Float32Array(DX_AIR_N * 3);
+      const col = new Float32Array(DX_AIR_N * 3);
+      airPhase = new Float32Array(DX_AIR_N);
+      airRow = new Int8Array(DX_AIR_N);     // which row (−1 = left/+1 = right) this parcel passes through
+      airTemp = new Float32Array(DX_AIR_N);
+      for (let i = 0; i < DX_AIR_N; i++){
+        const ph = i / DX_AIR_N;            // deterministic spread around the loop
+        airPhase[i] = ph;
+        airRow[i] = (i & 1) ? 1 : -1;
+        const z = z0 + (i % PER_ROW) * GAPZ + ((i * 0.37) % GAPZ - GAPZ * 0.5) * 0.6;
+        const p = dxAirSample(ph, airRow[i], z, ROWX, RH, z0, aisleLen);
+        airPos[i*3] = p.x; airPos[i*3+1] = p.y; airPos[i*3+2] = p.z;
+        const c = twinHeatColor(p.temp); airTemp[i] = p.temp;
+        col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(airPos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      air = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.9, vertexColors: true,
+        transparent: true, opacity: 0.95, depthWrite: false, blending: add }));
+      grp.add(air);
+    }
+    return { grp, fg: null, racks, air, airPos, airPhase, airRow, airTemp,
+             ROWX, RH, z0, aisleLen, t: 0 };
+  }
+  // sample the data-center thermal LOOP at parameter ph∈[0,1] for a parcel passing row `row` (−1/+1) at depth z.
+  // Returns { x, y, z, temp } — temp 0..1 rises from cold-aisle supply (≈0.1) to hot-aisle/return (≈1). Shared
+  // by the seed + the per-frame advance so the airflow is consistent. Pure math (headless-safe).
+  function dxAirSample(ph, row, z, ROWX, RH, z0, aisleLen){
+    ph = ph - Math.floor(ph);
+    let x, y, temp;
+    if (ph < 0.30){                                   // cold supply rises in the central cold aisle
+      const u = ph / 0.30;
+      x = (Math.sin(ph * 41.0) * 0.5) * 6;            // jitter within the cold aisle (|x| small)
+      y = 1 + u * (RH * 0.55);
+      temp = 0.06 + u * 0.10;                         // cold blue, warming a touch as it nears the intakes
+    } else if (ph < 0.60){                            // pushed horizontally THROUGH the rack row (heating)
+      const u = (ph - 0.30) / 0.30;
+      x = row * (ROWX * 0.45 + u * (ROWX * 1.05));    // cold-aisle face → through rack → hot-aisle face
+      y = RH * (0.30 + 0.30 * Math.sin(u * Math.PI)); // mid-rack band
+      temp = 0.16 + u * 0.62;                         // absorbs the IT load → warming hard
+    } else if (ph < 0.85){                            // HOT plume rises in the outer hot aisle to the ceiling
+      const u = (ph - 0.60) / 0.25;
+      x = row * (ROWX * 1.5 + 4);
+      y = RH * 0.6 + u * (RH * 0.55);
+      temp = 0.78 + u * 0.20;                         // hottest — red plume
+    } else {                                          // returns along the ceiling toward the cold aisle (cooling)
+      const u = (ph - 0.85) / 0.15;
+      x = row * (ROWX * 1.5 + 4) * (1 - u);
+      y = RH + 4 + Math.sin(u * Math.PI) * 2;
+      temp = 0.98 - u * 0.70;                         // cooling back down at the CRAC return
+    }
+    return { x, y, z, temp: Math.max(0, Math.min(1, temp)) };
+  }
+
   function buildDigitalTwinScene(){
     const g = buildSceneRoot('digital-twin');
     g.add(labelSpriteSafe('🛰️ DIGITAL TWIN · turbine multi-physics', '#8af5ff', 28, 0, 70, 0));
@@ -7059,7 +7945,10 @@
     if (!_twinLut && typeof THREE !== 'undefined' && typeof THREE.Lut === 'function'){
       try { _twinLut = new THREE.Lut('rainbow', 64); } catch(_){ _twinLut = null; }
     }
-    const root = new THREE.Group(); root.position.y = 30; g.add(root);
+    // PHASE 1: all dynamics live under THIS host group (under the digital-twin section group). Only one is
+    // ever visible; switching hides the others (lazy build + cache, fully reversible — see selectTwinDynamic).
+    const dynamicsHost = new THREE.Group(); g.add(dynamicsHost);
+    const root = new THREE.Group(); root.position.y = 30; dynamicsHost.add(root);   // multiphysics = the turbine root
 
     // (1) HERO — SOLID physical engine + overlaid translucent WIREFRAME twin, both on the same axis.
     const solid = twinEngineAssembly('solid');
@@ -7171,10 +8060,80 @@
     mkPanel(30, 18,  62, 30,  18, -0.6);
     mkPanel(26, 15,  58, -2, -34, -0.4);
 
+    // PHASE 1: the dynamics registry — each entry holds its in-world group (lazily built) so switching the
+    // sub-selector hides+reuses (no leak). 'multiphysics' is the turbine root, already built above. The
+    // others build on first select (buildPowerDynamic etc.). Each group is decorative (no firmId, never picked).
+    const dynamics = {
+      multiphysics: { group: root, built: true },
+      power:        { group: null, built: false },
+      datacenter:   { group: null, built: false },
+      datacomm:     { group: null, built: false },   // PHASE 2: data-communication topology
+      logistics:    { group: null, built: false },   // PHASE 2: component-logistics network
+    };
     sceneState['digital-twin'] = {
-      root, solid, twin, scan, scanRing, halo,
+      root, dynamicsHost, dynamics, solid, twin, scan, scanRing, halo,
       heat, heatPos, heatPhase, netSpin, panels, t: 0,
     };
+    // honour any pre-selected dynamic (default 'multiphysics' keeps the turbine exactly as today)
+    if (twinDynamic !== 'multiphysics') selectTwinDynamic(twinDynamic, true);
+  }
+
+  /* PHASE 1: switch the active Digital-Twin dynamic. Lazily builds + caches the chosen dynamic's scene group
+   * under dynamicsHost, shows it, hides every other dynamic, and swaps the crisp DOM HUD body + title. Fully
+   * reversible (no leak: groups are kept + just toggled visible). VIEW-ONLY: touches only decorative twin
+   * meshes + the HUD DOM; never the economy/picking. `silent` skips the chip/HUD UI sync (used at build time). */
+  function buildTwinDynamic(name){
+    if (name === 'power')      return buildPowerDynamic();
+    if (name === 'datacomm')   return buildDataCommDynamic();     // PHASE 2: network topology + data packets
+    if (name === 'logistics')  return buildLogisticsDynamic();    // PHASE 2: logistics network + shipments
+    if (name === 'datacenter') return buildDataCenterDynamic();   // PHASE 3: server-room heat-flow (hot/cold aisle)
+    // (unknown dynamic) — minimal flow-graph fallback so a stray name never throws.
+    const ringN = 7;
+    const nodes = [{ id: 'HUB', x: 0, y: 12, z: 0, kind: 'source' }];
+    for (let i = 0; i < ringN; i++){ const a = (i / ringN) * Math.PI * 2; nodes.push({ id: name + i, x: Math.cos(a) * 40, y: 6, z: Math.sin(a) * 40, kind: 'sub' }); }
+    const edges = []; for (let i = 0; i < ringN; i++) edges.push({ a: 0, b: i + 1 });
+    const opts = { colormap: twinHeatColor, density: 4, speed: 0.18, unitSize: 2.6, nodeHue: 0x9be7ff, sag: 6, lineColor: 0x355f88 };
+    const grp = new THREE.Group(); grp.position.y = 16;
+    grp.add(labelSpriteSafe('🌡️ TWIN · flow', '#8af5ff', 24, 0, 50, 0));
+    const fg = buildFlowGraph(nodes, edges, opts); grp.add(fg.grp);
+    return { grp, fg, t: 0 };
+  }
+  function selectTwinDynamic(name, silent){
+    const st = sceneState['digital-twin'];
+    if (!st || !st.dynamics || !st.dynamics[name]) name = 'multiphysics';
+    twinDynamic = name;
+    if (st && st.dynamics){
+      const entry = st.dynamics[name];
+      if (entry && !entry.built){
+        try { const d = buildTwinDynamic(name); entry.group = d.grp; entry.dyn = d; entry.built = true;
+          if (st.dynamicsHost) st.dynamicsHost.add(d.grp); } catch(_){ entry.built = true; }
+      }
+      // show the chosen group; hide all others (reversible — no disposal, just visibility)
+      for (const k in st.dynamics){ const e = st.dynamics[k]; if (e && e.group) e.group.visible = (k === name); }
+    }
+    if (!silent) syncTwinDynamicUI();
+  }
+  function syncTwinDynamicUI(){
+    // chips
+    const chips = document.querySelectorAll('#twin-chips .tchip');
+    if (chips && chips.forEach) chips.forEach(c => {
+      const on = c.getAttribute && c.getAttribute('data-dyn') === twinDynamic;
+      if (c.setAttribute) c.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    // HUD bodies — only the active dynamic's body shows
+    const names = ['multiphysics', 'power', 'datacenter', 'datacomm', 'logistics'];
+    for (const n of names){ const b = $('twin-dyn-' + n); if (b && b.classList) b.classList.toggle('on', n === twinDynamic); }
+    // title text
+    const titles = { multiphysics: 'Digital Twin · Turbine Telemetry', power: 'Digital Twin · Power Grid',
+      datacenter: 'Digital Twin · Data-Center Heat', datacomm: 'Digital Twin · Data Communication',
+      logistics: 'Digital Twin · Component Logistics' };
+    const tt = $('twin-title'); if (tt) tt.textContent = titles[twinDynamic] || titles.multiphysics;
+  }
+  function wireTwinChips(){
+    const chips = document.querySelectorAll('#twin-chips .tchip');
+    if (!chips || !chips.forEach) return;
+    chips.forEach(c => { c.onclick = () => selectTwinDynamic(c.getAttribute('data-dyn')); });
+    syncTwinDynamicUI();
   }
 
   // animate the hero: spin the fans, sweep the scan plane, advance the heat-flow particles. Motion-gated
@@ -7186,6 +8145,63 @@
     // gentle hero presence even when static: keep meshes valid. Advance the clock only when moving.
     if (moving) st.t += 0.016;
     const t = st.t;
+    // PHASE 1/2: when a NON-turbine dynamic is active, animate it via the shared flow-graph and skip the
+    // (hidden) turbine work. The flow units are coloured by the SAME per-edge load the HUD shows (single
+    // source of truth): power → powerGridMetrics, datacomm → dataCommMetrics (per-link), logistics →
+    // logisticsMetrics (per-route). The datacenter placeholder uses a gentle deterministic load fan.
+    // Motion-gated + alloc-free + bounded. The in-world unit COLOUR uses each dynamic's own flow-graph
+    // colormap (set at build time), so the palettes stay distinct (cyan/green data vs amber/teal goods).
+    if (twinDynamic !== 'multiphysics'){
+      const entry = st.dynamics && st.dynamics[twinDynamic];
+      const dyn = entry && entry.dyn;
+      // PHASE 3: the DATA-CENTER dynamic is NOT a flow-graph — it owns its bespoke airflow Points loop + a set
+      // of thermally-tinted rack shells. Advance the airflow (cold aisle → through racks → hot plume → return)
+      // and re-tint each rack by its per-rack temperature from dataCenterMetrics() (single source of truth).
+      if (dyn && dyn.air !== undefined && twinDynamic === 'datacenter'){
+        if (moving) dyn.t = (dyn.t || 0) + 0.016;
+        let temps = null;
+        try { temps = dataCenterMetrics().temps; } catch(_){}
+        // tint the rack shells by their per-rack temperature (hotspots read red) — cheap, every frame.
+        if (dyn.racks && temps){
+          for (let r = 0; r < dyn.racks.length; r++){
+            const rk = dyn.racks[r]; const u = temps[rk.idx % temps.length];
+            const c = twinHeatColor(u);
+            if (rk.mesh && rk.mesh.material && rk.mesh.material.color && rk.mesh.material.color.setRGB)
+              rk.mesh.material.color.setRGB(c.r, c.g, c.b);
+          }
+        }
+        // advance + recolour the airflow particles along the thermal loop (alloc-free; gated by `moving`)
+        if (moving && dyn.air && dyn.airPos && dyn.airPhase && dyn.air.geometry && dyn.air.geometry.attributes){
+          const itLoad = temps ? (temps.reduce((s, x) => s + x, 0) / temps.length) : 0.5;
+          const flow = 0.10 + 0.18 * itLoad;                  // airflow speed scales with the IT load
+          const cattr = dyn.air.geometry.attributes.color;
+          const carr = cattr && cattr.array;
+          for (let i = 0; i < DX_AIR_N; i++){
+            let ph = dyn.airPhase[i] + 0.016 * flow; if (ph >= 1) ph -= Math.floor(ph); dyn.airPhase[i] = ph;
+            const z = dyn.z0 + (i % 6) * 11 + ((i * 0.37) % 11 - 5.5) * 0.6;
+            const p = dxAirSample(ph, dyn.airRow[i], z, dyn.ROWX, dyn.RH, dyn.z0, dyn.aisleLen);
+            // bias the local temperature up where the IT load is high (hotter rooms run a hotter loop)
+            const temp = Math.max(0, Math.min(1, p.temp * (0.7 + 0.5 * itLoad)));
+            dyn.airPos[i*3] = p.x; dyn.airPos[i*3+1] = p.y; dyn.airPos[i*3+2] = p.z;
+            if (carr){ const c = twinHeatColor(temp); carr[i*3] = c.r; carr[i*3+1] = c.g; carr[i*3+2] = c.b; }
+          }
+          dyn.air.geometry.attributes.position.needsUpdate = true;
+          if (cattr) cattr.needsUpdate = true;
+        }
+        return;
+      }
+      if (dyn && dyn.fg){
+        if (moving) dyn.t = (dyn.t || 0) + 0.016;
+        let loadFn = null;
+        if (twinDynamic === 'power'){ const m = powerGridMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
+        else if (twinDynamic === 'datacomm'){ const m = dataCommMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
+        else if (twinDynamic === 'logistics'){ const m = logisticsMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
+        else { const dt = dyn.t || 0; loadFn = (e) => 0.5 + 0.45 * Math.sin(dt * 0.7 + e * 1.3); }
+        dyn.fg.animate(0.016, moving, loadFn);
+        if (dyn.grp && moving) dyn.grp.rotation.y = (dyn.t || 0) * 0.05;
+      }
+      return;
+    }
     // fan spin (both stages), counter-rotating slightly for parallax
     if (st.solid){ if (st.solid.fan) st.solid.fan.rotation.x = t * 1.6; if (st.solid.fan2) st.solid.fan2.rotation.x = -t * 1.1; }
     if (st.twin){ if (st.twin.fan) st.twin.fan.rotation.x = t * 1.6; if (st.twin.fan2) st.twin.fan2.rotation.x = -t * 1.1; }
@@ -7535,6 +8551,21 @@
     leaderboardData(){
       return rankedFrame().map((r, i) => ({ id: r.id, rank: i + 1, netWorth: r.netWorth }));
     },
+    // ---- DIGITAL-TWIN dynamic-selector introspection (PHASE 1-3; view-only). Reports the currently-active
+    //      dynamic + each registered dynamic's built/visible state under the shared dynamicsHost, so a harness
+    //      can confirm switching shows exactly ONE dynamic (no residual/leak) and that the build is reversible.
+    //      Reads only the decorative twin scene-state; mutates NOTHING (no economy/picking/streaming touch).
+    twinDynamics(){
+      const st = sceneState['digital-twin']; if (!st || !st.dynamics) return null;
+      const out = { active: twinDynamic, list: {} };
+      for (const k in st.dynamics){ const e = st.dynamics[k];
+        out.list[k] = { built: !!(e && e.built), hasGroup: !!(e && e.group),
+          visible: !!(e && e.group && e.group.visible) };
+      }
+      // count how many built dynamic groups are visible — MUST be ≤ 1 (exactly the active one when built).
+      out.visibleCount = Object.keys(out.list).filter(k => out.list[k].hasGroup && out.list[k].visible).length;
+      return out;
+    },
   };
 
   globalThis.__worldHeadless = {
@@ -7630,6 +8661,7 @@
       wireScrubber();
       wireMaps();
       wireSections();
+      wireTwinChips();       // PHASE 1: Digital-Twin dynamic sub-selector chips
       setCamMode('map');
       refreshHUD();
       updateRegionReadout(0, 0);
