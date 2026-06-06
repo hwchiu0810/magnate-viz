@@ -1,0 +1,71 @@
+{
+  "format": "magnate-viz-project",
+  "schemaVersion": "1.0.0",
+  "data": [
+    {
+      "id": "companies",
+      "kind": "paramspace",
+      "shape": [120, 4],
+      "dtype": "f32",
+      "axes": ["netWorth", "load", "tradeVolume", "speed"],
+      "src": "companies.f32.bin"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "cityA",
+      "registryId": "cityScene",
+      "params": { "ground": "grid", "fog": 0.15 },
+      "objects": [
+        {
+          "id": "towers",
+          "registryId": "instancedBox",
+          "params": { "instances": 120 },
+          "encode": {
+            "data": { "ref": "companies", "kind": "paramspace", "shape": [120, 4] },
+            "transform": [
+              { "op": "pca", "input": "@data", "components": 2, "seed": 7, "as": "proj" },
+              { "op": "normalize", "input": "@data.netWorth", "as": "nwN" }
+            ],
+            "object": { "registryId": "instancedBox", "instances": 120 },
+            "encode": {
+              "position": { "from": "@proj", "scale": { "type": "linear", "range": [[-40, 0, -40], [40, 0, 40]] } },
+              "scale": { "from": "@data.netWorth", "axis": "y", "scale": { "type": "sqrt", "range": [1, 30] } },
+              "color": { "from": "@data.load", "scale": { "type": "colormap", "map": "viridis" } },
+              "opacity": { "from": "@data.load", "scale": { "type": "linear", "range": [0.55, 0.95] } },
+              "motion": { "from": "@data.speed", "scale": { "type": "linear", "range": [0, 1.0] } },
+              "effectParam": { "channel": "emissiveIntensity", "from": "@nwN", "scale": { "type": "linear", "range": [1.5, 3.0] } }
+            }
+          },
+          "dynamics": [
+            { "registryId": "orbitDrift", "params": { "rate": 0.2 } }
+          ],
+          "effects": [
+            { "registryId": "fresnel", "params": { "power": 2.0 }, "bind": { "param": "power", "from": "@nwN" } }
+          ]
+        }
+      ],
+      "camera": { "position": [0, 60, 120], "fov": 50 },
+      "lights": { "ambient": 0.4, "key": 0.8 },
+      "transitions": { "in": "fade", "ms": 600 }
+    }
+  ],
+  "objects": [],
+  "dynamics": [],
+  "effects": [
+    {
+      "id": "citySparks",
+      "registryId": "sparks",
+      "params": { "rate": 40 },
+      "quarks": {
+        "version": "3.0",
+        "looping": true,
+        "duration": 1,
+        "shape": { "type": "cone", "radius": 1.5, "arc": 6.283 },
+        "startLife": { "type": "IntervalValue", "a": 0.6, "b": 1.4 },
+        "startSpeed": { "type": "ConstantValue", "value": 4 },
+        "behaviors": []
+      }
+    }
+  ]
+}

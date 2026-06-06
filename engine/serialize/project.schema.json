@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://magnate.local/engine/serialize/project.schema.json",
+  "title": "Viz Project Document (schema-v1)",
+  "description": "The single versioned JSON project document for the visualization platform (ADR-D4 serialization-first; INV-5). EVERY scene/object/dynamic/effect IS its declarative spec - the runtime handle is derived from the spec, never the reverse. This one document is the load/save surface, the AI-mutation target, and the conformance-vector input. NO logic is serialized as functions or 'eval' (declarative parameter maps ONLY). Objects embed the D3 EncodeSpec field; effects embed three.quarks ParticleSystem JSON. saveProject() serializes registry ids + params; loadProject() re-creates handles by calling factories with the saved params - never live GPU objects. This schema is engine-only: it names no app-specific (consumer) concepts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schemaVersion", "data", "scenes", "objects", "dynamics", "effects"],
+  "properties": {
+    "format": {
+      "description": "Fixed magic string identifying a viz project document. MUST be exactly this constant so a loader can reject foreign JSON before migration.",
+      "const": "magnate-viz-project"
+    },
+    "schemaVersion": {
+      "description": "Semantic version of the document shape (ADR-D4). Forward-migrating loaders in engine/serialize key on this; a bump is a breaking change. v1 of this skeleton is 1.0.0.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "data": {
+      "description": "Declarative data-source descriptors (NDArray metadata + a source reference). NEVER the live typed-array buffer - only id + kind + shape + a src reference, so the document round-trips without embedding GPU/binary state.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/dataSource" }
+    },
+    "scenes": {
+      "description": "Scene descriptors (Pillar 1). Each binds a SceneRegistry id + params and may reference objects/dynamics/effects by id, plus declarative camera/light/transition param maps.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/scene" }
+    },
+    "objects": {
+      "description": "Object descriptors (Pillar 2). Each binds an ObjectRegistry id + params and embeds the D3 EncodeSpec in its 'encode' field.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/object" }
+    },
+    "dynamics": {
+      "description": "Dynamics descriptors (Pillar 3). Each binds a DynamicsRegistry id + declarative params (timeline/keyframe/trajectory parameter maps only - no serialized functions).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/dynamic" }
+    },
+    "effects": {
+      "description": "Effect descriptors (Pillar 4 / VFX). Each binds a VfxRegistry id + params and MAY embed three.quarks ParticleSystem JSON in its 'quarks' field.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/effect" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "A stable, content-stable identifier. No floats-as-ids, no random ids (deterministic + content-derived where stable identity matters).",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:/+-]+$"
+    },
+    "registryId": {
+      "description": "A registry key (the capability id a registry's register()/list() exposes). Renaming a registry id is a breaking, versioned change (the conformance suite keys on these strings).",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:/+-]+$"
+    },
+    "dataKind": {
+      "description": "The frozen data-kind vocabulary (Consistency Rules). Drives default projection and which dynamics apply.",
+      "type": "string",
+      "enum": ["field", "timeseries", "graph", "points", "paramspace"]
+    },
+    "channel": {
+      "description": "The frozen, closed channel set (Consistency Rules). The only channels an EncodeSpec may target.",
+      "type": "string",
+      "enum": ["position", "scale", "rotation", "color", "opacity", "motion", "effectParam"]
+    },
+    "scaleType": {
+      "description": "The frozen scale vocabulary (ADR-D3).",
+      "type": "string",
+      "enum": ["linear", "log", "sqrt", "ordinal", "colormap"]
+    },
+    "params": {
+      "description": "A declarative parameter map - plain JSON scalars/arrays/nested objects only. NO functions, NO 'eval', NO serialized code (INV-5). This is the only way params are carried for any registry capability.",
+      "type": "object"
+    },
+    "dataSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "$ref": "#/$defs/dataKind" },
+        "shape": {
+          "description": "NDArray shape (e.g. [rows, cols] or [t, n, f]). Metadata only - never the backing buffer.",
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "dtype": {
+          "description": "NDArray element type (ADR-D2). Metadata only.",
+          "type": "string",
+          "enum": ["f32", "f64", "i32", "u8"]
+        },
+        "axes": {
+          "description": "Optional human-readable axis labels (NDArray meta.axes).",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "src": {
+          "description": "A declarative reference to where the data is loaded from (a URL/path/handle key) - NEVER inline binary GPU/typed-array state.",
+          "type": "string"
+        }
+      }
+    },
+    "encodeBinding": {
+      "description": "One channel binding in an EncodeSpec: a data accessor resolved through one explicit scale. Fully declarative - 'from' is an accessor string (e.g. '@data.netWorth' / '@proj'), never a function.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "Data accessor string ('@data.<col>' or '@<projectionAlias>'). Declarative reference only.",
+          "type": "string"
+        },
+        "channel": {
+          "description": "Optional sub-channel name for effectParam bindings (e.g. 'emissiveIntensity').",
+          "type": "string"
+        },
+        "value": {
+          "description": "An optional constant literal value (used when a channel is a fixed datum rather than data-bound)."
+        },
+        "axis": {
+          "description": "Optional axis hint (e.g. 'y' for a scale channel).",
+          "type": "string"
+        },
+        "scale": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "$ref": "#/$defs/scaleType" },
+            "domain": { "type": "array" },
+            "range": { "type": "array" },
+            "map": {
+              "description": "Colormap name (when type === 'colormap'); resolves to a colour-blind-safe Lut. Output rides the sub-white emissive clamp (INV-3).",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "encodeSpec": {
+      "description": "The D3 EncodeSpec embedded in an object: a declarative {data, transform[], object, encode{channel->binding}} grammar. encode keys are drawn ONLY from the closed channel set. Pure + serializable (the conformance-vector boundary).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "description": "Reference to the data source feeding this encode (by id) plus optional inline kind/shape hints.",
+          "type": "object"
+        },
+        "transform": {
+          "description": "Ordered list of declarative transform steps (projections/reducers); each names an op + params, never a function.",
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "object": {
+          "description": "Optional object/mark binding (registryId + instances).",
+          "type": "object"
+        },
+        "encode": {
+          "description": "channel -> binding map. Keys MUST be members of the closed channel set.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/channel" },
+          "additionalProperties": { "$ref": "#/$defs/encodeBinding" }
+        }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "registryId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "registryId": { "$ref": "#/$defs/registryId" },
+        "params": { "$ref": "#/$defs/params" },
+        "objects": {
+          "description": "Object ids bound into this scene (references into the top-level objects[] or inline object descriptors).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/object" }
+        },
+        "camera": { "$ref": "#/$defs/params" },
+        "lights": { "$ref": "#/$defs/params" },
+        "transitions": { "$ref": "#/$defs/params" }
+      }
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "registryId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "registryId": { "$ref": "#/$defs/registryId" },
+        "params": { "$ref": "#/$defs/params" },
+        "encode": { "$ref": "#/$defs/encodeSpec" },
+        "dynamics": {
+          "description": "Dynamics bound to this object (inline dynamic descriptors).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/dynamic" }
+        },
+        "effects": {
+          "description": "Effects bound to this object (inline effect descriptors).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/effect" }
+        }
+      }
+    },
+    "dynamic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registryId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "registryId": { "$ref": "#/$defs/registryId" },
+        "params": { "$ref": "#/$defs/params" }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registryId"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "registryId": { "$ref": "#/$defs/registryId" },
+        "params": { "$ref": "#/$defs/params" },
+        "bind": {
+          "description": "Optional data->effect-param binding (declarative {param, from} only).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "param": { "type": "string" },
+            "from": { "type": "string" }
+          }
+        },
+        "quarks": {
+          "description": "Optional embedded three.quarks ParticleSystem JSON (the proven VFX serialization bridge). Plain JSON parameter data only - no functions.",
+          "type": "object"
+        }
+      }
+    }
+  }
+}

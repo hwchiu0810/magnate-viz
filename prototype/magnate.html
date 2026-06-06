@@ -1,0 +1,1656 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Magnate — economy prototype</title>
+<style>
+  :root{
+    --bg:#0E1116; --surface:#161B22; --surface2:#1C2230; --line:#2A3140; --text:#E6EDF3;
+    --muted:#8B97A7; --accent:#3FB6B2; --up:#4C8DFF; --down:#E0A33E; --warn:#E0A33E; --bad:#F2545B; --good:#3FB6A0;
+    --t0:#9aa7b5; --t1:#7fb3ff; --t2:#9b8cff; --t3:#ffcf6b;
+    --mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --ui:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface2:#EEF1F6; --line:#D6DCE6; --text:#0E1116;
+    --muted:#566273; --accent:#0F726E; --up:#1A52C8; --down:#8A5A00; --warn:#8A5A00; --bad:#C92A33; --good:#0E7C6B;
+    --t0:#566273; --t1:#1A52C8; --t2:#5A3FD0; --t3:#8A5A00;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--ui);font-size:14px;line-height:1.45}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  header{display:flex;align-items:center;gap:18px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header .brand{font-weight:700;font-size:16px;letter-spacing:.3px}
+  header .brand small{color:var(--muted);font-weight:400}
+  .kpis{display:flex;gap:18px;margin-left:8px;flex-wrap:wrap}
+  .kpi{display:flex;flex-direction:column}
+  .kpi .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .kpi .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:15px}
+  .controls{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .scrubber{flex-basis:100%;display:flex;align-items:center;gap:10px;margin-top:6px;padding-top:8px;border-top:1px solid var(--line)}
+  .scrubber input[type=range]{flex:1;min-width:160px;max-width:520px;cursor:pointer;padding:0;accent-color:var(--accent)}
+  .scrubber #scrub-read{white-space:nowrap;min-width:120px}
+  .scrubber #scrub-mode{color:var(--good);border-color:var(--good)}
+  .scrubber.replay #scrub-mode{color:var(--warn);border-color:var(--warn)}
+  .scrubber.replay #scrub-read{color:var(--warn)}
+  #btn-live{font-size:12px;padding:5px 10px}
+  button,select,input{font-family:var(--ui);font-size:13px;color:var(--text);background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button:focus-visible,select:focus-visible,input:focus-visible,[role=tab]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  input{cursor:text}
+  .badge{font-family:var(--mono);font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid var(--line)}
+  .badge.ok{color:var(--good);border-color:var(--good)} .badge.err{color:var(--bad);border-color:var(--bad)}
+  nav[role=tablist]{display:flex;gap:2px;padding:0 12px;background:var(--surface);border-bottom:1px solid var(--line)}
+  [role=tab]{background:none;border:none;border-bottom:2px solid transparent;border-radius:0;padding:10px 14px;color:var(--muted)}
+  [role=tab][aria-selected=true]{color:var(--text);border-bottom-color:var(--accent)}
+  main{padding:16px;max-width:1280px;margin:0 auto}
+  [role=tabpanel][hidden]{display:none}
+  .grid{display:grid;gap:16px}
+  .cols-2{grid-template-columns:1.3fr 1fr} .cols-3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:900px){.cols-2,.cols-3{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px}
+  th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  thead th{color:var(--muted);font-weight:600;font-family:var(--ui);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  tr.me{background:rgba(63,182,178,.12)}
+  tr.partner-firm{box-shadow:inset 3px 0 0 var(--up)}
+  tr.sel-firm{box-shadow:inset 3px 0 0 var(--accent);background:rgba(63,182,178,.18)}
+  .trade-dot{color:var(--up)} .trade-dot.sel{color:var(--accent)}
+  .up{color:var(--up)} .down{color:var(--down)}
+  .delta::before{content:attr(data-arrow);margin-right:3px}
+  canvas{width:100%;height:170px;display:block;background:var(--surface2);border-radius:8px;border:1px solid var(--line)}
+  .row{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:8px}
+  .row label{display:flex;flex-direction:column;font-size:11px;color:var(--muted);gap:3px}
+  .row input,.row select{width:96px}
+  .muted{color:var(--muted)} .small{font-size:12px}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--muted)}
+  .t0{color:var(--t0)}.t1{color:var(--t1)}.t2{color:var(--t2)}.t3{color:var(--t3)}
+  .notice{background:var(--surface2);border:1px solid var(--warn);border-left-width:4px;border-radius:8px;padding:10px 12px;margin-bottom:14px;color:var(--text)}
+  #toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:6px;z-index:9}
+  .toast{background:var(--surface2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;font-size:13px;max-width:320px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+  details{margin-top:8px} summary{cursor:pointer;color:var(--muted);font-size:12px}
+  tr[role=button]{cursor:pointer} tr[role=button]:hover{background:rgba(63,182,178,.10)}
+  tr[role=button]:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  dialog#inspector{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:0;max-width:640px;width:92vw}
+  dialog#inspector::backdrop{background:rgba(0,0,0,.5)}
+  dialog#inspector .insp-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  dialog#inspector .insp-head h2{margin:0;font-size:16px;text-transform:none;letter-spacing:0;color:var(--text)}
+  dialog#inspector .insp-head .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  dialog#inspector .insp-body{padding:14px 16px;max-height:70vh;overflow:auto}
+  dialog#inspector .insp-close{margin-left:auto;align-self:flex-start}
+  dialog#inspector tr.spec{background:rgba(63,182,178,.14)}
+  dialog#inspector .insp-stats{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px}
+  dialog#inspector .insp-stats .kpi .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  dialog#inspector .insp-stats .kpi .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:15px}
+  .spark{margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel,rgba(127,127,127,.04))}
+  .spark .spark-cap{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+  .spark .spark-now{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px;color:var(--text);text-transform:none;letter-spacing:0}
+  .spark .spark-svg{display:block;width:100%;height:36px}
+  .spark .spark-zero{stroke:var(--muted);stroke-width:.5;stroke-dasharray:3 3;opacity:.4;vector-effect:non-scaling-stroke}
+  /* lively MARKET: price-flash on the all-products table, inline mini-sparkline cell, scrolling trade tape */
+  #m-all td.px{position:relative;transition:color .25s,background-color .25s}
+  #m-all td.px.flash-up{color:var(--good);background:rgba(63,182,160,.22)}
+  #m-all td.px.flash-down{color:var(--bad);background:rgba(242,84,91,.22)}
+  #m-all td.spk{padding-top:2px;padding-bottom:2px;width:74px}
+  .minispark{display:block;width:66px;height:20px;vertical-align:middle}
+  .minispark polyline{fill:none;stroke-width:1.3;vector-effect:non-scaling-stroke}
+  .tape-wrap{margin-top:10px;border-top:1px solid var(--line);padding-top:8px;overflow:hidden}
+  .tape-wrap .tape-cap{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;display:flex;align-items:center;gap:8px}
+  .tape-wrap .tape-cap .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(63,182,160,.5)}
+  .anim-on .tape-wrap .tape-cap .dot{animation:tapepulse 1.6s ease-out infinite}
+  @keyframes tapepulse{0%{box-shadow:0 0 0 0 rgba(63,182,160,.5)}70%{box-shadow:0 0 0 6px rgba(63,182,160,0)}100%{box-shadow:0 0 0 0 rgba(63,182,160,0)}}
+  .tape{display:flex;gap:8px;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px;flex-wrap:nowrap;overflow:hidden}
+  .tape .tick{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid var(--line);border-radius:14px;white-space:nowrap;background:var(--surface2);flex:0 0 auto;transition:opacity .4s,transform .4s}
+  .tape .tick.fresh{transform:translateY(-3px)}
+  .anim-on .tape .tick.fresh{animation:tapein .5s ease-out}
+  @keyframes tapein{0%{opacity:0;transform:translateX(-10px)}100%{opacity:1;transform:translateX(0)}}
+  .tape .tick .g{color:var(--text)} .tape .tick .v{color:var(--muted)}
+  .tape .tick.buy{border-color:var(--good)} .tape .tick.sell{border-color:var(--down)}
+  .tape .empty{color:var(--muted)}
+  /* candle/volume pulse marker */
+  #m-vol-pulse{display:inline-block;margin-left:8px;font-size:11px;color:var(--muted);transition:color .3s}
+  .anim-on #m-vol-pulse.clear{color:var(--good);animation:volpulse .6s ease-out}
+  @keyframes volpulse{0%{transform:scale(1.25)}100%{transform:scale(1)}}
+  /* lively FINANCE: money-flow canvas + conserved badge pulse */
+  #fin-flow{height:150px}
+  .anim-on #k-conserv.tickpulse{animation:consvpulse .5s ease-out}
+  @keyframes consvpulse{0%{box-shadow:0 0 0 0 rgba(63,182,160,.45)}100%{box-shadow:0 0 0 7px rgba(63,182,160,0)}}
+  #fin-macro td .num{transition:color .3s}
+  /* segmented chart-view toggle (Market: candles / heatmap) */
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .seg .segbtn{border:none;border-radius:0;background:var(--surface2);padding:5px 10px;font-size:12px;color:var(--muted)}
+  .seg .segbtn+.segbtn{border-left:1px solid var(--line)}
+  .seg .segbtn.active{background:var(--accent);color:#04201f}
+  [data-theme="light"] .seg .segbtn.active{color:#fff}
+  /* treemap + network canvases are taller than the default chart height */
+  #chart-treemap{height:240px}
+  #chart-network{height:440px}
+  .net-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;align-items:center}
+  .net-legend .key{display:inline-flex;align-items:center;gap:5px}
+  .net-legend .swatch{width:11px;height:11px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">▣ Magnate <small>economy prototype</small></div>
+  <div class="kpis">
+    <div class="kpi"><span class="lbl">Company</span><span class="val" id="k-company">—</span></div>
+    <div class="kpi"><span class="lbl">Cash</span><span class="val num" id="k-cash">—</span></div>
+    <div class="kpi"><span class="lbl">Net worth</span><span class="val num" id="k-nw">—</span></div>
+    <div class="kpi"><span class="lbl">Rank</span><span class="val" id="k-rank">—</span></div>
+    <div class="kpi"><span class="lbl">Tick</span><span class="val num" id="k-tick">0</span></div>
+  </div>
+  <div class="controls">
+    <span id="k-conserv" class="badge ok" role="status" title="Conservation invariant: sum of all accounts is constant">∑ conserved</span>
+    <button id="btn-play" aria-pressed="false">⏵ Play</button>
+    <button id="btn-step" title="Advance one tick">⏭ Step</button>
+    <label class="sr-only" for="speed">Speed</label>
+    <select id="speed" title="Tick speed"><option value="1000">1×</option><option value="500" selected>2×</option><option value="250">4×</option><option value="80">fast</option></select>
+    <button id="btn-reseed" title="Restart with a new seed">↻ Reseed</button>
+    <button id="btn-theme" title="Toggle dark/light">◐ Theme</button>
+  </div>
+  <div class="scrubber" role="group" aria-label="Time scrubber — replay recorded ticks">
+    <span id="scrub-mode" class="badge" role="status">● LIVE</span>
+    <label class="sr-only" for="scrub">Replay tick</label>
+    <input id="scrub" type="range" min="0" max="0" step="1" value="0" aria-label="Scrub to a recorded tick">
+    <span id="scrub-read" class="num small muted">⏪ tick 0 / 0</span>
+    <button id="btn-live" type="button" title="Return to the live tick">● LIVE</button>
+  </div>
+</header>
+
+<nav role="tablist" aria-label="Dashboards">
+  <button role="tab" id="tab-market" aria-controls="market" aria-selected="true">Market</button>
+  <button role="tab" id="tab-factory" aria-controls="factory" aria-selected="false">Factory</button>
+  <button role="tab" id="tab-finance" aria-controls="finance" aria-selected="false">Finance</button>
+  <button role="tab" id="tab-network" aria-controls="network" aria-selected="false">Network</button>
+  <button role="tab" id="tab-leaderboard" aria-controls="leaderboard" aria-selected="false">Leaderboard</button>
+  <button role="tab" id="tab-contracts" aria-controls="contracts" aria-selected="false">Contracts</button>
+  <button role="tab" id="tab-help" aria-controls="help" aria-selected="false">About</button>
+</nav>
+
+<main>
+  <div class="notice small">
+    <strong>Prototype.</strong> This runs Magnate's <em>economy model</em> (uniform-price batch auction <em>with reference-qualification</em>,
+    4-tier supply chain, an <em>NPC market-maker desk</em>, retail-demand faucet + sinks, <em>B2B contracts with escrowed bonds</em>, and a conservation
+    invariant over <strong>all four</strong> system accounts — <code>WORLD_FAUCET</code>, <code>SINK_BURN</code>, <code>NPC_DESK</code>, <code>CONTRACT_ESCROW</code> — plus firm cash) live in your browser — the same model verified in <code>play_magnate.py</code>. It is <strong>not</strong> the production React +
+    TigerBeetle/Temporal/Nakama client; it is a faithful, deterministic <em>visualization</em> of the design. Balance is illustrative (real tuning is Epic 9's job).
+  </div>
+
+  <!-- MARKET -->
+  <section id="market" role="tabpanel" aria-labelledby="tab-market">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Value flow — supply-chain Sankey (last ~30 ticks)</h2>
+      <canvas id="chart-mkt-sankey" role="img" aria-label="Supply-chain value-flow Sankey: raw materials flow up the recipe chain to intermediate and finished goods and then into RETAIL; ribbon width is traded volume over the window" style="height:230px"></canvas>
+      <p class="small muted" style="margin:6px 0 0">Ribbon width ∝ traded volume up the recipe chain over the window: raw (T0) → intermediate (T1/T2) → finished (T3) → <code>RETAIL</code>. Same recipe graph as the Factory supply-chain Sankey, weighted by recent throughput.</p>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>Cleared price — <span id="m-good-name">phone</span> <span class="pill" id="m-good-tier"></span></h2>
+        <div class="row" style="margin-top:0">
+          <label>Product
+            <select id="m-good"></select>
+          </label>
+          <div class="seg" role="group" aria-label="Market chart view" style="margin-left:auto">
+            <button id="m-view-candle" type="button" class="segbtn active" aria-pressed="true">Candles</button>
+            <button id="m-view-treemap" type="button" class="segbtn" aria-pressed="false">Heatmap</button>
+          </div>
+          <span class="muted small" id="m-price-line"></span>
+        </div>
+        <canvas id="chart-price" role="img" aria-label="Cleared price history for the selected product"></canvas>
+        <div id="m-treemap-wrap" hidden>
+          <canvas id="chart-treemap" role="img" aria-label="Market heatmap treemap: tiles are the 9 goods grouped into 4 tier sectors, tile area is market value and colour is the tick-over-tick reference-price change" aria-hidden="true"></canvas>
+          <p class="small muted" style="margin:6px 0 0">Tile area ∝ market value (stock × ref price); colour = tick-over-tick price change (green up / red down). Click a tile to chart that product. Data also in the table below.</p>
+        </div>
+        <span id="m-vol-pulse" aria-hidden="true"></span>
+        <div class="tape-wrap" aria-hidden="true">
+          <div class="tape-cap"><span class="dot"></span>Trade tape — most recent clears</div>
+          <div class="tape" id="m-tape"></div>
+        </div>
+        <details><summary>Price data (accessible table)</summary>
+          <div style="max-height:150px;overflow:auto"><table id="m-price-table"><thead><tr><th>Tick</th><th>Clear price</th></tr></thead><tbody></tbody></table></div>
+        </details>
+      </div>
+      <div class="card">
+        <h2>Place a limit order (clears next tick)</h2>
+        <p class="small muted">Orders rest until the next <strong>batch auction</strong>. There is no speed/latency edge — every order in the interval clears at one uniform price.</p>
+        <p class="small">Ordering <strong id="o-good" class="num">phone</strong> <span class="muted">(the product selected on the chart at left)</span></p>
+        <form id="order-form" class="row" aria-label="Place a limit order">
+          <label>Side
+            <select id="o-side"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+          </label>
+          <label>Price
+            <input id="o-price" class="num" type="number" min="1" step="1">
+          </label>
+          <label>Qty
+            <input id="o-qty" class="num" type="number" min="1" step="1" value="5">
+          </label>
+          <button id="o-submit" type="submit">Submit</button>
+        </form>
+        <p class="small" id="o-feedback" aria-live="polite"></p>
+        <h2 style="margin-top:14px">Your resting / recent orders</h2>
+        <table id="o-table"><thead><tr><th>Tick</th><th>Side</th><th>Product</th><th>Px</th><th>Qty</th><th>Status</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>All product reference prices</h2>
+      <table id="m-all"><thead><tr><th>Product</th><th>Tier</th><th>Ref price</th><th>Δ</th><th>Trend</th><th>Last clear vol</th><th>Your stock</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- FACTORY -->
+  <section id="factory" role="tabpanel" aria-labelledby="tab-factory" hidden>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>Production</h2>
+        <div class="row" style="margin-top:0">
+          <label>Focus (resets plan)
+            <select id="f-specialty"></select>
+          </label>
+          <label class="small" style="flex-direction:row;align-items:center;gap:6px;color:var(--text)">
+            <input type="checkbox" id="f-auto" checked style="width:auto"> Auto-manage PLAYER (trade like a rival)
+          </label>
+        </div>
+        <p class="small muted" id="f-recipe"></p>
+        <h2 style="margin-top:12px">Production plan — runs / tick</h2>
+        <div id="f-plan" style="display:flex;flex-wrap:wrap;gap:4px" aria-label="Production plan: runs per tick per product"></div>
+        <p class="small" id="f-cap-line" aria-live="polite"></p>
+        <p class="small muted">Capacity: <span class="num" id="f-cap">7</span> runs/tick · upkeep + production cost flow to <code>SINK_BURN</code>. Raw tiers extract free; recipes consume inputs (buy them on the Market). Auto-manage sells your surplus and buys your plan's inputs.</p>
+      </div>
+      <div class="card">
+        <h2>Your inventory</h2>
+        <canvas id="chart-inv" role="img" aria-label="Your inventory by product"></canvas>
+        <details><summary>Inventory data (accessible table)</summary>
+          <table id="f-inv-table"><thead><tr><th>Product</th><th>Tier</th><th>Units</th><th>@ ref</th></tr></thead><tbody></tbody></table>
+        </details>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Supply chain — material flow (Sankey)</h2>
+      <canvas id="chart-sankey" role="img" aria-label="Supply-chain material-flow diagram; columns are tiers T0→T3, link width reflects recent traded volume" style="height:230px"></canvas>
+      <details><summary>Supply-chain recipes (accessible table)</summary>
+      <table id="f-chain"><thead><tr><th>Product</th><th>Tier</th><th>Recipe (inputs → 1)</th><th>Ref price</th></tr></thead><tbody></tbody></table>
+      </details>
+    </div>
+  </section>
+
+  <!-- FINANCE -->
+  <section id="finance" role="tabpanel" aria-labelledby="tab-finance" hidden>
+    <div class="card" style="margin-bottom:16px">
+      <h2>Money flow — ledger Sankey (last ~30 ticks)</h2>
+      <canvas id="chart-fin-sankey" role="img" aria-label="Money-flow Sankey: WORLD_FAUCET mints into the FIRMS pool, which flows out to SINK_BURN, NPC_DESK and CONTRACT_ESCROW; ribbon width is the real cash magnitude moved over the window" style="height:230px"></canvas>
+      <p class="small muted" style="margin:6px 0 0">Ribbon width ∝ real cash moved over the window: <code>WORLD_FAUCET</code> mints → <strong>FIRMS</strong> → <code>SINK_BURN</code> (fees/upkeep) / <code>NPC_DESK</code> / <code>CONTRACT_ESCROW</code>. In = out reads the conservation invariant across all four system accounts. View-only; the ledger is the source of truth.</p>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>Net worth over time</h2>
+        <canvas id="chart-nw" role="img" aria-label="Your net worth over time"></canvas>
+        <details><summary>Net-worth data (accessible table)</summary>
+          <div style="max-height:150px;overflow:auto"><table id="fin-nw-table"><thead><tr><th>Tick</th><th>Net worth</th></tr></thead><tbody></tbody></table></div>
+        </details>
+        <h2 style="margin-top:14px">Money flow — system accounts (per tick)</h2>
+        <canvas id="fin-flow" role="img" aria-label="Animated money-flow diagram; particles flow between WORLD_FAUCET, the firms pool, NPC_DESK, CONTRACT_ESCROW and SINK_BURN, sized by each account's per-tick cash delta"></canvas>
+        <p class="small muted">Particle flow on each edge is proportional to the account's real per-tick cash delta (mint at <code>WORLD_FAUCET</code> → firms → <code>SINK_BURN</code> / <code>NPC_DESK</code> / <code>CONTRACT_ESCROW</code>). View-only — the ledger is the source of truth.</p>
+      </div>
+      <div class="card">
+        <h2>Balance sheet & P&amp;L (PLAYER)</h2>
+        <table id="fin-bs"><tbody></tbody></table>
+        <h2 style="margin-top:14px;display:flex;align-items:center;gap:8px">Macro economy
+          <button id="btn-inspect-desk" type="button" title="Open the market-maker exchange inspector" style="font-size:12px;padding:3px 8px;text-transform:none;letter-spacing:0">🏛 Inspect exchange</button>
+        </h2>
+        <table id="fin-macro"><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Firms by net worth — heatmap</h2>
+      <canvas id="chart-fintree" role="img" aria-label="Finance heatmap treemap: one tile per firm, tile area is net worth and colour is the tick-over-tick net-worth change; the PLAYER tile is outlined" aria-hidden="true" style="height:240px"></canvas>
+      <p class="small muted" style="margin:6px 0 0">Tile area ∝ net worth; colour = tick-over-tick net-worth change (green up / red down). The <strong>PLAYER</strong> tile is outlined. Click a tile to open that firm's inspector. Same data as the Leaderboard table.</p>
+    </div>
+  </section>
+
+  <!-- NETWORK -->
+  <section id="network" role="tabpanel" aria-labelledby="tab-network" hidden>
+    <div class="card">
+      <h2>Trade interconnection — firms &amp; the market-maker desk</h2>
+      <canvas id="chart-network" role="img" aria-label="Trade interconnection graph: nodes are the 11 firms plus the NPC_DESK market-maker hub, node size is net worth, edges are co-traded volume over the recent window" aria-hidden="true" style="height:440px"></canvas>
+      <div class="net-legend small muted" id="net-legend"></div>
+      <p class="small muted" style="margin:8px 0 0">Nodes = 11 firms + the <code>NPC_DESK</code> market-maker hub (sized by net worth / inventory value, coloured by specialty tier). Edges connect parties on opposite sides of the same good's clear, aggregated over the last ~30 ticks; thickness ∝ co-traded volume. Hover or click a node to emphasise its links and open the firm inspector. Data also in the accessible table below.</p>
+      <details><summary>Network data (accessible table)</summary>
+        <table id="net-table"><thead><tr><th>Node</th><th>Tier</th><th>Net worth / value</th><th>Degree</th><th>Σ weight</th></tr></thead><tbody></tbody></table>
+      </details>
+    </div>
+  </section>
+
+  <!-- LEADERBOARD -->
+  <section id="leaderboard" role="tabpanel" aria-labelledby="tab-leaderboard" hidden>
+    <div class="card">
+      <h2>Firms by net worth</h2>
+      <table id="lb"><thead><tr><th>#</th><th>Firm</th><th>Specialty</th><th>Net worth</th><th>Cash</th><th>Δ rank</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- CONTRACTS -->
+  <section id="contracts" role="tabpanel" aria-labelledby="tab-contracts" hidden>
+    <div class="grid cols-2">
+      <div class="card">
+        <h2>Offer a B2B supply contract</h2>
+        <p class="small muted">Commit to deliver a fixed quantity each tick to the NPC wholesale desk (<code>NPC_DESK</code>) at a fixed price — demand certainty, off the spot auction. You post a <strong>bond</strong> (10% of contract value) into <code>CONTRACT_ESCROW</code>; deliver in full and it's released, miss a delivery and it forfeits to <code>SINK_BURN</code>.</p>
+        <form id="ct-form" class="row" aria-label="Offer a supply contract">
+          <label>Product <select id="ct-good"></select></label>
+          <label>Qty / tick <input id="ct-qty" class="num" type="number" min="1" value="3"></label>
+          <label>Price <input id="ct-price" class="num" type="number" min="1"></label>
+          <label>Ticks <input id="ct-ticks" class="num" type="number" min="1" value="10"></label>
+          <button type="submit">Sign (post bond)</button>
+        </form>
+        <p class="small" id="ct-feedback" aria-live="polite"></p>
+      </div>
+      <div class="card">
+        <h2>Your contracts</h2>
+        <table id="ct-table"><thead><tr><th>#</th><th>Product</th><th>Qty/t</th><th>Price</th><th>Ticks left</th><th>Bond</th><th>Status</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- HELP -->
+  <section id="help" role="tabpanel" aria-labelledby="tab-help" hidden>
+    <div class="card">
+      <h2>About this prototype</h2>
+      <p class="small">You run <strong>PLAYER</strong>, a company in a shared, player-driven economy against 10 NPC rivals. Source raw materials,
+      run multi-tier production, and trade on a uniform-price batch-auction market whose prices emerge from real supply/demand plus
+      price-elastic retail consumers. Specialize and out-think the market — there is no combat, no twitch.</p>
+      <ul class="small">
+        <li><strong>The market is the game</strong> — one uniform clearing price per product each tick; no latency/geography edge.</li>
+        <li><strong>Legible economy</strong> — every number traces to a clear; <code>∑ conserved</code> proves money is never created/destroyed outside the named accounts (<code>WORLD_FAUCET</code>, <code>SINK_BURN</code>, + firm cash).</li>
+        <li><strong>Specialization beats sprawl</strong> — pick a product, dominate it; the retail-facing T3 goods (phone/car) carry the demand.</li>
+      </ul>
+      <p class="small muted">Honesty: this is a browser <em>visualization</em> running the same model + formulas as <code>play_magnate.py</code> (deterministic seeded RNG; run it: <code>python3 play_magnate.py</code>), conservation-checked every tick. <strong>Vs. the full design:</strong> it now models <strong>all four ledger accounts</strong> (<code>WORLD_FAUCET</code> retail mint, <code>SINK_BURN</code> sinks, <code>NPC_DESK</code> market-maker desk, <code>CONTRACT_ESCROW</code> B2B bonds); charts include candlestick+volume (market), a supply-chain Sankey, a net-worth area, and inventory bars (utilization gauges/heatmaps are not modeled); reference-qualification and manual production planning ARE modeled; the sim is user-driven (Play/Pause/Step, honoring reduced-motion). It is <strong>not</strong> the production client (React + TigerBeetle/Temporal/Nakama/Postgres/Valkey), which needs the real backend. Economy <em>balance</em> is illustrative; real tuning is the offline Mesa/SimPy work (Epic 9). See the planning docs in <code>_bmad-output/</code>.</p>
+    </div>
+  </section>
+</main>
+
+<!-- INSPECTOR (firm books / market-maker exchange) -->
+<dialog id="inspector" aria-labelledby="insp-title">
+  <div class="insp-head">
+    <div>
+      <h2 id="insp-title">—</h2>
+      <div class="sub" id="insp-sub"></div>
+    </div>
+    <button class="insp-close" id="insp-close" type="button" aria-label="Close inspector">✕ Close</button>
+  </div>
+  <div class="insp-body" id="insp-body"></div>
+</dialog>
+
+<div id="toasts" aria-live="polite" aria-label="Notifications"></div>
+
+<script>
+"use strict";
+// ---------- deterministic RNG (LCG; mirrors play_magnate.py) ----------
+function RNG(seed){this.s=(seed>>>0);}
+RNG.prototype.next=function(){this.s=Number((1103515245n*BigInt(this.s)+12345n)&0x7FFFFFFFn);return this.s;}; // BigInt: exact 31-bit LCG (matches play_magnate.py; no float-precision drift)
+RNG.prototype.frac=function(){return this.next()/0x7FFFFFFF;};
+RNG.prototype.jitter=function(x,p){return x*(1+(this.frac()*2-1)*p);};
+
+// ---------- content config (mirrors play_magnate.py) ----------
+const CENTS=100, c=x=>Math.round(x*CENTS);
+const GOODS={
+  ore:{tier:0,base:10,recipe:null}, coal:{tier:0,base:8,recipe:null}, sand:{tier:0,base:6,recipe:null},
+  steel:{tier:1,base:34,recipe:{ore:2,coal:1}}, glass:{tier:1,base:20,recipe:{sand:2}},
+  circuit:{tier:2,base:110,recipe:{steel:1,glass:1}}, chassis:{tier:2,base:90,recipe:{steel:2}},
+  phone:{tier:3,base:320,recipe:{circuit:2,glass:1}}, car:{tier:3,base:300,recipe:{chassis:2,circuit:1}},
+};
+const GKEYS=Object.keys(GOODS);
+const RETAIL={phone:{D0:320,eps:1.6}, car:{D0:200,eps:1.3}};
+const MARKET_FEE=0.02, UPKEEP_RATE=0.0015, START_CASH=200000, PREF_HALFLIFE=6, REF_QUAL_VOL=3;
+const DESK_SPREAD=0.08, DESK_DEPTH=4, DESK_TARGET=12, DESK_SEED=8, BOND_PCT=0.10;   // NPC_DESK market-maker + B2B bond
+
+// ---------- state ----------
+let rng, firms, bal, START_CONST, pref, hist, tick, faucetMinted, running, timer, conserved;
+let playerOrders=[];      // manual orders queued for next clear: {side,good,price,qty}
+let orderLog=[];          // recent player orders for display
+let nwHist=[];            // player net worth history
+let nwHistAll={};         // per-firm net worth history (ring buffer, keyed by firm id) — sparklines
+let deskBalHist=[];       // NPC_DESK balance history (ring buffer) — sparkline (can go negative)
+let lastVol={};           // last clear volume per good
+let lastQual={};          // was the last clear reference-qualifying?
+let lastClear={};         // last clear price per good (for candles)
+let ohlc={};              // OHLC+volume candle history per good
+let playerPlan={};        // manual production plan {good: runs/tick}
+let deskInv={};           // NPC_DESK market-maker inventory
+let lastTrades=[];        // last tick's per-good trade participation [{good,buyers:[ids],sellers:[ids]}] — additive bookkeeping for trade-link highlighting
+let contracts=[], contractSeq=0;   // B2B supply contracts (CONTRACT_ESCROW bonds)
+// ---------- time-scrubber: capped snapshot ring buffer (additive — does NOT touch economy math) ----------
+const SNAP_CAP=120;       // keep the last ~120 ticks for read-only REPLAY
+let snapBuf=[];           // ring buffer of deep state snapshots, one per tick (see snapshotState())
+let replayTick=null;      // null = LIVE; otherwise the tick we are REPLAYING (render reads the snapshot, sim is paused/read-only)
+let resumeAfterReplay=false;   // was the sim playing when replay began? (resume on live())
+let prevRank={};          // for rank deltas
+let selectedGood='phone';
+let marketView='candle';  // Market chart view: 'candle' (candlestick) | 'treemap' (finviz heatmap)
+let inspectTarget=null;   // currently-open inspector subject id ('PLAYER' / 'NPC0' / 'NPC_DESK'), or null when closed
+const PLAYER='PLAYER';
+// ---------- VIEW-ONLY animation state (never read/mutated by step(); decoration only) ----------
+const reduceMotion=(typeof matchMedia==='function')&&matchMedia('(prefers-reduced-motion:reduce)').matches;
+let lastAnimTick=-1;            // the tick the animation loop last "ingested" (to fire per-tick effects once)
+let priceFlash={};             // {good:{dir:+1/-1, t0:ms}} — fading green/red flash on a ref-price change
+let tape=[];                   // scrolling trade-tape entries (newest first) {id,good,price,vol,side,t0}
+let tapeSeq=0;
+let volPulse0=0;               // ms timestamp of the last volume-pulse trigger (latest candle/clear)
+let consvPulse0=0;             // ms timestamp of the last conserved-badge pulse
+let particles=[];              // money-flow particles {x,y,...} along the edges, sized by real ledger deltas
+let macroTween={};             // {key:{cur,target}} — tweened display values for the 4-account ledger
+let flowEdgesCache=[];         // current money-flow edge geometry (rebuilt on draw)
+let rafId=0;
+
+function reset(seed){
+  rng=new RNG(seed);
+  const npcSpecs=GKEYS.concat(['car']);            // 10 NPCs cover every good + extra car maker
+  firms=[{id:PLAYER,specialty:'phone',inv:{},cap:7,fv:c(120000)}];
+  npcSpecs.forEach((sp,i)=>firms.push({id:'NPC'+i,specialty:sp,inv:{},cap:7,fv:c(120000)}));
+  bal={}; firms.forEach(f=>bal[f.id]=c(START_CASH));
+  bal.WORLD_FAUCET=0; bal.SINK_BURN=0; bal.NPC_DESK=0; bal.CONTRACT_ESCROW=0;   // all four system accounts
+  START_CONST=Object.values(bal).reduce((a,b)=>a+b,0);
+  deskInv={}; GKEYS.forEach(g=>deskInv[g]=DESK_SEED); contracts=[]; contractSeq=0; lastTrades=[];
+  // warm-up inventory so the chain flows
+  const warm={0:40,1:20,2:10,3:0};
+  firms.forEach(f=>{GKEYS.forEach(g=>f.inv[g]=warm[GOODS[g].tier]);});
+  pref={}; hist={}; GKEYS.forEach(g=>{pref[g]=c(GOODS[g].base);hist[g]=[];ohlc[g]=[];});
+  playerPlan={}; playerPlan[firms[0].specialty]=firms[0].cap;     // default: all capacity on the focus good
+  tick=0; faucetMinted=0; conserved=true; playerOrders=[]; orderLog=[]; nwHist=[]; nwHistAll={}; firms.forEach(f=>nwHistAll[f.id]=[]); deskBalHist=[]; lastVol={}; lastQual={}; lastClear={}; prevRank={};
+  snapBuf=[]; replayTick=null; resumeAfterReplay=false;   // reset clears the replay ring buffer + exits any replay
+  syncSelectors();
+  renderAll();
+}
+
+function transfer(src,dst,amt){amt=Math.round(amt);bal[src]-=amt;bal[dst]+=amt;}
+function invOf(id){return id==='NPC_DESK'?deskInv:firms.find(f=>f.id===id).inv;}   // desk holds inventory but isn't a firm
+function moneySupply(){return firms.reduce((a,f)=>a+bal[f.id],0);}   // circulating cash held by firms
+function netWorth(f){let v=bal[f.id]+f.fv;for(const g of GKEYS)v+=f.inv[g]*pref[g];return v;}
+function checkConserve(){let s=0;for(const k in bal)s+=bal[k];return s===START_CONST;}
+
+// ---------- uniform-price batch auction (mirrors play_magnate.py clear()) ----------
+function clearBook(buys,sells){
+  if(!buys.length||!sells.length)return null;
+  const prices=[...new Set(buys.concat(sells).map(o=>o.p))].sort((a,b)=>a-b);
+  let bestP=null,bestV=-1;
+  for(const p of prices){
+    let dq=0,sq=0;
+    for(const o of buys)if(o.p>=p)dq+=o.q;
+    for(const o of sells)if(o.p<=p)sq+=o.q;
+    const v=Math.min(dq,sq); if(v>bestV){bestV=v;bestP=p;}
+  }
+  if(bestV<=0)return null;
+  const p=bestP, eb=buys.filter(o=>o.p>=p), es=sells.filter(o=>o.p<=p);
+  const matched=Math.min(eb.reduce((a,o)=>a+o.q,0), es.reduce((a,o)=>a+o.q,0));
+  const alloc=(side,want)=>{
+    const total=side.reduce((a,o)=>a+o.q,0);
+    if(total<=want)return side.map(o=>({id:o.id,q:o.q}));
+    const out=side.map(o=>({id:o.id,q:Math.floor(o.q*want/total),cap:o.q}));
+    let given=out.reduce((a,o)=>a+o.q,0), r=want-given;
+    const keys=side.map(()=>rng.next()); const order=side.map((_,i)=>i).sort((p,q)=>keys[p]-keys[q]); let k=0;
+    while(r>0){const i=order[k%order.length]; if(out[i].q<out[i].cap){out[i].q++;r--;} k++; if(k>order.length*8)break;}
+    return out.map(o=>({id:o.id,q:o.q}));
+  };
+  const bf=alloc(eb,matched).filter(o=>o.q>0), sf=alloc(es,matched).filter(o=>o.q>0);
+  return {p,bf,sf,matched};
+}
+
+// ---------- one tick (mirrors play_magnate.py run loop) ----------
+function step(){
+  tick++;
+  const a=2/(PREF_HALFLIFE+1);
+  const autoPlayer=document.getElementById('f-auto').checked;
+  const prevRef={}; GKEYS.forEach(g=>prevRef[g]=pref[g]);   // open price for this tick's candle
+  // 1) production — PLAYER follows its manual production plan; NPCs make their specialty
+  function produce(f,g){ const spec=GOODS[g];
+    if(!spec.recipe){f.inv[g]++;transfer(f.id,'SINK_BURN',Math.max(1,(pref[g]/16)|0));return true;}            // raw: extract
+    if(Object.entries(spec.recipe).every(([k,n])=>f.inv[k]>=n)){for(const[k,n]of Object.entries(spec.recipe))f.inv[k]-=n;f.inv[g]++;transfer(f.id,'SINK_BURN',Math.max(1,(pref[g]/20)|0));return true;}
+    return false; }                                                                                            // missing inputs
+  for(const f of firms){
+    if(f.id===PLAYER){
+      let used=0;
+      for(const [g,runs] of Object.entries(playerPlan)){ for(let i=0;i<runs && used<f.cap;i++){ if(produce(f,g))used++; else break; } }
+    } else { for(let i=0;i<f.cap;i++) produce(f,f.specialty); }
+  }
+  // 2) orders
+  const books={}; GKEYS.forEach(g=>books[g]={buys:[],sells:[]});
+  const placeBuy=(fid,k,need)=>{const bp=Math.round(rng.jitter(pref[k]*1.04,0.05));const q=Math.min(need,Math.floor(bal[fid]/(bp*1.02)));if(q>0)books[k].buys.push({id:fid,p:bp,q});};
+  for(const f of firms){
+    if(f.id===PLAYER){
+      if(!autoPlayer) continue;                                    // manual player: only injected orders
+      for(const g of GKEYS) if(f.inv[g]>3) books[g].sells.push({id:PLAYER,p:Math.round(rng.jitter(pref[g]*0.97,0.05)),q:f.inv[g]-3}); // sell all surplus
+      for(const [g,runs] of Object.entries(playerPlan)){const spec=GOODS[g];if(spec.recipe)for(const[k,n]of Object.entries(spec.recipe)){const need=n*runs*2-f.inv[k];if(need>0)placeBuy(PLAYER,k,need);}} // buy plan inputs
+    } else {
+      const g=f.specialty, spec=GOODS[g];
+      if(f.inv[g]>3)books[g].sells.push({id:f.id,p:Math.round(rng.jitter(pref[g]*0.97,0.05)),q:f.inv[g]-3});
+      if(spec.recipe)for(const [k,n] of Object.entries(spec.recipe)){const need=n*f.cap*2-f.inv[k];if(need>0)placeBuy(f.id,k,need);}
+    }
+  }
+  // NPC_DESK market-maker: two-sided quotes around the reference (cold-start + thin-book liquidity; metered account, holds inventory)
+  for(const g of GKEYS){
+    const bid=Math.round(pref[g]*(1-DESK_SPREAD/2)), ask=Math.round(pref[g]*(1+DESK_SPREAD/2));
+    const want=DESK_TARGET-deskInv[g]; if(want>0)books[g].buys.push({id:'NPC_DESK',p:bid,q:Math.min(want,DESK_DEPTH)});
+    if(deskInv[g]>0)books[g].sells.push({id:'NPC_DESK',p:ask,q:Math.min(deskInv[g],DESK_DEPTH)});
+  }
+  // inject the player's manual orders (clamped to current cash/stock so no balance goes negative), then clear once
+  for(const o of playerOrders){
+    let q=o.qty;
+    if(o.side==='sell') q=Math.min(q, firms[0].inv[o.good]);
+    else q=Math.min(q, Math.floor(bal[PLAYER]/(o.price*1.02)));
+    if(q>0){(o.side==='buy'?books[o.good].buys:books[o.good].sells).push({id:PLAYER,p:o.price,q});
+      orderLog.unshift({tick,side:o.side,good:o.good,px:o.price,qty:q,status:'submitted'});}
+    else orderLog.unshift({tick,side:o.side,good:o.good,px:o.price,qty:o.qty,status:'rejected · funds/stock'});
+  }
+  playerOrders=[];
+  // 3) clear + settle (conservative by construction)
+  lastTrades=[];   // additive capture: per-good trade participation from this tick's fills (does NOT touch economy math)
+  for(const g of GKEYS){
+    const r=clearBook(books[g].buys,books[g].sells);
+    if(!r){hist[g].push(pref[g]);lastVol[g]=0;lastClear[g]=null;continue;}
+    const byId=Object.fromEntries(firms.map(f=>[f.id,f]));
+    for(const o of r.bf){bal[o.id]-=r.p*o.q;invOf(o.id)[g]+=o.q;transfer(o.id,'SINK_BURN',Math.round(r.p*o.q*MARKET_FEE));}
+    for(const o of r.sf){bal[o.id]+=r.p*o.q;invOf(o.id)[g]-=o.q;transfer(o.id,'SINK_BURN',Math.round(r.p*o.q*MARKET_FEE));}
+    lastTrades.push({good:g, buyers:[...new Set(r.bf.map(o=>o.id))], sellers:[...new Set(r.sf.map(o=>o.id))]});
+    // reference-qualification: a clear executes, but only a clear with enough volume AND >=2 distinct
+    // counterparties/side moves the PUBLISHED reference (so one order can never reset a product's price).
+    const qual = r.matched>=REF_QUAL_VOL && new Set(r.bf.map(o=>o.id)).size>=2 && new Set(r.sf.map(o=>o.id)).size>=2;
+    if(qual) pref[g]=Math.round(pref[g]*(1-a)+r.p*a);
+    hist[g].push(pref[g]); lastVol[g]=r.matched; lastQual[g]=qual; lastClear[g]=r.p;
+    // mark player order fills (approx: by side participation)
+    for(const o of r.bf.concat(r.sf))if(o.id===PLAYER){const e=orderLog.find(x=>x.tick===tick&&x.good===g&&x.status==='submitted');if(e)e.status='filled @'+(r.p/CENTS).toFixed(0);}
+  }
+  // 3b) B2B supply contracts settle bilaterally with NPC_DESK; the CONTRACT_ESCROW bond releases on completion / forfeits to SINK_BURN on breach
+  for(const ct of contracts){
+    if(ct.status!=='active')continue;
+    if(firms[0].inv[ct.good]>=ct.qty){                                  // PLAYER delivers; the desk (metered) pays
+      firms[0].inv[ct.good]-=ct.qty; deskInv[ct.good]+=ct.qty;
+      bal.NPC_DESK-=ct.price*ct.qty; bal.PLAYER+=ct.price*ct.qty;
+      ct.delivered++; ct.ticksLeft--;
+      if(ct.ticksLeft<=0){bal.CONTRACT_ESCROW-=ct.bond;bal.PLAYER+=ct.bond;ct.status='completed';toast('Contract #'+ct.id+' completed — bond '+fmt(ct.bond)+' released.');}
+    } else { bal.CONTRACT_ESCROW-=ct.bond; bal.SINK_BURN+=ct.bond; ct.status='breached'; toast('Contract #'+ct.id+' BREACHED (no '+ct.good+' to deliver) — bond '+fmt(ct.bond)+' forfeited.'); }
+  }
+  // 4) retail faucet on T3 + scarcity price discovery
+  for(const g in RETAIL){
+    const rp=RETAIL[g], p=pref[g];
+    let qd=Math.round(rp.D0*Math.pow(GOODS[g].base*CENTS/Math.max(1,p),rp.eps));
+    const supply=firms.reduce((a,f)=>a+f.inv[g],0); let sold=0;
+    for(const f of firms.slice().sort((x,y)=>y.inv[g]-x.inv[g])){
+      if(qd<=0)break; const take=Math.min(f.inv[g],qd); if(take<=0)continue;
+      f.inv[g]-=take; qd-=take; sold+=take; transfer('WORLD_FAUCET',f.id,p*take); faucetMinted+=p*take;
+    }
+    const ratio=rp.D0/Math.max(1,supply), lo=c(GOODS[g].base)*0.5, hi=c(GOODS[g].base)*2;
+    pref[g]=Math.round(Math.min(hi,Math.max(lo,pref[g]*(1+0.05*(Math.min(ratio,2)-1)))));
+    if(hist[g].length)hist[g][hist[g].length-1]=pref[g];
+    lastVol[g]=sold; lastClear[g]=pref[g];   // retail-cleared volume + price for the candle
+  }
+  // 5) upkeep sink
+  for(const f of firms)transfer(f.id,'SINK_BURN',Math.round(f.fv*UPKEEP_RATE));
+  // build this tick's OHLC+volume candle per good (open=prev ref, close=new ref, high/low incl. the trade price)
+  for(const g of GKEYS){const o=prevRef[g],cl=pref[g],tp=(lastClear[g]==null?cl:lastClear[g]);
+    ohlc[g].push({o,c:cl,h:Math.max(o,cl,tp),l:Math.min(o,cl,tp),v:lastVol[g]||0}); if(ohlc[g].length>60)ohlc[g].shift();}
+  // 6) conservation invariant
+  conserved=checkConserve();
+  nwHist.push(netWorth(firms[0]));
+  if(nwHist.length>120)nwHist.shift();
+  // per-firm net-worth + NPC_DESK balance ring buffers (additive bookkeeping only — does NOT touch economy math)
+  firms.forEach(f=>{(nwHistAll[f.id]||(nwHistAll[f.id]=[])).push(netWorth(f)); if(nwHistAll[f.id].length>120)nwHistAll[f.id].shift();});
+  deskBalHist.push(bal.NPC_DESK); if(deskBalHist.length>120)deskBalHist.shift();
+  // capture a deep, read-only snapshot of this tick's finalized state into the capped ring buffer (additive — never read by the engine)
+  snapBuf.push(snapshotState()); if(snapBuf.length>SNAP_CAP)snapBuf.shift();
+  renderAll();
+  const _rk=firms.slice().sort((a,b)=>netWorth(b)-netWorth(a)); _rk.forEach((f,i)=>prevRank[f.id]=i+1); // snapshot rank once/tick for next Δ
+  if(tick===1)toast('Market open. You are PLAYER (phones). Specialize and climb the leaderboard.');
+  if(!conserved)toast('⚠ Conservation invariant violated — this is a bug.');
+}
+
+// ---------- rendering ----------
+const $=id=>document.getElementById(id), fmt=x=>(x/CENTS).toLocaleString(undefined,{maximumFractionDigits:0});
+function arrow(d){return d>0?'▲':d<0?'▼':'·';}
+function clsd(d){return d>0?'up':d<0?'down':'muted';}
+function syncSelectors(){
+  const mg=$('m-good'); mg.innerHTML=GKEYS.map(g=>`<option value="${g}">${g}</option>`).join(''); mg.value=selectedGood;
+  const fs=$('f-specialty'); fs.innerHTML=GKEYS.map(g=>`<option value="${g}">${g}</option>`).join(''); fs.value=firms?firms[0].specialty:'phone';
+}
+function renderAll(){renderHeader();renderMarket();renderFactory();renderFinance();renderNetwork();renderLeaderboard();renderContracts();renderInspector();}
+function renderHeader(){
+  const me=firms[0], ranked=firms.slice().sort((a,b)=>vNetWorth(b)-vNetWorth(a));
+  const nwh=vNwHist();
+  $('k-company').textContent='PLAYER · '+me.specialty;
+  $('k-cash').textContent=fmt(vBal(PLAYER));
+  const nw=vNetWorth(me), prev=nwh.length>1?nwh[nwh.length-2]:nw, d=nw-prev;
+  $('k-nw').innerHTML=fmt(nw)+` <span class="delta ${clsd(d)}" data-arrow="${arrow(d)}">${fmt(Math.abs(d))}</span>`;
+  $('k-rank').textContent='#'+(ranked.findIndex(f=>f.id===PLAYER)+1)+' / '+firms.length;
+  $('k-tick').textContent=vTick();
+  const cons=vConserved(), b=$('k-conserv'); b.className='badge '+(cons?'ok':'err'); b.textContent=cons?'∑ conserved':'∑ VIOLATED';
+  renderScrubber();
+}
+function renderScrubber(){
+  const r=scrubRange(), sc=$('scrub'), grp=$('scrub')&&$('scrub').closest('.scrubber');
+  if(!sc)return;
+  const replaying=isReplay();
+  // keep the slider's range in sync with the recorded ticks; reflect the current view tick
+  if(+sc.min!==r.min)sc.min=r.min;
+  if(+sc.max!==r.max)sc.max=r.max;
+  const cur=replaying?replayTick:r.max;
+  if(document.activeElement!==sc) sc.value=cur;   // don't fight the user while dragging
+  if(grp)grp.classList.toggle('replay',replaying);
+  const mode=$('scrub-mode'); if(mode)mode.textContent=replaying?'⏪ REPLAY':'● LIVE';
+  const read=$('scrub-read'); if(read)read.textContent=(replaying?'⏪ tick ':'● tick ')+cur+' / '+r.max;
+  const lb=$('btn-live'); if(lb)lb.setAttribute('aria-pressed',(!replaying).toString());
+}
+function renderMarket(){
+  selectedGood=$('m-good').value;
+  $('m-good-name').textContent=selectedGood;
+  $('o-good').textContent=selectedGood;
+  const tier=GOODS[selectedGood].tier;
+  $('m-good-tier').textContent='T'+tier; $('m-good-tier').className='pill t'+tier;
+  const h=hist[selectedGood]||[];
+  $('m-price-line').textContent='ref '+fmt(vPref(selectedGood))+'  · last vol '+(lastVol[selectedGood]||0)
+    +(lastQual[selectedGood]===false?'  · thin clear (reference held)':lastQual[selectedGood]?'  · reference-qualifying':'');
+  // chart view toggle: candlestick OR finviz heatmap treemap (one renderer, reused on Finance too)
+  const cChart=$('chart-price'), tWrap=$('m-treemap-wrap');
+  const treemapOn=marketView==='treemap';
+  if(cChart)cChart.hidden=treemapOn;
+  if(tWrap)tWrap.hidden=!treemapOn;
+  const bC=$('m-view-candle'), bT=$('m-view-treemap');
+  if(bC){bC.classList.toggle('active',!treemapOn);bC.setAttribute('aria-pressed',(!treemapOn).toString());}
+  if(bT){bT.classList.toggle('active',treemapOn);bT.setAttribute('aria-pressed',treemapOn.toString());}
+  if(treemapOn) drawTreemap($('chart-treemap'),'market');
+  else drawCandles(cChart,(ohlc[selectedGood]||[]).map(d=>({o:d.o/CENTS,h:d.h/CENTS,l:d.l/CENTS,c:d.c/CENTS,v:d.v})));
+  draw2DSankey($('chart-mkt-sankey'),'market');   // prominent supply-chain value-flow Sankey (top of the Market tab)
+  const tb=$('m-price-table').querySelector('tbody');
+  tb.innerHTML=h.slice(-30).map((v,i)=>`<tr><td>${h.length-30+i+1>0?h.length-30+i+1:i+1}</td><td>${fmt(v)}</td></tr>`).join('');
+  // all products — reference prices from the snapshot when replaying
+  const me=firms[0];
+  $('m-all').querySelector('tbody').innerHTML=GKEYS.map(g=>{
+    const hh=hist[g], d=hh&&hh.length>1?hh[hh.length-1]-hh[hh.length-2]:0;
+    return `<tr><td>${g}</td><td><span class="pill t${GOODS[g].tier}">T${GOODS[g].tier}</span></td>
+      <td class="px" data-g="${g}">${fmt(vPref(g))}</td><td class="${clsd(d)}"><span class="delta" data-arrow="${arrow(d)}">${fmt(Math.abs(d))}</span></td>
+      <td class="spk" aria-hidden="true">${miniSpark(vPriceHist(g))}</td>
+      <td>${vLastVol(g)}</td><td>${vInv(me,g)}</td></tr>`;}).join('');
+  applyPriceFlash();   // re-apply any active flash classes to the freshly-rendered price cells
+  renderTape();
+  // player order log
+  $('o-table').querySelector('tbody').innerHTML=orderLog.slice(0,12).map(o=>
+    `<tr><td>${o.tick}</td><td>${o.side}</td><td>${o.good}</td><td>${o.px/CENTS|0}</td><td>${o.qty}</td><td class="small">${o.status}</td></tr>`).join('');
+  if(!$('o-price').value)$('o-price').value=(pref[selectedGood]/CENTS|0);
+}
+function renderFactory(){
+  const me=firms[0], g=me.specialty, spec=GOODS[g];
+  $('f-cap').textContent=me.cap;
+  $('f-recipe').innerHTML=spec.recipe?('Recipe: '+Object.entries(spec.recipe).map(([k,n])=>`${n}× ${k}`).join(' + ')+` → 1 ${g}`):'Extracted raw material (no inputs).';
+  drawBars($('chart-inv'),GKEYS.map(g=>({label:g,v:vInv(me,g),tier:GOODS[g].tier})));
+  $('f-inv-table').querySelector('tbody').innerHTML=GKEYS.map(g=>`<tr><td>${g}</td><td>T${GOODS[g].tier}</td><td>${vInv(me,g)}</td><td>${fmt(vInv(me,g)*vPref(g))}</td></tr>`).join('');
+  $('f-chain').querySelector('tbody').innerHTML=GKEYS.map(g=>{const r=GOODS[g].recipe;return `<tr><td>${g}</td><td><span class="pill t${GOODS[g].tier}">T${GOODS[g].tier}</span></td><td class="small">${r?Object.entries(r).map(([k,n])=>n+'× '+k).join(' + '):'— (raw)'}</td><td>${fmt(vPref(g))}</td></tr>`;}).join('');
+  // production-plan editor
+  $('f-plan').innerHTML=GKEYS.map(g=>{const r=playerPlan[g]||0;
+    return `<span class="pill" style="display:inline-flex;gap:5px;align-items:center;${r?'border-color:var(--accent)':''}"><button class="plan-btn" data-g="${g}" data-d="-1" aria-label="fewer ${g} runs"${r?'':' disabled'}>−</button><span class="num" style="min-width:78px;text-align:center">${g} <strong>${r}</strong></span><button class="plan-btn" data-g="${g}" data-d="1" aria-label="more ${g} runs">+</button></span>`;}).join('');
+  const used=Object.values(playerPlan).reduce((a,b)=>a+b,0);
+  $('f-cap-line').textContent=`Capacity used ${used} / ${me.cap} runs per tick`+(used>me.cap?' — over capacity, extra runs ignored':used<me.cap?` · ${me.cap-used} idle`:'');
+  drawSankey($('chart-sankey'));
+}
+function renderFinance(){
+  const me=firms[0], nwh=vNwHist(), vt=vTick();
+  draw2DSankey($('chart-fin-sankey'),'finance');   // prominent money-flow ledger Sankey (top of the Finance tab)
+  drawNwArea($('chart-nw'),nwh.map(v=>v/CENTS));
+  $('fin-nw-table').querySelector('tbody').innerHTML=nwh.slice(-30).map((v,i)=>`<tr><td>${Math.max(1,vt-Math.min(30,nwh.length)+i+1)}</td><td>${fmt(v)}</td></tr>`).join('');
+  const invVal=GKEYS.reduce((a,g)=>a+vInv(me,g)*vPref(g),0);
+  $('fin-bs').querySelector('tbody').innerHTML=[
+    ['Cash (ledger)',fmt(vBal(PLAYER))],['Inventory @ ref',fmt(invVal)],['Facilities',fmt(vFv(me))],
+    ['<strong>Net worth</strong>','<strong>'+fmt(vNetWorth(me))+'</strong>']
+  ].map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  const circ=firms.reduce((a,f)=>a+vBal(f.id),0), cons=vConserved();
+  // tweened ledger cells: render the structure with stable-id spans; the rAF loop counts them to target (or snaps under reduced-motion)
+  const macroVals={CIRC:circ, WORLD_FAUCET:vBal('WORLD_FAUCET'), SINK_BURN:vBal('SINK_BURN'), NPC_DESK:vBal('NPC_DESK'), CONTRACT_ESCROW:vBal('CONTRACT_ESCROW')};
+  const cell=(key)=>`<span class="num" id="mac-${key}">${fmt(replayOrInit(key,macroVals[key]))}</span>`;
+  $('fin-macro').querySelector('tbody').innerHTML=[
+    ['Circulating cash (firms)',cell('CIRC')],
+    ['WORLD_FAUCET (retail mint)',cell('WORLD_FAUCET')],
+    ['SINK_BURN (fees/upkeep/forfeits)',cell('SINK_BURN')],
+    ['NPC_DESK (market-maker balance) 🏛',cell('NPC_DESK'),'desk'],
+    ['CONTRACT_ESCROW (locked bonds)',cell('CONTRACT_ESCROW')],
+    ['Conservation Σ (firms + 4 accounts)',cons?'<span class="up">held</span>':'<span class="down">VIOLATED</span>'],
+  ].map(r=>r[2]==='desk'
+      ?`<tr role="button" tabindex="0" data-desk="1" aria-label="Inspect the NPC_DESK market-maker exchange"><td>${r[0]}</td><td>${r[1]}</td></tr>`
+      :`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  // update tween targets (current value stays; the loop animates toward target). In replay / reduced-motion, snap.
+  for(const k in macroVals){ const tw=macroTween[k]||(macroTween[k]={cur:macroVals[k],target:macroVals[k]}); tw.target=macroVals[k]; if(reduceMotion||isReplay())tw.cur=macroVals[k]; }
+  drawMoneyFlow($('fin-flow'));
+  drawTreemap($('chart-fintree'),'finance');   // finviz firm-net-worth heatmap (same data as the Leaderboard)
+}
+// initial text for a tweened macro cell: the running tween value when live-animating, else the true value (replay/reduced-motion snap)
+function replayOrInit(key,trueVal){ const tw=macroTween[key]; if(reduceMotion||isReplay()||!tw)return trueVal; return tw.cur; }
+function renderLeaderboard(){
+  const ranked=firms.slice().sort((a,b)=>vNetWorth(b)-vNetWorth(a));
+  const sel=selectedFirm();                                                          // mark last-tick trade partners of the selected firm
+  const partners=sel?new Set(tradeHighlight(sel).partners):null;
+  const showDr=!isReplay();                                                          // rank deltas are a live-only signal (no per-snapshot prevRank)
+  $('lb').querySelector('tbody').innerHTML=ranked.map((f,i)=>{
+    const pr=prevRank[f.id], dr=(showDr&&pr!=null)?pr-(i+1):0;
+    const isSel=sel===f.id, isPartner=partners&&partners.has(f.id);
+    const cls=[f.id===PLAYER?'me':'',isSel?'sel-firm':'',isPartner?'partner-firm':''].filter(Boolean).join(' ');
+    const mark=isSel?'<span class="trade-dot sel" title="Selected firm">◉</span> ':isPartner?'<span class="trade-dot" title="Traded with the selected firm last tick">●</span> ':'';
+    return `<tr class="${cls}" role="button" tabindex="0" data-firm="${f.id}" aria-label="Inspect ${f.id} (${f.specialty}), rank ${i+1}${isPartner?', traded with the selected firm last tick':''}"><td>${i+1}</td><td>${mark}${f.id}</td><td>${f.specialty}</td>
+      <td>${fmt(vNetWorth(f))}</td><td>${fmt(vBal(f.id))}</td>
+      <td class="${clsd(dr)}"><span class="delta" data-arrow="${arrow(dr)}">${Math.abs(dr)||''}</span></td></tr>`;}).join('');
+}
+function renderContracts(){
+  if(!$('ct-good').options.length)$('ct-good').innerHTML=GKEYS.map(g=>`<option>${g}</option>`).join('');
+  if(!$('ct-price').value)$('ct-price').value=(pref[firms[0].specialty]/CENTS|0);
+  const rows=vContracts().slice().reverse().map(ct=>`<tr><td>${ct.id}</td><td>${ct.good}</td><td>${ct.qty}</td><td>${fmt(ct.price)}</td><td>${Math.max(0,ct.ticksLeft)}</td><td>${fmt(ct.bond)}</td><td class="small ${ct.status==='breached'?'down':ct.status==='completed'?'up':''}">${ct.status}</td></tr>`).join('');
+  $('ct-table').querySelector('tbody').innerHTML=rows||'<tr><td colspan="7" class="muted small">No contracts yet — sign one to escrow a bond.</td></tr>';
+}
+// ---------- inspector: single source of truth (same computation the panel renders + headless reads) ----------
+function inspectFirm(id){
+  const f=firms.find(x=>x.id===id); if(!f)return null;
+  const ranked=firms.slice().sort((a,b)=>vNetWorth(b)-vNetWorth(a));
+  const rank=ranked.findIndex(x=>x.id===id)+1;
+  const inventory=GKEYS.map(g=>({good:g,tier:GOODS[g].tier,qty:vInv(f,g),price:vPref(g),value:vInv(f,g)*vPref(g)}));
+  const inventoryValue=inventory.reduce((a,e)=>a+e.value,0);
+  return {id:f.id, specialty:f.specialty, isPlayer:f.id===PLAYER, rank, total:firms.length,
+    netWorth:vNetWorth(f), cash:vBal(f.id), facilities:vFv(f), inventoryValue,
+    inventory, recipe:GOODS[f.specialty].recipe||null, history:histSeries(vNwHistAll(f.id),vNetWorth(f))};
+}
+function inspectDesk(){
+  const inventory=GKEYS.map(g=>({good:g,tier:GOODS[g].tier,qty:vDeskInv(g),price:vPref(g),value:vDeskInv(g)*vPref(g)}));
+  const inventoryValue=inventory.reduce((a,e)=>a+e.value,0);
+  return {id:'NPC_DESK', isDesk:true, role:'Market-Maker Exchange',
+    balance:vBal('NPC_DESK'), inventory, inventoryValue,
+    spread:DESK_SPREAD, depth:DESK_DEPTH, target:DESK_TARGET, history:histSeries(vDeskBalHist(),vBal('NPC_DESK'))};
+}
+function inspect(id){ return id==='NPC_DESK'?inspectDesk():inspectFirm(id); }
+// ---------- trade-link highlighting (PURE function of the last tick's captured trades) ----------
+function lastEvents(){ return {trades:vTrades()}; }   // the last processed tick's events (snapshot's when replaying, else live capture)
+function tradeHighlight(firmId){
+  const trades=vTrades();
+  const mine=trades.filter(t=>(t.buyers||[]).includes(firmId)||(t.sellers||[]).includes(firmId));
+  const goodsTraded=[...new Set(mine.map(t=>t.good))];
+  const bought=[...new Set(trades.filter(t=>(t.buyers||[]).includes(firmId)).map(t=>t.good))];
+  const sold=[...new Set(trades.filter(t=>(t.sellers||[]).includes(firmId)).map(t=>t.good))];
+  const part=new Set();
+  for(const t of trades){
+    const isB=(t.buyers||[]).includes(firmId), isS=(t.sellers||[]).includes(firmId);
+    if(isB)(t.sellers||[]).forEach(s=>part.add(s));   // opposite side: sellers I bought from
+    if(isS)(t.buyers||[]).forEach(b=>part.add(b));     // opposite side: buyers I sold to
+  }
+  part.delete(firmId);
+  const partners=[...part];
+  // recipe edges incident to each traded good g: k->g for each input k, and g->h for each h whose recipe uses g
+  const links=[], seen=new Set();
+  const add=(from,to)=>{const key=from+''+to; if(!seen.has(key)){seen.add(key);links.push({from,to});}};
+  for(const g of goodsTraded){
+    const r=GOODS[g]&&GOODS[g].recipe;
+    if(r)for(const k of Object.keys(r)) add(k,g);                                    // input -> traded good
+    for(const h of GKEYS){const rh=GOODS[h].recipe; if(rh&&rh[g]!=null) add(g,h);}   // traded good -> consumer
+  }
+  return {firm:firmId, goodsTraded, bought, sold, partners, links};
+}
+// recorded ring buffer → numeric series whose LAST element is guaranteed to equal the live value
+function histSeries(buf,cur){const a=(buf||[]).slice();if(!a.length||a[a.length-1]!==cur)a.push(cur);return a;}
+
+// ---------- time-scrubber snapshots (deep, read-only; the economy is the source — replay only RENDERS) ----------
+function snapshotState(){
+  const inv={}, fv={};
+  for(const f of firms){ const gi={}; for(const g of GKEYS)gi[g]=f.inv[g]; inv[f.id]=gi; fv[f.id]=f.fv; }
+  const di={}; for(const g of GKEYS)di[g]=deskInv[g];
+  const pr={}; for(const g of GKEYS)pr[g]=pref[g];
+  const ba={}; for(const k in bal)ba[k]=bal[k];
+  // deep-copy the last tick's trade events + contracts so replay highlight/contracts read from THAT tick only
+  const trades=lastTrades.map(t=>({good:t.good, buyers:(t.buyers||[]).slice(), sellers:(t.sellers||[]).slice()}));
+  const cts=contracts.map(ct=>Object.assign({},ct));
+  // additive VIEW-ONLY fields (volume + last clear per good) so replay shows that tick's volume, not live (never read by the engine)
+  const lv={}, lc={}; for(const g of GKEYS){ lv[g]=lastVol[g]||0; lc[g]=lastClear[g]; }
+  return {tick, bal:ba, pref:pr, deskInv:di, inv, fv, contracts:cts, conserved, trades, lastVol:lv, lastClear:lc};
+}
+function snapshotAt(t){ for(let i=snapBuf.length-1;i>=0;i--) if(snapBuf[i].tick===t) return snapBuf[i]; return null; }
+// net worth from a snapshot (same formula as live netWorth(), but reading the SNAPSHOT's bal/fv/pref/inv)
+function nwFromSnap(snap,id){ if(!snap||snap.inv[id]==null)return null; let v=snap.bal[id]+(snap.fv[id]||0); for(const g of GKEYS)v+=snap.inv[id][g]*snap.pref[g]; return v; }
+// ---------- money-flow: SINGLE SOURCE OF TRUTH for the headless hook AND the particle sizes ----------
+// signed-cents per-tick delta of each system account over the LAST completed tick at the current VIEW tick
+// (live tick when live, the replayed tick when scrubbing) == snapshotAt(t).bal[acct] - snapshotAt(t-1).bal[acct].
+const FLOW_ACCTS=['WORLD_FAUCET','SINK_BURN','NPC_DESK','CONTRACT_ESCROW'];
+function financeFlows(){
+  const t=vTick();                                   // replay-safe: reads the frame on screen
+  const sa=snapshotAt(t), sb=snapshotAt(t-1);
+  const out={}; for(const a of FLOW_ACCTS) out[a]=(sa&&sb)?(sa.bal[a]-sb.bal[a]):0;
+  return out;
+}
+// the firms-pool per-tick delta (circulating cash) at the view tick — derived from the same snapshots
+function firmsPoolFlow(){
+  const t=vTick(), sa=snapshotAt(t), sb=snapshotAt(t-1);
+  if(!sa||!sb)return 0; let d=0; for(const f of firms){ d+=(sa.bal[f.id]||0)-(sb.bal[f.id]||0); } return d;
+}
+function scrubRange(){ const min=snapBuf.length?snapBuf[0].tick:tick, max=snapBuf.length?snapBuf[snapBuf.length-1].tick:tick; return {min,max}; }
+// enter REPLAY at a tick: pause live stepping, render the snapshot (read-only — never steps/mutates the economy)
+function seek(t){
+  const r=scrubRange(); t=Math.max(r.min,Math.min(r.max,Math.round(t)));
+  const snap=snapshotAt(t);
+  if(t>=r.max || !snap){ live(); const pf=firms.find(x=>x.id===PLAYER); return {tick:r.max, playerNetWorth:netWorth(pf), deskBalance:bal.NPC_DESK, conserved}; }
+  if(replayTick==null){ resumeAfterReplay=!!running; if(running)setRunning(false); }   // pause on entering replay (remember to resume)
+  replayTick=t;
+  renderAll();                                                                          // render the scene + HUD from the snapshot
+  return {tick:t, playerNetWorth:nwFromSnap(snap,PLAYER), deskBalance:snap.bal.NPC_DESK, conserved:snap.conserved};
+}
+// exit REPLAY: back to the latest live tick (resume play if it was playing) — never steps the economy
+function live(){
+  const wasReplaying=replayTick!=null, resume=resumeAfterReplay;
+  replayTick=null; resumeAfterReplay=false;
+  renderAll();
+  if(wasReplaying&&resume)setRunning(true);
+}
+// the snapshot currently driving the REPLAY render (or null when live) — render helpers read through this
+function activeSnap(){ return replayTick==null?null:snapshotAt(replayTick); }
+// view accessors: LIVE state when not replaying (path unchanged), the active snapshot when replaying (read-only)
+function vTick(){ const s=activeSnap(); return s?s.tick:tick; }
+function vConserved(){ const s=activeSnap(); return s?s.conserved:conserved; }
+function vPref(g){ const s=activeSnap(); return s?s.pref[g]:pref[g]; }
+function vBal(id){ const s=activeSnap(); return s?(s.bal[id]!=null?s.bal[id]:0):bal[id]; }
+function vDeskInv(g){ const s=activeSnap(); return s?s.deskInv[g]:deskInv[g]; }
+function vFv(f){ const s=activeSnap(); return s?(s.fv[f.id]||0):f.fv; }
+function vInv(f,g){ const s=activeSnap(); return s?(s.inv[f.id]?s.inv[f.id][g]:0):f.inv[g]; }
+function vNetWorth(f){ const s=activeSnap(); if(s){const nw=nwFromSnap(s,f.id);return nw==null?0:nw;} return netWorth(f); }
+function vTrades(){ const s=activeSnap(); return s?s.trades:lastTrades; }
+function vLastVol(g){ const s=activeSnap(); return s?((s.lastVol&&s.lastVol[g])||0):(lastVol[g]||0); }
+// price history series for a good UP TO the view tick (live hist[] when live; reconstructed from snapshots in replay)
+function vPriceHist(g){ const s=activeSnap(); if(!s)return hist[g]||[]; const a=[]; for(const sn of snapBuf){ if(sn.tick>s.tick)break; a.push(sn.pref[g]); } return a; }
+function vContracts(){ const s=activeSnap(); return s?s.contracts:contracts; }
+function vDeskBalHist(){ const s=activeSnap(); if(!s)return deskBalHist; const a=[]; for(const sn of snapBuf){ if(sn.tick>s.tick)break; a.push(sn.bal.NPC_DESK); } return a; }
+function vNwHistAll(id){ const s=activeSnap(); if(!s)return nwHistAll[id]; const a=[]; for(const sn of snapBuf){ if(sn.tick>s.tick)break; const nw=nwFromSnap(sn,id); if(nw!=null)a.push(nw); } return a; }
+function vNwHist(){ const s=activeSnap(); if(!s)return nwHist; const a=[]; for(const sn of snapBuf){ if(sn.tick>s.tick)break; const nw=nwFromSnap(sn,PLAYER); if(nw!=null)a.push(nw); } return a; }
+function isReplay(){ return replayTick!=null; }
+
+// ---------- finviz TREEMAP + interconnection NETWORK data (REPLAY-SAFE: read through the view accessors) ----------
+const TIER_NAMES=['T0 Extraction','T1 Foundry','T2 Fabrication','T3 Assembly'];
+// reference price at the previous VIEW tick (from the snapshot ring buffer) — null if not recorded
+function prevPref(g){ const sb=snapshotAt(vTick()-1); return sb?sb.pref[g]:null; }
+// previous-tick net worth of a firm (snapshot) — null if not recorded
+function prevNetWorth(f){ const sb=snapshotAt(vTick()-1); return sb?nwFromSnap(sb,f.id):null; }
+// market value of a good = (Σ firms inv[g] + deskInv[g]) × ref price  (EXACT ground-truth the harness checks)
+function goodMarketValue(g){ let stock=vDeskInv(g); for(const f of firms) stock+=vInv(f,g); return stock*vPref(g); }
+// treemap tiles: mode 'market' -> 9 goods (tier sectors); mode 'finance' -> 11 firms. value === harness ground truth.
+function treemapData(mode){
+  if(mode==='finance'){
+    return firms.map(f=>{ const nw=vNetWorth(f), pv=prevNetWorth(f);
+      const change=(pv!=null&&pv!==0)?(nw-pv)/Math.abs(pv):0;
+      return {id:f.id, tier:GOODS[f.specialty].tier, value:nw, change, isPlayer:f.id===PLAYER, specialty:f.specialty}; });
+  }
+  // market
+  return GKEYS.map(g=>{ const v=goodMarketValue(g), p=vPref(g), pp=prevPref(g);
+    const change=(pp!=null&&pp!==0)?(p-pp)/pp:0;
+    return {id:g, tier:GOODS[g].tier, value:v, change}; });
+}
+// interconnection network: nodes = 11 firms + NPC_DESK hub; edges = co-traded volume aggregated over a recent window.
+const NET_WINDOW=30;   // aggregate trade co-occurrence over the last ~30 recorded ticks
+function deskInventoryValue(){ let v=0; for(const g of GKEYS) v+=vDeskInv(g)*vPref(g); return v; }
+function networkData(){
+  const nodes=firms.map(f=>({id:f.id, value:vNetWorth(f), tier:GOODS[f.specialty].tier, isPlayer:f.id===PLAYER}));
+  nodes.push({id:'NPC_DESK', value:deskInventoryValue(), tier:-1, isDesk:true});
+  // aggregate co-traded volume over the recent window of recorded ticks UP TO the view tick
+  const vt=vTick(), wmap={};
+  const addEdge=(a,b,w)=>{ if(a===b||w<=0)return; const k=a<b?a+'|'+b:b+'|'+a; wmap[k]=(wmap[k]||0)+w; };
+  for(const sn of snapBuf){
+    if(sn.tick>vt || sn.tick<=vt-NET_WINDOW) continue;
+    const lv=sn.lastVol||{};
+    for(const t of (sn.trades||[])){ const vol=lv[t.good]||0; if(vol<=0)continue;
+      const buyers=t.buyers||[], sellers=t.sellers||[];
+      // every buyer was on the opposite side of every seller for this good's clear → co-traded edge
+      for(const b of buyers) for(const s of sellers) addEdge(b,s,vol);
+    }
+  }
+  const edges=Object.keys(wmap).map(k=>{ const [a,b]=k.split('|'); return {a,b,weight:wmap[k]}; });
+  return {nodes, edges};
+}
+
+// ---------- 2D Sankey (REPLAY-SAFE): finance MONEY-FLOW + market SUPPLY-CHAIN VALUE-FLOW over a recent window ----------
+// Window = [fromTick, toTick]; toTick = the VIEW tick (live tick when live, the scrubbed tick in replay).
+// fromTick = first recorded snapshot ≥ toTick-SANKEY_WINDOW (so the window is bounded by the ring buffer).
+const SANKEY_WINDOW=30;
+// resolve the snapshot window endpoints from the ring buffer at the current view tick; null until ≥2 snapshots exist
+function sankeyWindow(){
+  const to=vTick();
+  let toSnap=snapshotAt(to); if(!toSnap){ if(!snapBuf.length)return null; toSnap=snapBuf[snapBuf.length-1]; }
+  const lo=toSnap.tick-SANKEY_WINDOW;
+  let fromSnap=null; for(const sn of snapBuf){ if(sn.tick<=toSnap.tick && sn.tick>=lo){ fromSnap=sn; break; } }
+  if(!fromSnap || fromSnap.tick>=toSnap.tick) return null;   // need a strictly-earlier endpoint for a non-trivial window
+  return {fromSnap, toSnap};
+}
+// FINANCE money-flow: WORLD_FAUCET → FIRMS → SINK_BURN/NPC_DESK/CONTRACT_ESCROW.
+// Link value = cumulative per-tick account delta over the window — which telescopes to (toSnap-fromSnap) balance delta
+// because each tick's snapshot is a deep copy. Faucet mints (its balance falls) ⇒ faucet→firms = fromBal-toBal (minted).
+// Sink absorbs (its balance rises) ⇒ firms→sink = toBal-fromBal (burned). Desk/escrow can swing either way: orient by sign.
+function financeSankey(){
+  const win=sankeyWindow(); if(!win)return null;
+  const a=win.toSnap.bal, b=win.fromSnap.bal;
+  const nodes=[
+    {id:'WORLD_FAUCET',  col:0, label:'FAUCET (mint)'},
+    {id:'FIRMS',         col:1, label:'FIRMS'},
+    {id:'SINK_BURN',     col:2, label:'SINK (burn)'},
+    {id:'NPC_DESK',      col:2, label:'DESK'},
+    {id:'CONTRACT_ESCROW',col:2,label:'ESCROW'},
+  ];
+  const links=[];
+  const minted=b.WORLD_FAUCET-a.WORLD_FAUCET;            // amount minted out of the faucet over the window
+  if(minted>0) links.push({source:'WORLD_FAUCET',target:'FIRMS',value:minted});
+  const burned=a.SINK_BURN-b.SINK_BURN;                  // amount burned into the sink
+  if(burned>0) links.push({source:'FIRMS',target:'SINK_BURN',value:burned});
+  // desk + escrow: positive net delta = money flowed FROM firms into the account; negative = back to firms
+  for(const acct of ['NPC_DESK','CONTRACT_ESCROW']){
+    const d=a[acct]-b[acct];
+    if(d>0) links.push({source:'FIRMS',target:acct,value:d});
+    else if(d<0) links.push({source:acct,target:'FIRMS',value:-d});
+  }
+  return {mode:'finance', fromTick:win.fromSnap.tick, toTick:win.toSnap.tick, nodes, links};
+}
+// MARKET supply-chain value/throughput: raw(T0) → intermediate(T1,T2) → finished(T3) → RETAIL.
+// Edge weight = traded volume of the OUTPUT good summed over the window (recipe k→g weighted by g's volume);
+// each T3 good also feeds a RETAIL node weighted by that good's window volume (the retail-cleared throughput).
+// All weights are forced ≥1 over the window so every recipe edge is strictly positive (the harness requires it).
+function marketSankey(){
+  const win=sankeyWindow(); if(!win)return null;
+  // sum each good's traded volume over the recorded window (lastVol per snapshot tick)
+  const vol={}; GKEYS.forEach(g=>vol[g]=0);
+  for(const sn of snapBuf){ if(sn.tick<=win.fromSnap.tick || sn.tick>win.toSnap.tick) continue;
+    const lv=sn.lastVol||{}; for(const g of GKEYS) vol[g]+=(lv[g]||0); }
+  const nodes=GKEYS.map(g=>({id:g, col:GOODS[g].tier, label:g}));
+  nodes.push({id:'RETAIL', col:4, label:'RETAIL'});
+  const links=[];
+  GKEYS.forEach(g=>{ const r=GOODS[g].recipe; if(!r)return;
+    const w=Math.max(1,vol[g]);                          // each unit of g consumes its recipe inputs ⇒ edge ∝ g's volume
+    for(const k of Object.keys(r)) links.push({source:k,target:g,value:w});
+  });
+  // finished goods (T3) sell into RETAIL, weighted by that good's window throughput
+  GKEYS.forEach(g=>{ if(GOODS[g].tier===3) links.push({source:g,target:'RETAIL',value:Math.max(1,vol[g])}); });
+  return {mode:'market', fromTick:win.fromSnap.tick, toTick:win.toSnap.tick, nodes, links};
+}
+function sankeyData(mode){ return mode==='market'?marketSankey():financeSankey(); }
+
+function invTable(inv, highlightGood){
+  return `<table><thead><tr><th>Product</th><th>Tier</th><th>Qty</th><th>Ref price</th><th>Value</th></tr></thead><tbody>`
+    + inv.map(e=>`<tr class="${e.good===highlightGood?'spec':''}"><td>${e.good}</td><td><span class="pill t${e.tier}">T${e.tier}</span></td><td>${e.qty}</td><td>${fmt(e.price)}</td><td>${fmt(e.value)}</td></tr>`).join('')
+    + `</tbody></table>`;
+}
+function recipeLine(specialty,recipe){
+  return recipe?('Recipe: '+Object.entries(recipe).map(([k,n])=>`${n}× ${k}`).join(' + ')+` → 1 ${specialty}`):'Extracted raw material (no inputs).';
+}
+// inline-SVG sparkline (crisp, no canvas DPI). series in cents; label = caption; showZero draws a faint zero baseline (desk balance can go negative).
+function sparkline(label,series,showZero){
+  const data=(series||[]).map(v=>v/CENTS), n=data.length;
+  if(n<2) return `<div class="spark"><div class="spark-cap"><span>${label}</span><span class="muted">collecting…</span></div><svg class="spark-svg" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true"></svg></div>`;
+  const last=data[n-1], first=data[0], delta=last-first, up=delta>=0;
+  let mn=Math.min(...data), mx=Math.max(...data);
+  if(showZero){mn=Math.min(mn,0);mx=Math.max(mx,0);}
+  const rng=(mx-mn)||1, pad=rng*0.12, lo=mn-pad, hi=mx+pad, span=(hi-lo)||1;
+  const X=i=>(i/(n-1))*100, Y=v=>36-((v-lo)/span)*36;
+  const col=up?'var(--good)':'var(--bad)';
+  const flat=mx===mn;
+  const pts=data.map((v,i)=>`${X(i).toFixed(2)},${(flat?18:Y(v)).toFixed(2)}`).join(' ');
+  const zeroY=Y(0);
+  const baseline=(showZero && zeroY>=0 && zeroY<=36)?`<line x1="0" y1="${zeroY.toFixed(2)}" x2="100" y2="${zeroY.toFixed(2)}" class="spark-zero"/>`:'';
+  const arrow=up?'▲':'▼', dval=fmt(Math.abs(delta)*CENTS);
+  return `<div class="spark">
+    <div class="spark-cap"><span>${label}</span><span class="spark-now num">${fmt(last*CENTS)} <span style="color:${col}">${arrow} ${dval}</span></span></div>
+    <svg class="spark-svg" viewBox="0 0 100 36" preserveAspectRatio="none" aria-hidden="true">${baseline}<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>
+  </div>`;
+}
+// tiny inline-SVG mini-sparkline (per-good price trend) for the all-products table — values in cents
+function miniSpark(series){
+  const data=(series||[]).slice(-24).map(v=>v/CENTS), n=data.length;
+  if(n<2) return `<svg class="minispark" viewBox="0 0 66 20" preserveAspectRatio="none"></svg>`;
+  const up=data[n-1]>=data[0], col=up?'var(--good)':'var(--bad)';
+  let mn=Math.min(...data), mx=Math.max(...data); const span=(mx-mn)||1;
+  const X=i=>(i/(n-1))*66, Y=v=>19-((v-mn)/span)*18;
+  const flat=mx===mn, pts=data.map((v,i)=>`${X(i).toFixed(1)},${(flat?10:Y(v)).toFixed(1)}`).join(' ');
+  return `<svg class="minispark" viewBox="0 0 66 20" preserveAspectRatio="none"><polyline points="${pts}" stroke="${col}"/></svg>`;
+}
+// (re)apply the active price-flash classes to the live price cells (called after each m-all render)
+function applyPriceFlash(){
+  const tb=$('m-all')&&$('m-all').querySelector('tbody'); if(!tb||!tb.querySelectorAll)return;
+  const cells=tb.querySelectorAll('td.px'); if(!cells||!cells.forEach)return;
+  cells.forEach(td=>{ const g=td.dataset&&td.dataset.g, fl=g&&priceFlash[g];
+    td.classList.remove('flash-up','flash-down');
+    if(fl) td.classList.add(fl.dir>0?'flash-up':'flash-down'); });
+}
+// render the scrolling trade-tape strip (newest first) from the captured tape entries
+function renderTape(){
+  const el=$('m-tape'); if(!el)return;
+  if(!tape.length){ el.innerHTML='<span class="empty">collecting clears…</span>'; return; }
+  el.innerHTML=tape.slice(0,14).map(e=>{
+    const cls=e.side==='buy'?'buy':e.side==='sell'?'sell':'';
+    const fresh=(performance.now()-e.t0)<700?' fresh':'';
+    return `<span class="tick ${cls}${fresh}"><span class="g">${e.good}</span> <span>@${fmt(e.price)}</span> <span class="v">×${e.vol}</span></span>`;
+  }).join('');
+}
+function renderInspector(){
+  if(inspectTarget==null) return;
+  const dlg=$('inspector'); if(!dlg) return;
+  if(inspectTarget==='NPC_DESK'){
+    const d=inspectDesk();
+    $('insp-title').textContent='🏛 Market-Maker Exchange';
+    $('insp-sub').textContent='NPC_DESK · '+d.role+' — not a firm (no net worth / rank / facilities)';
+    $('insp-body').innerHTML=
+      `<div class="insp-stats">
+        <div class="kpi"><span class="lbl">Cash balance (ledger)</span><span class="val num">${fmt(d.balance)}</span></div>
+        <div class="kpi"><span class="lbl">Inventory @ ref</span><span class="val num">${fmt(d.inventoryValue)}</span></div>
+        <div class="kpi"><span class="lbl">Spread</span><span class="val num">${(d.spread*100).toFixed(0)}%</span></div>
+        <div class="kpi"><span class="lbl">Depth / side</span><span class="val num">${d.depth}</span></div>
+        <div class="kpi"><span class="lbl">Target stock</span><span class="val num">${d.target}</span></div>
+      </div>
+      ${sparkline('Balance (recent ticks)',d.history,true)}
+      <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 8px">Market-making inventory (deskInv)</h2>
+      ${invTable(d.inventory)}
+      <p class="small muted" style="margin-top:10px">Quotes both sides each tick around the reference price to add liquidity; cash flows through the NPC_DESK ledger account. Balance can be negative — it is market-making P&amp;L, not net worth.</p>`;
+  } else {
+    const d=inspectFirm(inspectTarget);
+    if(!d){closeInspector();return;}
+    $('insp-title').textContent=d.id+(d.isPlayer?' (you)':'')+' · '+d.specialty;
+    $('insp-sub').textContent='Rank #'+d.rank+' / '+d.total+' by net worth';
+    $('insp-body').innerHTML=
+      `<div class="insp-stats">
+        <div class="kpi"><span class="lbl">Net worth</span><span class="val num">${fmt(d.netWorth)}</span></div>
+        <div class="kpi"><span class="lbl">Cash (ledger)</span><span class="val num">${fmt(d.cash)}</span></div>
+        <div class="kpi"><span class="lbl">Facilities</span><span class="val num">${fmt(d.facilities)}</span></div>
+        <div class="kpi"><span class="lbl">Inventory @ ref</span><span class="val num">${fmt(d.inventoryValue)}</span></div>
+        <div class="kpi"><span class="lbl">Rank</span><span class="val num">#${d.rank} / ${d.total}</span></div>
+      </div>
+      ${sparkline('Net worth (recent ticks)',d.history,false)}
+      <p class="small muted" style="margin:0 0 10px">${recipeLine(d.specialty,d.recipe)}</p>
+      <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 8px">Inventory — all ${GKEYS.length} goods (specialty highlighted)</h2>
+      ${invTable(d.inventory,d.specialty)}`;
+  }
+}
+function openInspector(target){
+  inspectTarget=target;
+  renderInspector();
+  renderAll();   // immediately reflect the selection's trade-link highlight on the Sankey + leaderboard
+  const dlg=$('inspector');
+  if(dlg&&typeof dlg.showModal==='function'&&!dlg.open){try{dlg.showModal();}catch(_){ }}
+  const c=$('insp-close'); if(c&&typeof c.focus==='function')c.focus();
+}
+function closeInspector(){
+  inspectTarget=null;
+  const dlg=$('inspector'); if(dlg&&dlg.open&&typeof dlg.close==='function'){try{dlg.close();}catch(_){ }}
+}
+// the selected firm for trade-link highlighting = the open inspector subject when it is a FIRM (not the NPC_DESK, not closed)
+function selectedFirm(){ return (inspectTarget!=null && inspectTarget!=='NPC_DESK' && firms.some(f=>f.id===inspectTarget)) ? inspectTarget : null; }
+
+// canvas charts (no libraries)
+function dpr(cv){const r=cv.getBoundingClientRect();cv.width=r.width*devicePixelRatio;cv.height=r.height*devicePixelRatio;const x=cv.getContext('2d');x.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);return [x,r.width,r.height];}
+function cssv(n){const v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||'#888';}
+function drawLine(cv,data,varName){
+  const [x,w,h]=dpr(cv); x.clearRect(0,0,w,h); const axis=cssv('--muted');
+  if(data.length<2){x.fillStyle=axis;x.font='12px monospace';x.fillText('collecting…',10,20);return;}
+  const color=cssv(varName),mn=Math.min(...data),mx=Math.max(...data),pad=8,rng=(mx-mn)||1;
+  x.strokeStyle=color;x.lineWidth=2;x.beginPath();
+  data.forEach((v,i)=>{const px=pad+i*(w-2*pad)/(data.length-1),py=h-pad-(v-mn)/rng*(h-2*pad);i?x.lineTo(px,py):x.moveTo(px,py);});
+  x.stroke(); x.globalAlpha=.12;x.lineTo(w-pad,h-pad);x.lineTo(pad,h-pad);x.closePath();x.fillStyle=color;x.fill();x.globalAlpha=1;
+  x.fillStyle=axis;x.font='11px monospace';x.fillText(mx.toFixed(0),4,12);x.fillText(mn.toFixed(0),4,h-4);
+}
+function drawBars(cv,items){
+  const [x,w,h]=dpr(cv);x.clearRect(0,0,w,h);const mx=Math.max(1,...items.map(d=>d.v)),pad=6,bw=(w-2*pad)/items.length;
+  const tc=['--t0','--t1','--t2','--t3'].map(cssv), axis=cssv('--muted');
+  items.forEach((d,i)=>{const bh=(d.v/mx)*(h-26);x.fillStyle=tc[d.tier];x.fillRect(pad+i*bw+2,h-18-bh,bw-4,bh);
+    x.save();x.fillStyle=axis;x.font='9px monospace';x.translate(pad+i*bw+bw/2,h-6);x.textAlign='center';x.fillText(d.label.slice(0,4),0,0);x.restore();});
+}
+function drawCandles(cv,candles){
+  const [x,w,h]=dpr(cv);x.clearRect(0,0,w,h);const axis=cssv('--muted'),up=cssv('--up'),dn=cssv('--down');
+  const data=(candles||[]).slice(-40);
+  if(data.length<2){x.fillStyle=axis;x.font='12px monospace';x.fillText('collecting…',10,20);return;}
+  const volH=Math.round(h*0.22),top=8,botY=h-volH-6;
+  const lo=Math.min(...data.map(d=>d.l)),hi=Math.max(...data.map(d=>d.h)),rng=(hi-lo)||1;
+  const vmax=Math.max(1,...data.map(d=>d.v)),pad=8,cw=(w-2*pad)/data.length,bw=Math.max(1,cw*0.6);
+  const yP=v=>top+(hi-v)/rng*(botY-top);
+  data.forEach((d,i)=>{const cx=pad+i*cw+cw/2,col=(d.c>=d.o)?up:dn;
+    x.strokeStyle=col;x.fillStyle=col;x.lineWidth=1;
+    x.beginPath();x.moveTo(cx,yP(d.h));x.lineTo(cx,yP(d.l));x.stroke();              // wick
+    const yo=yP(d.o),yc=yP(d.c);x.fillRect(cx-bw/2,Math.min(yo,yc),bw,Math.max(1,Math.abs(yc-yo))); // body
+    const vh=(d.v/vmax)*(volH-2);x.globalAlpha=.45;x.fillRect(cx-bw/2,h-2-vh,bw,vh);x.globalAlpha=1; });// volume
+  x.fillStyle=axis;x.font='11px monospace';x.fillText(hi.toFixed(0),4,12);x.fillText(lo.toFixed(0),4,botY);
+}
+function drawSankey(cv){
+  const [x,w,h]=dpr(cv);x.clearRect(0,0,w,h);const axis=cssv('--muted');
+  const cols=[[],[],[],[]];GKEYS.forEach(g=>cols[GOODS[g].tier].push(g));
+  const pad=12,colW=(w-2*pad)/4,nodeW=12,pos={};
+  cols.forEach((col,t)=>{const colX=pad+t*colW,gap=(h-2*pad)/Math.max(1,col.length);
+    col.forEach((g,i)=>{pos[g]={x:colX,y:pad+i*gap+gap*0.12,h:Math.max(10,gap*0.62)};});});
+  // trade-link highlighting: edges in tradeHighlight(sel).links are brightened/thickened, the rest dimmed
+  const sel=selectedFirm();
+  const hl=sel?new Set(tradeHighlight(sel).links.map(e=>e.from+'>'+e.to)):null;
+  GKEYS.forEach(g=>{const r=GOODS[g].recipe;if(!r)return;const flow=Math.max(1,lastVol[g]||0);   // links (material flow), width ~ recent volume
+    Object.keys(r).forEach(k=>{const s=pos[k],d=pos[g];if(!s||!d)return;
+      const on=hl?hl.has(k+'>'+g):true;                                              // is this edge part of the selected firm's traded chain?
+      x.strokeStyle=cssv('--t'+GOODS[k].tier);x.globalAlpha=hl?(on?0.9:0.12):0.4;
+      x.lineWidth=Math.max(1.5,Math.min(12,flow/5))*(on&&hl?1.8:1);
+      const sx=s.x+nodeW,sy=s.y+s.h/2,dx=d.x,dy=d.y+d.h/2,mx=(sx+dx)/2;
+      x.beginPath();x.moveTo(sx,sy);x.bezierCurveTo(mx,sy,mx,dy,dx,dy);x.stroke();});});
+  x.globalAlpha=1;x.font='9px monospace';
+  GKEYS.forEach(g=>{const p=pos[g];x.fillStyle=cssv('--t'+GOODS[g].tier);x.fillRect(p.x,p.y,nodeW,p.h); // nodes
+    x.fillStyle=axis;x.textAlign=GOODS[g].tier<3?'left':'right';x.fillText(g,GOODS[g].tier<3?p.x+nodeW+3:p.x-3,p.y+p.h/2+3);});
+  x.textAlign='left';
+}
+// ---------- generalised 2D Sankey for the dashboard: renders sankeyData('finance'|'market') on a visible canvas ----------
+// Static ribbons (no continuous particle animation), so it is safe under prefers-reduced-motion. Width ∝ link value.
+// Colour per node column (CSS tier vars + accent/up/down for the finance accounts). Shows "collecting…" before flow data.
+const SANKEY_NODE_COL=id=>({WORLD_FAUCET:'--good',FIRMS:'--up',SINK_BURN:'--down',NPC_DESK:'--t2',CONTRACT_ESCROW:'--t3',RETAIL:'--accent'})[id];
+function draw2DSankey(cv,mode){
+  if(!cv)return; const [x,w,h]=dpr(cv); x.clearRect(0,0,w,h); const axis=cssv('--muted');
+  const data=sankeyData(mode);
+  if(!data||!data.links.length){ x.fillStyle=axis; x.font='12px monospace'; x.textAlign='left'; x.fillText('collecting…',12,22); return; }
+  const ncols=Math.max(...data.nodes.map(n=>n.col))+1;
+  const pad=14, nodeW=12, colW=(w-2*pad-nodeW)/Math.max(1,ncols-1);
+  // colour helper per good tier (market) / per account (finance)
+  const nodeCol=n=>cssv(SANKEY_NODE_COL(n.id) || ('--t'+(GOODS[n.id]?GOODS[n.id].tier:0)));
+  // node value = max(inflow,outflow) so each node box is tall enough to carry its ribbons; layout per column by value
+  const inflow={}, outflow={};
+  for(const l of data.links){ inflow[l.target]=(inflow[l.target]||0)+l.value; outflow[l.source]=(outflow[l.source]||0)+l.value; }
+  const nodeVal=n=>Math.max(inflow[n.id]||0, outflow[n.id]||0, 1);
+  const byCol={}; for(const n of data.nodes){ (byCol[n.col]||(byCol[n.col]=[])).push(n); }
+  const maxColTotal=Math.max(1,...Object.values(byCol).map(col=>col.reduce((a,n)=>a+nodeVal(n),0)));
+  const scale=(h-2*pad)/maxColTotal;                      // px per value-unit (consistent ribbon thickness across columns)
+  const pos={};
+  for(const cstr in byCol){ const col=byCol[cstr]; const total=col.reduce((a,n)=>a+nodeVal(n),0);
+    const gap=col.length>1?Math.min(18,(h-2*pad-total*scale)/(col.length-1)):0;
+    let y=pad + Math.max(0,(h-2*pad-(total*scale+gap*(col.length-1)))/2);
+    const colX=pad + (+cstr)*colW;
+    for(const n of col){ const bh=Math.max(6,nodeVal(n)*scale); pos[n.id]={x:colX,y,h:bh,col:+cstr}; y+=bh+gap; }
+  }
+  // ribbons: stack each link at its source's out-cursor and its target's in-cursor (proportional to value)
+  const outCur={}, inCur={};
+  for(const n of data.nodes){ outCur[n.id]=pos[n.id]?pos[n.id].y:0; inCur[n.id]=pos[n.id]?pos[n.id].y:0; }
+  const vmax=Math.max(...data.links.map(l=>l.value));
+  for(const l of data.links){ const s=pos[l.source], d=pos[l.target]; if(!s||!d)continue;
+    const ribH=Math.max(1.2,l.value*scale);
+    const fwd=d.col>=s.col;                                // forward (left→right) or a back-edge (desk/escrow → firms)
+    const sx=fwd?s.x+nodeW:s.x, dx=fwd?d.x:d.x+nodeW;
+    const sy=outCur[l.source], dy=inCur[l.target];
+    const mx=(sx+dx)/2;
+    x.strokeStyle=cssv(SANKEY_NODE_COL(l.source)||('--t'+(GOODS[l.source]?GOODS[l.source].tier:0)));
+    x.globalAlpha=.42; x.lineWidth=ribH;
+    x.beginPath(); x.moveTo(sx,sy+ribH/2); x.bezierCurveTo(mx,sy+ribH/2,mx,dy+ribH/2,dx,dy+ribH/2); x.stroke();
+    outCur[l.source]+=ribH; inCur[l.target]+=ribH;
+  }
+  x.globalAlpha=1; x.font='9px monospace'; x.textBaseline='alphabetic';
+  for(const n of data.nodes){ const p=pos[n.id]; if(!p)continue;
+    x.fillStyle=nodeCol(n); x.fillRect(p.x,p.y,nodeW,p.h);
+    x.fillStyle=axis; const last=p.col>=ncols-1; x.textAlign=last?'right':'left';
+    x.fillText(n.label||n.id, last?p.x-3:p.x+nodeW+3, p.y+p.h/2+3);
+  }
+  x.textAlign='left';
+}
+// gradient AREA net-worth chart with a pulsing "now" dot (pulse phase from performance.now(); frozen under reduced-motion/replay)
+function drawNwArea(cv,data){
+  const [x,w,h]=dpr(cv); x.clearRect(0,0,w,h); const axis=cssv('--muted');
+  if(data.length<2){x.fillStyle=axis;x.font='12px monospace';x.fillText('collecting…',10,20);return;}
+  const color=cssv('--up'), mn=Math.min(...data), mx=Math.max(...data), pad=8, rng=(mx-mn)||1;
+  const X=i=>pad+i*(w-2*pad)/(data.length-1), Y=v=>h-pad-(v-mn)/rng*(h-2*pad);
+  x.beginPath(); x.moveTo(X(0),Y(data[0])); data.forEach((v,i)=>x.lineTo(X(i),Y(v)));
+  // area fill (gradient when available; fall back to a flat alpha fill in headless/non-gradient ctx)
+  x.lineTo(X(data.length-1),h-pad); x.lineTo(X(0),h-pad); x.closePath();
+  x.save();
+  let g2=null; try{ g2=x.createLinearGradient(0,pad,0,h-pad); if(g2&&g2.addColorStop){ g2.addColorStop(0,'rgba(76,141,255,0.34)'); g2.addColorStop(1,'rgba(76,141,255,0.02)'); } else g2=null; }catch(_){ g2=null; }
+  if(g2){ x.fillStyle=g2; x.fill(); } else { x.globalAlpha=.16; x.fillStyle=color; x.fill(); x.globalAlpha=1; }
+  x.restore();
+  // line on top
+  x.beginPath(); x.moveTo(X(0),Y(data[0])); data.forEach((v,i)=>{i&&x.lineTo(X(i),Y(v));});
+  x.strokeStyle=color; x.lineWidth=2; x.stroke();
+  // pulsing "now" dot
+  const lx=X(data.length-1), ly=Y(data[data.length-1]);
+  const ph=(reduceMotion||isReplay())?0:(performance.now()%1300)/1300;
+  const r0=3.2, rr=r0+ph*7;
+  x.globalAlpha=Math.max(0,0.5*(1-ph)); x.beginPath(); x.arc(lx,ly,rr,0,Math.PI*2); x.fillStyle=color; x.fill();
+  x.globalAlpha=1; x.beginPath(); x.arc(lx,ly,r0,0,Math.PI*2); x.fillStyle=color; x.fill();
+  x.fillStyle=axis;x.font='11px monospace';x.fillText(mx.toFixed(0),4,12);x.fillText(mn.toFixed(0),4,h-4);
+}
+// ---------- money-flow diagram: source/sink nodes with particles sized by REAL per-tick ledger deltas ----------
+const FLOW_NODES=[
+  {id:'WORLD_FAUCET',label:'FAUCET',col:'--good'},
+  {id:'FIRMS',label:'FIRMS',col:'--up'},
+  {id:'NPC_DESK',label:'DESK',col:'--t2'},
+  {id:'CONTRACT_ESCROW',label:'ESCROW',col:'--t3'},
+  {id:'SINK_BURN',label:'SINK',col:'--down'},
+];
+// edges carry money between FIRMS and each system account; magnitude = |per-tick delta| of that account
+const FLOW_EDGES=[
+  {a:'WORLD_FAUCET',b:'FIRMS',acct:'WORLD_FAUCET'},     // mint flows out of faucet into firms (faucet delta < 0)
+  {a:'FIRMS',b:'SINK_BURN',acct:'SINK_BURN'},           // fees/upkeep flow into the sink (sink delta > 0)
+  {a:'FIRMS',b:'NPC_DESK',acct:'NPC_DESK'},             // desk market-making P&L
+  {a:'FIRMS',b:'CONTRACT_ESCROW',acct:'CONTRACT_ESCROW'},
+];
+function flowLayout(w,h){
+  const pos={};
+  pos.WORLD_FAUCET={x:w*0.12,y:h*0.30};
+  pos.FIRMS       ={x:w*0.50,y:h*0.50};
+  pos.NPC_DESK    ={x:w*0.88,y:h*0.24};
+  pos.CONTRACT_ESCROW={x:w*0.88,y:h*0.74};
+  pos.SINK_BURN   ={x:w*0.50,y:h*0.90};
+  return pos;
+}
+function drawMoneyFlow(cv){
+  const [x,w,h]=dpr(cv); x.clearRect(0,0,w,h); const axis=cssv('--muted');
+  const pos=flowLayout(w,h), flows=financeFlows();
+  flowEdgesCache=FLOW_EDGES.map(e=>({...e, p1:pos[e.a], p2:pos[e.b], mag:Math.abs(flows[e.acct]||0)}));
+  // edges
+  for(const e of flowEdgesCache){
+    const lw=Math.max(1,Math.min(8,e.mag/40000+1));
+    x.strokeStyle=cssv(FLOW_NODES.find(n=>n.id===e.b&&e.b!=='FIRMS')?'--line':'--line'); x.globalAlpha=.5;
+    x.lineWidth=lw; x.beginPath(); x.moveTo(e.p1.x,e.p1.y); x.lineTo(e.p2.x,e.p2.y); x.stroke();
+  }
+  x.globalAlpha=1;
+  // particles (positions advanced by the rAF loop)
+  for(const pt of particles){
+    const e=flowEdgesCache[pt.edge]; if(!e)continue;
+    const px=e.p1.x+(e.p2.x-e.p1.x)*pt.t, py=e.p1.y+(e.p2.y-e.p1.y)*pt.t;
+    x.beginPath(); x.arc(px,py,2.2,0,Math.PI*2); x.fillStyle=cssv(pt.col); x.fill();
+  }
+  // nodes
+  x.font='9px monospace'; x.textAlign='center';
+  for(const n of FLOW_NODES){
+    const p=pos[n.id]; x.beginPath(); x.arc(p.x,p.y,7,0,Math.PI*2); x.fillStyle=cssv(n.col); x.fill();
+    x.fillStyle=axis; x.fillText(n.label,p.x,p.y-11);
+  }
+  x.textAlign='left';
+}
+// advance + spawn money-flow particles for the current frame, sized by the REAL per-tick deltas (financeFlows())
+function stepParticles(dt){
+  // REPLAY-SAFE + a11y: no forward/live particle flow over a past frame, and none under reduced-motion (freeze)
+  if(reduceMotion||isReplay()){ particles.length=0; return; }
+  const flows=financeFlows();
+  // advance existing
+  for(const pt of particles){ pt.t+=pt.spd*dt; }
+  particles=particles.filter(pt=>pt.t<1);
+  // spawn rate per edge ~ magnitude of that account's per-tick delta (capped)
+  FLOW_EDGES.forEach((e,i)=>{
+    const mag=Math.abs(flows[e.acct]||0); if(mag<=0)return;
+    const want=Math.min(0.5, mag/120000);             // probability this frame
+    if(Math.random()<want*dt*60){
+      const nodeCol=FLOW_NODES.find(n=>n.id===(e.acct==='WORLD_FAUCET'?'WORLD_FAUCET':e.b));
+      particles.push({edge:i,t:0,spd:0.6+Math.random()*0.5,col:nodeCol?nodeCol.col:'--accent'});
+    }
+  });
+  if(particles.length>180)particles.splice(0,particles.length-180);
+}
+// ---------- finviz-style heatmap colour: diverging green(up)/grey(~0)/red(down) on a signed fractional change ----------
+function heatColor(change){
+  // saturate around +/-3% (typical per-tick move); near 0 -> neutral grey
+  const t=Math.max(-1,Math.min(1,(change||0)/0.03));
+  const neutral=[60,66,78];                                  // muted slate grey
+  const up=[34,170,90], down=[214,58,64];                    // finviz green / red
+  const tgt=t>=0?up:down, k=Math.abs(t);
+  const r=Math.round(neutral[0]+(tgt[0]-neutral[0])*k);
+  const g=Math.round(neutral[1]+(tgt[1]-neutral[1])*k);
+  const b=Math.round(neutral[2]+(tgt[2]-neutral[2])*k);
+  return 'rgb('+r+','+g+','+b+')';
+}
+// ---------- squarified treemap layout (Bruls/Huizing/van Wijk) — pure geometry, no libraries ----------
+// items: [{...,value}] -> returns [{...,x,y,w,h}] laid out to fill the rect, minimising aspect ratios.
+function squarify(items, x, y, w, h){
+  const out=[];
+  const nodes=items.filter(d=>d.value>0).slice().sort((a,b)=>b.value-a.value);
+  const total=nodes.reduce((a,d)=>a+d.value,0);
+  if(total<=0||w<=0||h<=0){ return items.map(d=>({...d,x,y,w:0,h:0})); }
+  const area=w*h, scale=area/total;
+  let rx=x, ry=y, rw=w, rh=h;
+  const worst=(row,len,sum)=>{ // worst aspect ratio in the row given the side length
+    const s2=sum*sum, mx=Math.max(...row), mn=Math.min(...row);
+    return Math.max((len*len*mx)/s2,(s2)/(len*len*mn));
+  };
+  const layoutRow=(row)=>{ // place a settled row along the shorter side, advance the free rect
+    const sum=row.reduce((a,v)=>a+v,0);
+    if(rw>=rh){ const rowW=sum/rh; let cy=ry;
+      for(const v of row){ const cellH=v/rowW; out.push({x:rx,y:cy,w:rowW,h:cellH,_v:v}); cy+=cellH; }
+      rx+=rowW; rw-=rowW;
+    } else { const rowH=sum/rw; let cx=rx;
+      for(const v of row){ const cellW=v/rowH; out.push({x:cx,y:ry,w:cellW,h:rowH,_v:v}); cx+=cellW; }
+      ry+=rowH; rh-=rowH;
+    }
+  };
+  const scaled=nodes.map(d=>d.value*scale);
+  let i=0, row=[];
+  while(i<scaled.length){
+    const len=Math.min(rw,rh)||1;
+    const v=scaled[i];
+    if(!row.length){ row.push(v); i++; continue; }
+    const cur=worst(row,len,row.reduce((a,x)=>a+x,0));
+    const nxt=worst(row.concat(v),len,row.reduce((a,x)=>a+x,0)+v);
+    if(nxt<=cur){ row.push(v); i++; }
+    else { layoutRow(row); row=[]; }
+  }
+  if(row.length) layoutRow(row);
+  // match placed cells back to nodes (out was pushed in sorted order)
+  return nodes.map((d,k)=>{ const cell=out[k]||{x,y,w:0,h:0}; return {...d,x:cell.x,y:cell.y,w:cell.w,h:cell.h}; });
+}
+// shared treemap renderer for both Market (goods in tier sectors) and Finance (firms). Stores hit-rects for clicks.
+let treemapHits={market:[],finance:[]};
+function drawTreemap(cv,mode){
+  if(!cv)return; const [x,w,h]=dpr(cv); x.clearRect(0,0,w,h);
+  const tiles=treemapData(mode);
+  treemapHits[mode]=[];
+  const axis=cssv('--muted'), surf=cssv('--surface');
+  if(mode==='market'){
+    // group the 9 goods into 4 tier SECTORS, lay sectors out by total value, then tile goods within each sector
+    const sectors=[0,1,2,3].map(t=>({tier:t, items:tiles.filter(d=>d.tier===t)}))
+      .map(s=>({...s, value:s.items.reduce((a,d)=>a+d.value,0)})).filter(s=>s.value>0);
+    const placed=squarify(sectors,2,2,w-4,h-4);
+    for(const sec of placed){
+      // sector header strip
+      x.fillStyle=cssv('--t'+sec.tier); x.globalAlpha=.16; x.fillRect(sec.x,sec.y,sec.w,sec.h); x.globalAlpha=1;
+      x.fillStyle=cssv('--t'+sec.tier); x.font='bold 9px monospace'; x.textBaseline='top';
+      if(sec.w>56&&sec.h>16) x.fillText(TIER_NAMES[sec.tier],sec.x+4,sec.y+3);
+      const pad=2, gy=sec.h>20?13:0;
+      const cells=squarify(sec.items, sec.x+pad, sec.y+pad+gy, Math.max(0,sec.w-2*pad), Math.max(0,sec.h-2*pad-gy));
+      for(const c of cells){ if(c.w<1||c.h<1)continue;
+        x.fillStyle=heatColor(c.change); x.fillRect(c.x,c.y,c.w-1,c.h-1);
+        treemapHits.market.push({id:c.id,x:c.x,y:c.y,w:c.w,h:c.h});
+        if(c.id===selectedGood){ x.strokeStyle=cssv('--accent'); x.lineWidth=2; x.strokeRect(c.x+1,c.y+1,c.w-3,c.h-3); }
+        if(c.w>40&&c.h>22){ x.fillStyle='#fff'; x.font='bold 10px monospace'; x.textBaseline='top';
+          x.fillText(c.id,c.x+4,c.y+4);
+          x.font='9px monospace'; x.fillStyle='rgba(255,255,255,.85)';
+          x.fillText((c.change>=0?'+':'')+(c.change*100).toFixed(1)+'%',c.x+4,c.y+16); }
+      }
+    }
+  } else {
+    const cells=squarify(tiles,2,2,w-4,h-4);
+    for(const c of cells){ if(c.w<1||c.h<1)continue;
+      x.fillStyle=heatColor(c.change); x.fillRect(c.x,c.y,c.w-1,c.h-1);
+      treemapHits.finance.push({id:c.id,x:c.x,y:c.y,w:c.w,h:c.h});
+      if(c.isPlayer){ x.strokeStyle=cssv('--accent'); x.lineWidth=2.5; x.strokeRect(c.x+1.5,c.y+1.5,c.w-3,c.h-3); }
+      if(c.w>46&&c.h>24){ x.fillStyle='#fff'; x.font='bold 10px monospace'; x.textBaseline='top';
+        x.fillText(c.id+(c.isPlayer?' ★':''),c.x+4,c.y+4);
+        x.font='9px monospace'; x.fillStyle='rgba(255,255,255,.85)';
+        x.fillText(fmt(c.value),c.x+4,c.y+16); }
+    }
+  }
+  x.textBaseline='alphabetic';
+}
+// ---------- interconnection NETWORK: deterministic tier-ring layout + force-relax (frozen under reduced-motion/replay) ----------
+let netLayout={};          // {id:{x,y,vx,vy}} normalised 0..1 positions, persisted across frames so the sim settles
+let netHover=null;         // currently hovered node id (emphasis)
+let netHits=[];            // hit-test rects {id,x,y,r} in CSS px from the last draw
+let netLayoutSeed=-1;      // re-seed the layout when the firm set changes
+function netInitLayout(data){
+  netLayout={};
+  // deterministic seed positions: desk hub in the centre, firms on tier rings around it
+  const byTier={}; for(const n of data.nodes){ if(n.isDesk)continue; (byTier[n.tier]||(byTier[n.tier]=[])).push(n); }
+  for(const n of data.nodes){
+    if(n.isDesk){ netLayout[n.id]={x:0.5,y:0.5,vx:0,vy:0}; continue; }
+    const ring=byTier[n.tier], idx=ring.indexOf(n), cnt=ring.length;
+    const radius=0.18+0.20*n.tier;                                    // outer tiers further from the hub
+    const ang=(idx/Math.max(1,cnt))*Math.PI*2 + n.tier*0.6;           // stagger rings so labels don't collide
+    netLayout[n.id]={x:0.5+radius*Math.cos(ang),y:0.5+radius*Math.sin(ang),vx:0,vy:0};
+  }
+}
+// one relaxation step of a spring(edges)+repulsion(all pairs) force model on the normalised layout
+function netRelax(data,iters){
+  const ids=data.nodes.map(n=>n.id);
+  for(let it=0;it<iters;it++){
+    const fx={},fy={}; ids.forEach(id=>{fx[id]=0;fy[id]=0;});
+    // repulsion between every pair
+    for(let i=0;i<ids.length;i++)for(let j=i+1;j<ids.length;j++){
+      const a=netLayout[ids[i]],b=netLayout[ids[j]]; let dx=a.x-b.x,dy=a.y-b.y; let d2=dx*dx+dy*dy; if(d2<1e-4){dx=(Math.random()-0.5)*0.01;dy=(Math.random()-0.5)*0.01;d2=dx*dx+dy*dy;}
+      const f=0.0009/d2, d=Math.sqrt(d2); fx[ids[i]]+=f*dx/d; fy[ids[i]]+=f*dy/d; fx[ids[j]]-=f*dx/d; fy[ids[j]]-=f*dy/d;
+    }
+    // springs along edges (stronger pull for heavier co-traded volume)
+    const wmax=Math.max(1,...data.edges.map(e=>e.weight));
+    for(const e of data.edges){ const a=netLayout[e.a],b=netLayout[e.b]; if(!a||!b)continue;
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1e-3, rest=0.16;
+      const k=0.02*(0.4+0.6*e.weight/wmax), f=k*(d-rest);
+      fx[e.a]+=f*dx/d; fy[e.a]+=f*dy/d; fx[e.b]-=f*dx/d; fy[e.b]-=f*dy/d;
+    }
+    // gentle pull toward centre to keep the graph on-canvas
+    for(const id of ids){ fx[id]+=(0.5-netLayout[id].x)*0.01; fy[id]+=(0.5-netLayout[id].y)*0.01; }
+    for(const id of ids){ const p=netLayout[id];
+      p.vx=(p.vx+fx[id])*0.82; p.vy=(p.vy+fy[id])*0.82;
+      p.x=Math.max(0.04,Math.min(0.96,p.x+p.vx)); p.y=Math.max(0.05,Math.min(0.95,p.y+p.vy));
+    }
+  }
+}
+function drawNetwork(cv){
+  if(!cv)return; const [x,w,h]=dpr(cv); x.clearRect(0,0,w,h);
+  const data=networkData(), ids=data.nodes.map(n=>n.id).join(',');
+  if(ids!==netLayoutSeed || Object.keys(netLayout).length!==data.nodes.length){
+    netInitLayout(data); netLayoutSeed=ids;
+    netRelax(data, reduceMotion?120:40);          // settle once (reduced-motion: fully settle; otherwise let rAF continue)
+  } else if(reduceMotion||isReplay()){
+    /* static settled layout — no continuous jitter */
+  } else {
+    netRelax(data,1);                              // animate toward equilibrium on the rAF loop
+  }
+  const pad=26, X=p=>pad+p.x*(w-2*pad), Y=p=>pad+p.y*(h-2*pad);
+  const nwmax=Math.max(1,...data.nodes.map(n=>n.value)), wmax=Math.max(1,...data.edges.map(e=>e.weight));
+  const tierVar=t=>t<0?'--accent':'--t'+t;
+  // edges
+  const hov=netHover, incident=e=>hov&&(e.a===hov||e.b===hov);
+  for(const e of data.edges){ const a=netLayout[e.a],b=netLayout[e.b]; if(!a||!b)continue;
+    const on=incident(e); x.strokeStyle=on?cssv('--accent'):cssv('--line');
+    x.globalAlpha=hov?(on?0.95:0.10):0.45;
+    x.lineWidth=Math.max(0.6,Math.min(7,(e.weight/wmax)*6))*(on?1.6:1);
+    x.beginPath(); x.moveTo(X(a),Y(a)); x.lineTo(X(b),Y(b)); x.stroke();
+  }
+  x.globalAlpha=1;
+  // nodes
+  netHits=[];
+  for(const n of data.nodes){ const p=netLayout[n.id]; if(!p)continue;
+    const r=6+18*Math.sqrt(Math.max(0,n.value)/nwmax);
+    const cx=X(p),cy=Y(p); netHits.push({id:n.id,x:cx,y:cy,r});
+    const dim=hov&&hov!==n.id&&!data.edges.some(e=>incident(e)&&(e.a===n.id||e.b===n.id));
+    x.globalAlpha=dim?0.32:1;
+    x.beginPath(); x.arc(cx,cy,r,0,Math.PI*2);
+    x.fillStyle=cssv(tierVar(n.tier)); x.fill();
+    if(n.isDesk){ x.strokeStyle=cssv('--text'); x.lineWidth=2; x.stroke(); }
+    else if(n.isPlayer){ x.strokeStyle=cssv('--accent'); x.lineWidth=2.5; x.stroke(); }
+    else if(n.id===hov){ x.strokeStyle=cssv('--text'); x.lineWidth=1.5; x.stroke(); }
+    x.globalAlpha=dim?0.4:1;
+    x.fillStyle=cssv('--text'); x.font='9px monospace'; x.textAlign='center'; x.textBaseline='top';
+    x.fillText(n.isDesk?'DESK':n.id, cx, cy+r+1);
+  }
+  x.globalAlpha=1; x.textAlign='left'; x.textBaseline='alphabetic';
+}
+function renderNetwork(){
+  drawNetwork($('chart-network'));
+  // legend (tier colours + desk marker)
+  const lg=$('net-legend');
+  if(lg){ const keys=[['--t0','T0 raw'],['--t1','T1 foundry'],['--t2','T2 fab'],['--t3','T3 assembly'],['--accent','DESK hub']];
+    lg.innerHTML=keys.map(k=>`<span class="key"><span class="swatch" style="background:${cssv(k[0])}"></span>${k[1]}</span>`).join('')
+      +'<span class="key">○ size ∝ net worth · edge ∝ co-traded volume</span>'; }
+  // accessible table mirror of the same data
+  const data=networkData(), deg={}, wsum={};
+  for(const e of data.edges){ deg[e.a]=(deg[e.a]||0)+1; deg[e.b]=(deg[e.b]||0)+1; wsum[e.a]=(wsum[e.a]||0)+e.weight; wsum[e.b]=(wsum[e.b]||0)+e.weight; }
+  const tb=$('net-table')&&$('net-table').querySelector('tbody');
+  if(tb)tb.innerHTML=data.nodes.slice().sort((a,b)=>b.value-a.value).map(n=>
+    `<tr role="button" tabindex="0" data-node="${n.id}" aria-label="Inspect ${n.id}"><td>${n.isDesk?'NPC_DESK 🏛':n.id}</td><td>${n.tier<0?'—':'T'+n.tier}</td><td>${fmt(n.value)}</td><td>${deg[n.id]||0}</td><td>${wsum[n.id]||0}</td></tr>`).join('');
+}
+// ---------- per-frame "ingest" of the currently-VIEWED tick: fire price flashes, push the trade tape, pulses ----------
+// Derives everything from the snapshot pair (viewTick, viewTick-1) so it is identical live or in replay (no live leak).
+function ingestViewTick(){
+  const vt=vTick();
+  if(vt===lastAnimTick) return;        // same frame already ingested
+  const sa=snapshotAt(vt), sb=snapshotAt(vt-1);
+  // reset per-frame transient effects so a replayed past frame doesn't inherit live flashes/tape
+  priceFlash={}; tape=[];
+  const now=performance.now();
+  if(sa){
+    // price flashes from the REAL tick-over-tick ref delta
+    if(sb){ for(const g of GKEYS){ const d=sa.pref[g]-sb.pref[g]; if(d!==0) priceFlash[g]={dir:d>0?1:-1,t0:now}; } }
+    // trade tape from this tick's captured clears (good · price · volume), newest goods first
+    const lv=sa.lastVol||{}, lc=sa.lastClear||{};
+    const fresh=[];
+    for(const t of (sa.trades||[])){ const g=t.good, vol=lv[g]||0, px=(lc[g]!=null?lc[g]:sa.pref[g]);
+      if(vol>0){ const side=(t.buyers||[]).length&&!(t.sellers||[]).length?'buy':(t.sellers||[]).length&&!(t.buyers||[]).length?'sell':'';
+        fresh.push({id:++tapeSeq,good:g,price:px,vol,side,t0:now}); } }
+    // newest first; prepend this tick's clears
+    tape=fresh.concat(tape).slice(0,40);
+    // volume pulse if anything cleared this tick
+    if(fresh.length) volPulse0=now;
+    // conserved-badge pulse each tick it holds
+    if(sa.conserved) consvPulse0=now;
+  }
+  lastAnimTick=vt;
+  // refresh the market/finance views that depend on flashes/tape (cheap; same renderers, view-only)
+  renderMarket(); renderFinance();
+}
+// ---------- the SEPARATE animation loop (requestAnimationFrame). NEVER calls step()/mutates the economy. ----------
+let _lastFrame=0;
+function animFrame(ts){
+  const dt=_lastFrame?Math.min(0.05,(ts-_lastFrame)/1000):0.016; _lastFrame=ts;
+  try{
+    ingestViewTick();
+    // fade out price flashes over ~0.6s, then strip the class
+    const now=performance.now(); let flashChanged=false;
+    for(const g in priceFlash){ if(now-priceFlash[g].t0>600){ delete priceFlash[g]; flashChanged=true; } }
+    if(flashChanged) applyPriceFlash();
+    // volume-pulse marker on the latest candle/clear
+    const vp=$('m-vol-pulse');
+    if(vp){ const on=(now-volPulse0)<600 && !reduceMotion && !isReplay();
+      vp.textContent=vLastVol(selectedGood)>0?('▮ vol '+vLastVol(selectedGood)):'';
+      vp.classList.toggle('clear', on); }
+    // conserved-badge pulse
+    const cb=$('k-conserv');
+    if(cb){ const on=(now-consvPulse0)<500 && !reduceMotion && !isReplay() && vConserved();
+      cb.classList.toggle('tickpulse', on); }
+    // money-flow particles + redraw (only when the Finance tab is visible to save work)
+    stepParticles(dt);
+    const finVisible=$('finance')&&$('finance').hidden===false;
+    if(finVisible){ drawMoneyFlow($('fin-flow')); drawNwArea($('chart-nw'),vNwHist().map(v=>v/CENTS)); drawTreemap($('chart-fintree'),'finance'); }
+    // interconnection network: keep relaxing the force layout while its tab is visible (static under reduced-motion/replay)
+    const netVisible=$('network')&&$('network').hidden===false;
+    if(netVisible) drawNetwork($('chart-network'));
+    // smooth count/tween of the 4-account ledger + circulating (write directly to the stable-id spans)
+    for(const k in macroTween){ const tw=macroTween[k], el=$('mac-'+k); if(!el)continue;
+      if(reduceMotion||isReplay()){ tw.cur=tw.target; }
+      else { const diff=tw.target-tw.cur; tw.cur += diff*Math.min(1,dt*6); if(Math.abs(diff)<50)tw.cur=tw.target; }
+      el.textContent=fmt(tw.cur); }
+    // refresh the trade-tape "fresh" decoration as entries age out of the highlight window
+    if(!reduceMotion) renderTape();
+  }catch(_){ /* animation is decoration — never break the page */ }
+  rafId=requestAnimationFrame(animFrame);
+}
+function startAnim(){ const b=document&&document.body; if(b&&b.classList&&b.classList.toggle)b.classList.toggle('anim-on',!reduceMotion); if(!rafId) rafId=requestAnimationFrame(animFrame); }
+function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;$('toasts').appendChild(t);setTimeout(()=>t.remove(),4200);}
+
+// ---------- controls ----------
+function setRunning(on){running=on;$('btn-play').textContent=on?'⏸ Pause':'⏵ Play';$('btn-play').setAttribute('aria-pressed',on);
+  clearInterval(timer); if(on)timer=setInterval(step,+$('speed').value);}
+$('btn-play').onclick=()=>{ if(isReplay())resumeAfterReplay=false; live(); setRunning(!running); };   // play/pause always acts on the live tick
+$('btn-step').onclick=()=>{ if(isReplay())resumeAfterReplay=false; live(); setRunning(false); step(); };
+$('speed').onchange=()=>{if(running)setRunning(true);};
+$('btn-reseed').onclick=()=>{setRunning(false);reset((Math.floor(performance.now())%99991)+7);toast('Reseeded.');};
+$('btn-theme').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';renderAll();};
+// time-scrubber: dragging enters REPLAY (render that snapshot); dragging to the latest tick (or LIVE) resumes live
+$('scrub').addEventListener('input',e=>{ const r=scrubRange(), t=+e.target.value; if(t>=r.max) live(); else seek(t); });
+$('btn-live').onclick=()=>live();
+$('m-good').onchange=()=>{$('o-price').value='';renderMarket();};
+// Market chart-view toggle: candlestick <-> finviz heatmap
+$('m-view-candle').onclick=()=>{marketView='candle';renderMarket();};
+$('m-view-treemap').onclick=()=>{marketView='treemap';renderMarket();};
+// helper: map a canvas pointer/keyboard event to local CSS pixels (canvas is drawn in CSS-px space via dpr())
+function canvasXY(cv,e){ const r=cv.getBoundingClientRect(); return {x:(e.clientX||0)-r.left, y:(e.clientY||0)-r.top}; }
+// click a Market heatmap tile -> select that good (drives #m-good + chart)
+$('chart-treemap').addEventListener('click',e=>{ const cv=$('chart-treemap'); const {x,y}=canvasXY(cv,e);
+  for(const t of treemapHits.market){ if(x>=t.x&&x<=t.x+t.w&&y>=t.y&&y<=t.y+t.h){ selectedGood=t.id; const mg=$('m-good'); if(mg)mg.value=t.id; $('o-price').value=''; renderMarket(); return; } } });
+// click a Finance heatmap tile -> open that firm's inspector
+$('chart-fintree').addEventListener('click',e=>{ const cv=$('chart-fintree'); const {x,y}=canvasXY(cv,e);
+  for(const t of treemapHits.finance){ if(x>=t.x&&x<=t.x+t.w&&y>=t.y&&y<=t.y+t.h){ openInspector(t.id); return; } } });
+// Network canvas: hover emphasises a node's edges; click opens that firm's inspector (desk -> NPC_DESK inspector)
+function netHitAt(x,y){ let best=null,bd=1e9; for(const n of netHits){ const dx=x-n.x,dy=y-n.y,d=Math.sqrt(dx*dx+dy*dy); if(d<=n.r+3&&d<bd){bd=d;best=n.id;} } return best; }
+$('chart-network').addEventListener('mousemove',e=>{ const cv=$('chart-network'); const {x,y}=canvasXY(cv,e); const h=netHitAt(x,y); if(h!==netHover){ netHover=h; cv.style.cursor=h?'pointer':'default'; drawNetwork(cv); } });
+$('chart-network').addEventListener('mouseleave',()=>{ if(netHover){ netHover=null; drawNetwork($('chart-network')); } });
+$('chart-network').addEventListener('click',e=>{ const cv=$('chart-network'); const {x,y}=canvasXY(cv,e); const h=netHitAt(x,y); if(h)openInspector(h); });
+$('net-table').addEventListener('click',e=>rowActivate(e,r=>r.dataset.node));
+$('net-table').addEventListener('keydown',e=>rowActivate(e,r=>r.dataset.node));
+$('f-specialty').onchange=()=>{const v=$('f-specialty').value;firms[0].specialty=v;playerPlan={};playerPlan[v]=firms[0].cap;renderFactory();renderHeader();toast('Focus set to '+v+' — plan reset to all capacity on '+v+'.');};
+$('f-plan').addEventListener('click',e=>{const b=e.target.closest('.plan-btn');if(!b)return;
+  const g=b.dataset.g,d=+b.dataset.d,cur=playerPlan[g]||0,used=Object.values(playerPlan).reduce((a,b)=>a+b,0);
+  if(d>0&&used>=firms[0].cap){toast('At capacity ('+firms[0].cap+' runs/tick). Reduce another product first.');return;}
+  const nv=Math.max(0,cur+d); if(nv===0)delete playerPlan[g];else playerPlan[g]=nv; renderFactory();});
+$('ct-form').addEventListener('submit',e=>{e.preventDefault();
+  const good=$('ct-good').value,qty=parseInt($('ct-qty').value,10),price=Math.round(parseFloat($('ct-price').value)*CENTS),ticks=parseInt($('ct-ticks').value,10);
+  if(!(qty>0&&price>0&&ticks>0)){$('ct-feedback').textContent='Enter positive qty, price, and ticks.';return;}
+  const bond=Math.round(price*qty*ticks*BOND_PCT);
+  if(bal[PLAYER]<bond){$('ct-feedback').textContent='Not enough cash for the bond ('+fmt(bond)+').';return;}
+  bal[PLAYER]-=bond; bal.CONTRACT_ESCROW+=bond;                                  // post bond to escrow (double-entry)
+  contracts.push({id:++contractSeq,good,qty,price,ticksLeft:ticks,delivered:0,bond,status:'active'});
+  $('ct-feedback').textContent='Signed #'+contractSeq+' — bond '+fmt(bond)+' escrowed. Deliver '+qty+' '+good+'/tick for '+ticks+' ticks (miss one → forfeit).';
+  renderContracts();renderFinance();});
+$('order-form').addEventListener('submit',e=>{
+  e.preventDefault();
+  const side=$('o-side').value, price=Math.round(parseFloat($('o-price').value)*CENTS), qty=parseInt($('o-qty').value,10), good=$('m-good').value;
+  if(!(price>0)||!(qty>0)){$('o-feedback').textContent='Enter a positive price and quantity.';return;}
+  if(side==='sell'&&firms[0].inv[good]<qty){$('o-feedback').textContent='Not enough '+good+' in inventory to sell.';return;}
+  if(side==='buy'&&bal[PLAYER]<price*qty*1.02){$('o-feedback').textContent='Not enough cash for that buy (incl. 2% fee).';return;}
+  playerOrders.push({side,good,price,qty});
+  $('o-feedback').textContent=`${side} ${qty} ${good} @ ${price/CENTS} queued — clears at the next batch auction.`;
+});
+// inspector openers — Leaderboard rows (firm books) + NPC_DESK macro row / Inspect-exchange button (market-maker desk)
+function rowActivate(e,getTarget){
+  if(e.type==='keydown'&&e.key!=='Enter'&&e.key!==' '&&e.key!=='Spacebar')return;
+  const row=e.target.closest('tr[role=button]'); if(!row)return;
+  if(e.type==='keydown')e.preventDefault();
+  const t=getTarget(row); if(t)openInspector(t);
+}
+$('lb').addEventListener('click',e=>rowActivate(e,r=>r.dataset.firm));
+$('lb').addEventListener('keydown',e=>rowActivate(e,r=>r.dataset.firm));
+$('fin-macro').addEventListener('click',e=>rowActivate(e,r=>r.dataset.desk?'NPC_DESK':null));
+$('fin-macro').addEventListener('keydown',e=>rowActivate(e,r=>r.dataset.desk?'NPC_DESK':null));
+$('btn-inspect-desk').onclick=()=>openInspector('NPC_DESK');
+$('insp-close').onclick=()=>{closeInspector();renderAll();};   // clear selection highlight on close
+$('inspector').addEventListener('close',()=>{inspectTarget=null;renderAll();});
+$('inspector').addEventListener('cancel',()=>{inspectTarget=null;renderAll();});   // Esc emits 'cancel' then 'close'
+
+// ---------- headless verification hook (uses the dashboard's OWN internal state) ----------
+window.__magnateHeadless={
+  inspect(id){ return inspect(id); },
+  pickableFirms(){ return firms.map(f=>f.id); },
+  pickableDesk(){ return true; },
+  lastEvents(){ return lastEvents(); },
+  tradeHighlight(id){ return tradeHighlight(id); },
+  // time-scrubber (read-only replay over the recorded snapshot ring buffer)
+  snapshotAt(t){ return snapshotAt(t); },
+  nwFromSnap(snap,id){ return nwFromSnap(snap,id); },
+  scrubRange(){ return scrubRange(); },
+  seek(t){ return seek(t); },
+  live(){ live(); return {tick}; },
+  // lively finance money-flow: signed-cents per-tick delta of the 4 system accounts over the last completed tick
+  // (single source of truth shared by this hook and the money-flow particle sizes) — == snapshotAt(t).bal - snapshotAt(t-1).bal
+  financeFlows(){ return financeFlows(); },
+  // finviz TREEMAP data (same tiles the canvas renders): 'market' -> 9 goods (value=stock×ref), 'finance' -> 11 firms (value=netWorth)
+  treemapData(mode){ return treemapData(mode); },
+  // interconnection NETWORK data (same graph the canvas renders): nodes (firms+desk, value=netWorth/inv) + co-traded-volume edges
+  networkData(){ return networkData(); },
+  // 2D Sankey data (same ribbons the canvas renders): 'finance' money-flow (4 system-account nodes; faucet outflow==minted,
+  // sink inflow==burned over [fromTick,toTick], a ledger tie) and 'market' supply-chain value-flow (all link values > 0)
+  sankeyData(mode){ return sankeyData(mode); },
+};
+
+// tabs — roving tabindex + Arrow/Home/End, focus lands in the revealed panel (WAI-ARIA tabs pattern)
+const tabsAll=[...document.querySelectorAll('[role=tab]')];
+function selectTab(t){
+  tabsAll.forEach(o=>{const on=o===t;o.setAttribute('aria-selected',on);o.tabIndex=on?0:-1;});
+  document.querySelectorAll('[role=tabpanel]').forEach(p=>{const on=p.id===t.getAttribute('aria-controls');p.hidden=!on;if(on)p.tabIndex=0;});
+  // canvases sized via getBoundingClientRect need a redraw once their panel is actually visible
+  const panel=t.getAttribute('aria-controls');
+  if(panel==='market')renderMarket();
+  else if(panel==='finance')renderFinance();
+  else if(panel==='network')renderNetwork();
+}
+tabsAll.forEach((t,i)=>{
+  t.tabIndex=i===0?0:-1;
+  t.addEventListener('click',()=>selectTab(t));
+  t.addEventListener('keydown',e=>{
+    let n=null;
+    if(e.key==='ArrowRight')n=(i+1)%tabsAll.length;
+    else if(e.key==='ArrowLeft')n=(i+tabsAll.length-1)%tabsAll.length;
+    else if(e.key==='Home')n=0; else if(e.key==='End')n=tabsAll.length-1;
+    if(n!=null){e.preventDefault();tabsAll[n].focus();selectTab(tabsAll[n]);}
+  });
+});
+
+// ---------- go ----------
+reset(42);
+window.addEventListener('resize',renderAll);
+// start the SEPARATE view-only animation loop (smooth motion; never steps/mutates the economy; honors reduced-motion)
+if(typeof requestAnimationFrame==='function') startAnim();
+</script>
+</body>
+</html>
