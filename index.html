@@ -406,6 +406,9 @@
      AFTER three.min.js and BEFORE the inline app script. If the CDN is blocked/offline this tag is a
      no-op and THREE.OrbitControls stays undefined → the app falls back to the hand-rolled controls. -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<!-- GLTFLoader (r128 global build): optional CC0 glTF model upgrades for the Smart Factory hall.
+     The page works fully without it (procedural fallback); models load from ./assets/factory/*.glb. -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <!-- Shared deterministic economy engine (window.MagnateCore). Same dir, no build step. -->
 <script>/* inlined econ-core.js */
 "use strict";
@@ -1585,6 +1588,19 @@
   let retailGroup = null;
   let chunksVisible = true;          // PHASE 2: whether streamed production chunks are the focus (render-loop sets each live chunk's .visible)
 
+  // ENCLOSED SMART-FACTORY HALL — a SINGLE bounded factory building (shell + closed-loop lines + machines +
+  // robots + workers + AGVs + AMRs), built ONCE at init like the central/retail districts and added straight
+  // to the scene (NOT under centralGroup). It is its OWN world slice: default HIDDEN, shown ONLY by the
+  // smart-factory theme in PHASE 2. It is PERSISTENT (never streamed) so it does NOT participate in
+  // chunkSignature / streaming, and is DECORATIVE (no userData.firmId / never pushed to `pickables`).
+  let smartFactoryGroup = null;
+  // Per-item animation state (alloc-free; lives across frames). Filled once by buildSmartFactoryHall.
+  const sfLoopGoods = [];   // goods circulating the CLOSED conveyor loops  { mesh, path, L, dir, speed, u, baseY }
+  const sfAGVs      = [];   // AGVs rigidly tracking the painted floor GUIDE-LINE { mesh, path, L, dir, speed, u, baseY }
+  const sfAMRs      = [];   // free-roaming AMRs hopping a flexible waypoint set { mesh, wps, i, t, segLen, speed, dwell, dwellT, baseY }
+  const sfArms      = [];   // robot-arm segments to oscillate { seg1, seg2, baseZ1, baseZ2, phase }
+  const sfWorkers   = [];   // workers walking the aisles { grp, path, L, dir, speed, u, phase, stride, baseY, legA, legB, armA, armB }
+
   // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
   // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
   // both add PODIUM_H so rooftops + flow endpoints land at PODIUM_H + h (the true shaft top).
@@ -2403,6 +2419,424 @@
     retailSign = { mat: logoMat, atrium: atriumMat, base: 1.0, baseAtrium: 0.55 };
   }
 
+  /* ============================================================
+   *  ENCLOSED SMART-FACTORY HALL — buildSmartFactoryHall()
+   *  A SINGLE BOUNDED factory BUILDING (a CLOSED space, not the streamed open world): a floor slab, four
+   *  perimeter WALLS with translucent upper window bands + roller doors, and an OPEN TRUSS roof with
+   *  skylights (so a 3/4 camera sees the interior). Inside: CLOSED-LOOP conveyor circuits with goods that
+   *  circulate forever, processing/assembly MACHINES with prominent robot ARMS, WORKERS walking the aisles,
+   *  AGVs that RIGIDLY FOLLOW a painted floor GUIDE-LINE, free-roaming AMRs on a flexible waypoint set with
+   *  charging docks, plus modest detail (storage racking, a control booth, pallet stacks).
+   *
+   *  PERSISTENT (built ONCE at init like the central/retail districts) → NOT streamed, NOT part of
+   *  chunkSignature; positions are seeded freely with its OWN PRNG (touches no chunk RNG). DECORATIVE: nothing
+   *  here is tagged userData.firmId or pushed to `pickables`, so click-to-inspect still resolves EXACTLY the
+   *  11 firm towers + NPC_DESK. SHARED ASSETS: reuses chunkAssets shared geos + existing templates
+   *  (makeGood / makeRobotArm / amrTemplates / pedTemplates clones); a few new shell materials are built ONCE
+   *  here. Headless-safe: only Group/Mesh + scaled SHARED geos + position/rotation writes, guarded on
+   *  chunkAssets so it never throws under the stubbed-THREE harnesses. Default HIDDEN — PHASE 2 reveals it for
+   *  the smart-factory theme. Built FAR from the origin world (offset on +X) so it never overlaps the
+   *  streamed chunks / central district even if both happen to be visible.
+   * ============================================================ */
+  /* ---- OPTIONAL glTF model upgrades for the hall (GLTFLoader + Kenney/CC0 models) ----
+   *  Each element can be upgraded to an artist-made glTF dropped into ./assets/factory/<key>.glb
+   *  (relative → works locally and on GitHub Pages). Every load is OPTIONAL + decorative: if the
+   *  file is absent (404), GLTFLoader is unavailable, or we're headless, the PROCEDURAL hall is used
+   *  unchanged. Loaded scenes are cached + cloned; swaps ride the same animated group so motion
+   *  continues. See assets/factory/MODELS.md for the Kenney CC0 drop-in manifest. */
+  const FACTORY_MODELS = {
+    robot:    'assets/factory/robot.glb',     // bundled CC0 demo (three.js RobotExpressive); swap for a Kenney robot
+    agv:      'assets/factory/agv.glb',        // drop in a Kenney AGV/tug   → swaps the procedural AGVs
+    amr:      'assets/factory/amr.glb',        // drop in a Kenney AMR        → swaps the procedural AMRs
+    machine:  'assets/factory/machine.glb',    // drop in a Kenney CNC/machine
+    forklift: 'assets/factory/forklift.glb',
+    rack:     'assets/factory/rack.glb',
+  };
+  let _gltfLoader = null;
+  const _gltfCache = {};            // key -> THREE scene | 'failed'
+  const _gltfWaiters = {};          // key -> [cb,...]
+  function _factoryLoader(){
+    if (_gltfLoader) return _gltfLoader;
+    if (typeof THREE === 'undefined' || typeof THREE.GLTFLoader !== 'function') return null;
+    try { _gltfLoader = new THREE.GLTFLoader(); } catch(_){ _gltfLoader = null; }
+    return _gltfLoader;
+  }
+  function loadFactoryModel(key, cb){
+    const cached = _gltfCache[key];
+    if (cached === 'failed') return;                       // already known missing → procedural fallback
+    if (cached) { try { cb(cached); } catch(_){} return; }
+    const loader = _factoryLoader(); const url = FACTORY_MODELS[key];
+    if (!loader || !url) return;                           // headless / no loader / unknown → fallback
+    (_gltfWaiters[key] = _gltfWaiters[key] || []).push(cb);
+    if (_gltfWaiters[key].length > 1) return;              // a load is already in flight
+    try {
+      loader.load(url, function (gltf){
+        _gltfCache[key] = gltf.scene;
+        const ws = _gltfWaiters[key] || []; _gltfWaiters[key] = [];
+        for (const w of ws) { try { w(gltf.scene); } catch(_){} }
+      }, undefined, function (){ _gltfCache[key] = 'failed'; _gltfWaiters[key] = []; });
+    } catch(_){ _gltfCache[key] = 'failed'; }
+  }
+  // clone `scene`, scale so its height ≈ h, sit it on the floor (min y → 0) and centre x/z.
+  function _fitFactoryClone(scene, h){
+    const obj = scene.clone(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const size = new THREE.Vector3(); box.getSize(size);
+    const ctr = new THREE.Vector3();  box.getCenter(ctr);
+    const s = (size.y > 0) ? (h / size.y) : 1;
+    obj.scale.setScalar(s);
+    obj.position.set(-ctr.x * s, -box.min.y * s, -ctr.z * s);
+    const wrap = new THREE.Group(); wrap.add(obj); return wrap;
+  }
+  // place a standalone model at (x,z), height h, facing yaw — added to `group` (additive, decorative).
+  function placeFactoryModel(group, key, x, z, h, yaw){
+    loadFactoryModel(key, function (scene){
+      const m = _fitFactoryClone(scene, h); m.position.set(x, 0, z); if (yaw) m.rotation.y = yaw;
+      group.add(m);
+    });
+  }
+  // swap a model INTO an existing animated item group: hide its procedural children + add a fitted clone,
+  // so the per-frame animation that moves the group also moves the model. Dormant until the .glb exists.
+  function swapFactoryVisual(itemGroup, key, h){
+    loadFactoryModel(key, function (scene){
+      for (const c of itemGroup.children.slice()) c.visible = false;
+      itemGroup.add(_fitFactoryClone(scene, h));
+    });
+  }
+
+  function buildSmartFactoryHall(){
+    if (!chunkAssets || !scene) return;                    // shared templates + scene must exist first
+    const A = chunkAssets;
+    const TG = new THREE.Group();
+
+    // SEPARATE hall PRNG (persistent facility → unconstrained; NOT any chunk RNG, so chunkSignature is wholly
+    // untouched). Its own salt → station/robot variety is stable but free.
+    let hs = 0x1f123bb5 >>> 0;
+    const hrand = () => { hs = (hs*1664525 + 1013904223) >>> 0; return hs / 4294967296; };
+
+    // ---- BOUNDED FOOTPRINT (a closed hall, NOT infinite floor). Centred at (CX,0,CZ), far from origin. ----
+    const HALL_W = 150;        // along X
+    const HALL_D = 100;        // along Z
+    const CX = 600, CZ = 0;    // hall centre (well clear of the streamed origin world)
+    const WALL_H = 16;         // perimeter wall height
+    const hw = HALL_W/2, hd = HALL_D/2;
+
+    // ---- NEW SHARED SHELL MATERIALS (built ONCE; reused across the whole shell) ----
+    const slabMat    = new THREE.MeshStandardMaterial({ color: 0x7c8595, roughness:.95, metalness:.12 }); // painted concrete floor
+    const wallMat    = new THREE.MeshStandardMaterial({ color: 0x2e3543, roughness:.85, metalness:.2 });  // steel-clad walls
+    const wallTrimMat= new THREE.MeshStandardMaterial({ color: 0x1c2230, roughness:.85, metalness:.25 }); // wall base/cap trim
+    const glazeMat   = new THREE.MeshStandardMaterial({ color: 0xbcd8ff, emissive: new THREE.Color(0x3a6fd0),
+      emissiveIntensity:0.35, roughness:.2, metalness:.4, transparent:true, opacity:0.5 });               // translucent window band
+    const trussMat   = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness:.6, metalness:.6 });   // open roof truss/lattice
+    const doorMat    = new THREE.MeshStandardMaterial({ color: 0x3a4150, roughness:.7, metalness:.35 });  // roller doors
+    const rackMat    = new THREE.MeshStandardMaterial({ color: 0x6a5230, roughness:.8, metalness:.3 });   // storage racking uprights/shelves
+    const boothMat   = new THREE.MeshStandardMaterial({ color: 0x26303f, roughness:.7, metalness:.3 });   // control booth body
+    const boothGlass = new THREE.MeshStandardMaterial({ color: 0x9ec8ff, emissive: new THREE.Color(0x3a6fd0),
+      emissiveIntensity:0.45, roughness:.25, metalness:.5, transparent:true, opacity:0.65 });
+    const zoneMat    = new THREE.MeshBasicMaterial({ color: 0x35506a });                                    // painted floor zone fill (crisp)
+    const guideMat   = new THREE.MeshBasicMaterial({ color: 0x2fe6ff });                                    // AGV painted GUIDE-LINE colour (crisp)
+    const dockMat    = new THREE.MeshBasicMaterial({ color: 0x46ffd0 });                                    // AMR charging-dock pad (crisp)
+
+    // little builder: a SHARED-geo Mesh scaled + placed into TG (alloc only at init).
+    const add = (geo, mat, sx,sy,sz, px,py,pz) => {
+      const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); TG.add(m); return m;
+    };
+    // flat painted strip lying on the floor (slight y so it never z-fights the slab)
+    const paint = (mat, px,pz, lenX,lenZ, y) => {
+      const m = new THREE.Mesh(A.stripGeo, mat); m.rotation.x = -Math.PI/2;
+      m.scale.set(lenX, lenZ, 1); m.position.set(px, y || 0.03, pz); TG.add(m); return m;
+    };
+    // length of a closed polyline (wraps last→first) so a cursor can advance in metres
+    const loopLen = (pts) => { let L = 0; for (let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length]; L += Math.hypot(b.x-a.x, b.z-a.z); } return L; };
+
+    // ===== 1) ENCLOSED BUILDING SHELL =====
+    // FLOOR slab (the closed-space floor)
+    const floor = add(A.box, slabMat, HALL_W, 0.4, HALL_D, CX, -0.2, CZ); floor.receiveShadow = true;
+    // four perimeter WALLS: a lower opaque clad band + a translucent upper window band so it reads as an
+    // industrial building (not a black box) + a thin base/cap trim. Walls inset to the footprint edge.
+    const bandH = WALL_H * 0.45, glazeH = WALL_H * 0.5, glazeY = bandH + glazeH/2;
+    const wall = (cx, cz, lenX, lenZ) => {
+      add(A.box, wallMat,    lenX, bandH, lenZ, cx, bandH/2, cz);                 // lower opaque band
+      add(A.box, glazeMat,   lenX*0.98, glazeH, lenZ*0.98, cx, glazeY, cz);       // translucent window band
+      add(A.box, wallTrimMat,lenX*1.01, 0.5, lenZ*1.01, cx, WALL_H, cz);          // top cap trim
+      add(A.box, wallTrimMat,lenX*1.01, 0.6, lenZ*1.01, cx, 0.3, cz);             // base trim
+    };
+    const T = 0.6;                                          // wall thickness
+    wall(CX,        CZ - hd, HALL_W, T);                    // north wall (-Z)
+    wall(CX,        CZ + hd, HALL_W, T);                    // south wall (+Z)
+    wall(CX - hw,   CZ,      T, HALL_D);                    // west wall (-X)
+    wall(CX + hw,   CZ,      T, HALL_D);                    // east wall (+X)
+    // two ROLLER DOORS punched into the south wall (a tall door panel reading + a lintel) so trucks/AGVs read
+    // as able to enter/leave. Drawn over the wall band on the +Z face.
+    for (const dxo of [-hw*0.45, hw*0.30]){
+      add(A.box, doorMat, 9, bandH*1.05, 0.5, CX + dxo, bandH*0.5, CZ + hd - 0.4);
+      add(A.box, wallTrimMat, 10, 0.6, 0.6, CX + dxo, bandH*1.05, CZ + hd - 0.4);   // door lintel
+    }
+    // OPEN TRUSS / LATTICE ROOF + skylights: a ring of cross-beams spanning the hall at WALL_H, leaving big
+    // gaps so the camera sees the interior; a few translucent SKYLIGHT panels riding the truss.
+    const beamY = WALL_H + 0.4;
+    for (let i = -3; i <= 3; i++){                          // X-spanning beams (along X), spaced in Z
+      add(A.box, trussMat, HALL_W*0.98, 0.4, 0.6, CX, beamY, CZ + i*(HALL_D/7));
+    }
+    for (let i = -4; i <= 4; i++){                          // Z-spanning beams (along Z), spaced in X
+      add(A.box, trussMat, 0.5, 0.4, HALL_D*0.98, CX + i*(HALL_W/9), beamY + 0.5, CZ);
+    }
+    for (const sx of [-1, 1]) for (const sz of [-1, 0, 1]){ // skylight panels (translucent, glow at night)
+      add(A.box, glazeMat, HALL_W*0.18, 0.2, HALL_D*0.2, CX + sx*HALL_W*0.26, beamY + 0.9, CZ + sz*HALL_D*0.28);
+    }
+    // PAINTED FLOOR ZONES + aisle lines (crisp). A central spine aisle + two production-zone fills.
+    paint(zoneMat, CX, CZ - hd*0.45, HALL_W*0.8, HALL_D*0.30);   // north production zone fill
+    paint(zoneMat, CX, CZ + hd*0.45, HALL_W*0.8, HALL_D*0.30);   // south production zone fill
+    paint(A.aisleMat, CX, CZ, HALL_W*0.9, 1.4);                  // central spine aisle (safety yellow)
+    paint(A.aisleEdgeMat, CX, CZ - 1.0, HALL_W*0.9, 0.18);
+    paint(A.aisleEdgeMat, CX, CZ + 1.0, HALL_W*0.9, 0.18);
+    // a soft point light so the interior reads as a lively lit hall at night (crisp, no bloom)
+    if (THREE.PointLight){
+      const hallLight = new THREE.PointLight(0xcfe2ff, 0.7, 220, 2);
+      hallLight.position.set(CX, WALL_H - 2, CZ); TG.add(hallLight);
+    }
+
+    // ===== 2) CLOSED-LOOP PRODUCTION LINES =====
+    // Two rectangular conveyor CIRCUITS (straight runs + corner pieces) with goods that circulate forever
+    // around the loop (parametric perimeter path → position; never falls off the end). Build a closed belt
+    // as a thin emissive-centred ring of box segments tracing the polyline, and seat goods on a path record.
+    const beltTopY = 1.0;
+    const buildLoop = (loopPts, reg, nGoods, gspeed) => {
+      const L = loopLen(loopPts);
+      // belt body segments + centreline tracing each edge of the rectangle
+      for (let i = 0; i < loopPts.length; i++){
+        const a = loopPts[i], b = loopPts[(i+1)%loopPts.length];
+        const mx = (a.x+b.x)/2, mz = (a.z+b.z)/2;
+        const len = Math.hypot(b.x-a.x, b.z-a.z);
+        const onX = Math.abs(b.x-a.x) >= Math.abs(b.z-a.z);
+        const belt = new THREE.Mesh(A.box, A.beltMat);
+        if (onX) belt.scale.set(len + 2.4, 0.7, 2.4); else belt.scale.set(2.4, 0.7, len + 2.4);
+        belt.position.set(mx, beltTopY - 0.35, mz); belt.castShadow = true; TG.add(belt);
+        const line = new THREE.Mesh(A.box, A.beltLineMat);
+        if (onX) line.scale.set(len, 0.06, 0.4); else line.scale.set(0.4, 0.06, len);
+        line.position.set(mx, beltTopY + 0.42, mz); TG.add(line);
+      }
+      // GOODS circulating the closed loop (rigid groups slid by the animator; never fall off — it's a loop)
+      const gsize = reg === 3 ? 0.8 : (reg === 2 ? 0.66 : 0.58);
+      const gy = beltTopY + 0.45 + gsize/2;
+      for (let gi = 0; gi < nGoods; gi++){
+        const mesh = makeGood(reg, gi, gsize);
+        const rec = { mesh, path: loopPts, L, dir: 1, speed: gspeed, u: (gi/nGoods)*L, baseY: gy };
+        placeOnPath(rec, mesh); TG.add(mesh); sfLoopGoods.push(rec);
+      }
+      return { L };
+    };
+    // LOOP A (north zone) — fabrication circuit (reg1)
+    const loopA = [ {x:CX-46,z:CZ-34}, {x:CX-2,z:CZ-34}, {x:CX-2,z:CZ-14}, {x:CX-46,z:CZ-14} ];
+    buildLoop(loopA, 1, 7, 4.5);
+    // LOOP B (south zone) — packaging circuit (reg0)
+    const loopB = [ {x:CX+4,z:CZ+14}, {x:CX+46,z:CZ+14}, {x:CX+46,z:CZ+34}, {x:CX+4,z:CZ+34} ];
+    buildLoop(loopB, 0, 7, 4.0);
+
+    // ===== 3) MACHINES + ROBOT ARMS (stations around the loops; robots PROMINENT) =====
+    // Reuse the factory station read (plinth + housing + accent panel + indicator + vent) and put a robot ARM
+    // (reuse makeRobotArm) at EVERY station. Joint bends seeded by the hall PRNG; segments registered for the
+    // render-loop oscillation. Stations sit just OUTSIDE each loop's long edge.
+    const station = (mx, mz, reg) => {
+      const mw = 4 + hrand()*2, md = 4 + hrand()*2, mh = 3.5 + hrand()*2;
+      const plinth = new THREE.Mesh(A.box, A.plinthMat); plinth.scale.set(mw+0.8, 0.6, md+0.8); plinth.position.set(mx, 0.3, mz); TG.add(plinth);
+      const housing = new THREE.Mesh(A.box, A.machineMat[reg]); housing.scale.set(mw, mh, md); housing.position.set(mx, mh/2+0.3, mz); housing.castShadow = true; TG.add(housing);
+      const panel = new THREE.Mesh(A.box, A.accentMat[reg]); panel.scale.set(mw*0.6, mh*0.3, 0.12); panel.position.set(mx, mh*0.62+0.3, mz - md*0.5 - 0.07); TG.add(panel);
+      const ind = new THREE.Mesh(A.box, A.indicatorMat); ind.scale.set(mw*0.3, mh*0.14, 0.1); ind.position.set(mx, 0.3 + mh*0.34, mz - md*0.5 - 0.08); TG.add(ind);
+      const vent = new THREE.Mesh(A.cyl, A.ventMat); const vH = mh*0.45 + 0.6; vent.scale.set(0.5, vH, 0.5); vent.position.set(mx + mw*0.28, 0.3 + mh + vH*0.5, mz - md*0.28); TG.add(vent);
+      // PROMINENT robot arm working at the station
+      const a = makeRobotArm(TG, mx, mz, mh + 0.3, 0.5 + hrand()*0.4, -0.8 - hrand()*0.5);
+      sfArms.push({ seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z, phase: hrand()*6.283 });
+    };
+    // stations along the OUTER long edges of each loop
+    for (let i = 0; i < 4; i++){ const t = (i+0.5)/4; station(CX-46 + t*44, CZ-40, 1); }   // north of loop A
+    for (let i = 0; i < 4; i++){ const t = (i+0.5)/4; station(CX+4 + t*42, CZ+40, 0); }     // south of loop B
+    // a couple of furnace/extraction stations to vary the read (reg2/reg3), set against the side walls
+    station(CX - hw + 12, CZ - hd*0.0, 2);
+    station(CX + hw - 12, CZ - hd*0.0, 3);
+
+    // ===== 7) STORAGE RACKING + CONTROL BOOTH + PALLET STACKS (modest detail) =====
+    // a run of storage racking against the north wall: uprights + 2 shelf levels
+    for (let i = 0; i < 5; i++){
+      const rx = CX - hw + 18 + i*22;
+      add(A.box, rackMat, 0.5, 9, 5, rx, 4.5, CZ - hd + 5);          // upright A
+      add(A.box, rackMat, 0.5, 9, 5, rx + 6, 4.5, CZ - hd + 5);      // upright B
+      add(A.box, rackMat, 6.5, 0.3, 5, rx + 3, 3.0, CZ - hd + 5);    // lower shelf
+      add(A.box, rackMat, 6.5, 0.3, 5, rx + 3, 6.0, CZ - hd + 5);    // upper shelf
+      // a stage-themed tote sitting on a shelf (reuse the goods palette) for read
+      const tote = new THREE.Mesh(A.box, A.goodMat[i % 4]); tote.scale.set(1.6,1.4,1.6); tote.position.set(rx + 3, 3.6, CZ - hd + 5); TG.add(tote);
+    }
+    // CONTROL BOOTH in a back corner: a small raised box with a glazed front
+    add(A.box, boothMat, 12, 5, 8, CX + hw - 9, 2.7, CZ - hd + 7);
+    add(A.box, boothGlass, 0.4, 3, 7, CX + hw - 9 - 6.0, 3.2, CZ - hd + 7);
+    // a few PALLET STACKS scattered in the spine (shared box + goods palette)
+    for (let i = 0; i < 4; i++){
+      const px = CX - 30 + i*20, pz = CZ + (i%2?6:-6);
+      add(A.box, wallTrimMat, 3.2, 0.4, 2.6, px, 0.2, pz);                  // pallet base
+      add(A.box, A.goodMat[(i+2)%4], 2.6, 1.8, 2.2, px, 1.3, pz);          // stacked load
+    }
+
+    // ===== 4) WORKERS — clone pedTemplates, walking aisles between stations =====
+    const pedTpl = A.pedTemplates;
+    if (pedTpl && pedTpl.length){
+      // aisle loops kept clear of the loop/station footprints: a central spine ring + a perimeter inspection walk
+      const workPaths = [
+        [ {x:CX-44,z:CZ-2}, {x:CX+44,z:CZ-2}, {x:CX+44,z:CZ+2}, {x:CX-44,z:CZ+2} ],            // central spine (both ways)
+        [ {x:CX-hw+8,z:CZ-hd+10}, {x:CX+hw-8,z:CZ-hd+10}, {x:CX+hw-8,z:CZ+hd-10}, {x:CX-hw+8,z:CZ+hd-10} ], // perimeter inspection ring
+      ];
+      const N_WORK = 8;
+      for (let i = 0; i < N_WORK; i++){
+        const grp = pedTpl[i % pedTpl.length].clone();     // shares geo+mat refs (no GPU alloc)
+        const path = workPaths[i % workPaths.length], L = loopLen(path);
+        const li = grp.userData.pedLimbIdx;
+        const rec = {
+          grp, path, L, dir: (i % 3 === 0) ? -1 : 1, speed: 1.1 + (i % 4)*0.2,
+          u: (i / N_WORK) * L, phase: i*1.7, stride: 6.4 + (i % 3)*0.5, baseY: 0,
+          legA: grp.children[li.legA], legB: grp.children[li.legB],
+          armA: grp.children[li.armA], armB: grp.children[li.armB],
+        };
+        placeOnPath(rec, grp); TG.add(grp); sfWorkers.push(rec);
+      }
+    }
+
+    // ===== 5) AGVs (Automated Guided Vehicles) — RIGIDLY follow a painted floor GUIDE-LINE =====
+    // Lay down a VISIBLE closed guide-line LOOP on the floor (a fixed circuit drawn as crisp guide-coloured
+    // strips), then run AGVs that track it EXACTLY — evenly spaced + predictable (fixed path, no waypoint
+    // wander). AGVs get a DISTINCT low flat tug + a towed totes trailer in the guide colour, so they read very
+    // differently from the AMRs. The guide-line is a rounded rectangle around the central spine.
+    const guidePts = [ {x:CX-52,z:CZ-8}, {x:CX+52,z:CZ-8}, {x:CX+52,z:CZ+8}, {x:CX-52,z:CZ+8} ];
+    const guideL = loopLen(guidePts);
+    // draw the guide-line itself (a thin glowing strip tracing each edge)
+    for (let i = 0; i < guidePts.length; i++){
+      const a = guidePts[i], b = guidePts[(i+1)%guidePts.length];
+      const mx = (a.x+b.x)/2, mz = (a.z+b.z)/2, len = Math.hypot(b.x-a.x, b.z-a.z);
+      const onX = Math.abs(b.x-a.x) >= Math.abs(b.z-a.z);
+      paint(guideMat, mx, mz, onX ? len : 0.3, onX ? 0.3 : len, 0.04);
+    }
+    // makeAGV() → a low flat TUG (guide-coloured deck) towing a small TRAILER of totes. Origin at ground,
+    // length along +X (faces travel via rotation.y like the trucks). Shared geos/mats only + one new guide
+    // accent mat (built once). Headless-safe.
+    const agvDeckMat = new THREE.MeshStandardMaterial({ color: 0x1a3a44, roughness:.5, metalness:.5 });
+    const makeAGV = () => {
+      const g = new THREE.Group();
+      const part = (geo, mat, sx,sy,sz, px,py,pz) => { const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); g.add(m); return m; };
+      // tug: low flat deck + a bright guide-coloured stripe so it reads as the guided vehicle
+      part(A.box, agvDeckMat, 1.6, 0.3, 1.2, 0.4, 0.28, 0);
+      part(A.box, guideMat,   1.5, 0.08, 0.4, 0.4, 0.46, 0);     // guide-colour deck stripe
+      part(A.sphere, guideMat, 0.12, 0.1, 0.12, 1.15, 0.5, 0);   // forward guide beacon
+      // towed trailer: a small flatbed of stacked totes behind (-X)
+      part(A.box, agvDeckMat, 1.4, 0.25, 1.1, -1.4, 0.26, 0);
+      part(A.box, A.goodMat[3], 0.6, 0.6, 0.5, -1.55, 0.65, -0.28);
+      part(A.box, A.goodMat[2], 0.6, 0.6, 0.5, -1.55, 0.65,  0.28);
+      part(A.box, guideMat,    0.2, 0.06, 0.1, -0.5, 0.3, 0);    // tow bar
+      // 4 small wheels (tug) + 2 (trailer)
+      for (const wx of [0.95, -0.1, -1.85]) for (const sgn of [-1,1]){
+        const w = part(A.cyl, A.wheelMat, 0.14, 0.1, 0.14, wx, 0.14, sgn*0.5); w.rotation.x = Math.PI/2;
+      }
+      return g;
+    };
+    const N_AGV = 3;                                        // evenly spaced around the guide-line
+    for (let i = 0; i < N_AGV; i++){
+      const mesh = makeAGV();
+      const rec = { mesh, path: guidePts, L: guideL, dir: 1, speed: 3.0, u: (i / N_AGV) * guideL, baseY: 0 };
+      placeOnPath(rec, mesh); TG.add(mesh); sfAGVs.push(rec);
+    }
+
+    // ===== 6) AMRs (Autonomous Mobile Robots) — FREE-ROAMING on a flexible waypoint set =====
+    // Reuse the existing makeAMR/amrTemplates clones. Unlike the AGVs they are NOT bound to the painted
+    // guide-line: each navigates its OWN scattered list of waypoints between stations/racks/docks, PAUSING
+    // (dwell) at each before picking the next — visibly different behaviour (irregular, point-to-point) from
+    // the AGVs' rigid even-spaced loop. Add charging DOCKS as some of the waypoints.
+    // charging docks (a couple) — a crisp glowing floor pad + a small upright post
+    const docks = [ {x:CX-hw+10, z:CZ+hd-12}, {x:CX+hw-10, z:CZ+hd-12} ];
+    for (const d of docks){
+      paint(dockMat, d.x, d.z, 3.2, 3.2, 0.04);
+      add(A.box, boothMat, 1.0, 2.4, 1.0, d.x, 1.2, d.z - 1.8);     // dock post
+      add(A.box, dockMat, 0.6, 0.5, 0.2, d.x, 1.8, d.z - 1.6);      // dock LED
+    }
+    // flexible waypoint pools (scattered around the interior — NOT the guide-line); each AMR walks its own.
+    const amrWpSets = [
+      [ {x:CX-40,z:CZ-22}, {x:CX-10,z:CZ-6}, docks[0], {x:CX-30,z:CZ+24}, {x:CX-46,z:CZ+6} ],
+      [ {x:CX+40,z:CZ+22}, {x:CX+12,z:CZ+6}, docks[1], {x:CX+30,z:CZ-24}, {x:CX+46,z:CZ-6} ],
+      [ {x:CX-6,z:CZ-30}, {x:CX+20,z:CZ-10}, {x:CX+6,z:CZ+30}, {x:CX-20,z:CZ+10} ],
+    ];
+    const N_AMR = 4;
+    for (let i = 0; i < N_AMR; i++){
+      const mesh = chunkAssets.amrTemplates[i % chunkAssets.amrTemplates.length].clone();  // stage-themed tote
+      const wps = amrWpSets[i % amrWpSets.length];
+      const a = wps[0], b = wps[1 % wps.length];
+      mesh.position.set(a.x, 0, a.z);
+      const rec = { mesh, wps, i: 0, t: 0, segLen: Math.hypot(b.x-a.x, b.z-a.z) || 1,
+                    speed: 2.0 + (i % 3)*0.5, dwell: 0.8 + (i % 4)*0.4, dwellT: 0, baseY: 0 };
+      // face the first segment
+      mesh.rotation.y = Math.atan2(-(b.z-a.z), (b.x-a.x));
+      TG.add(mesh); sfAMRs.push(rec);
+    }
+
+    // ===== 7) OPTIONAL glTF MODEL UPGRADES (GLTFLoader + Kenney/CC0) =====
+    // Bundled CC0 robot (assets/factory/robot.glb) placed at a few interior spots — a LIVE proof the
+    // loader works. AGV/AMR procedural visuals are swapped for a model the moment you drop a Kenney
+    // .glb into assets/factory/ (agv.glb / amr.glb); until then they keep the procedural look. All
+    // decorative + fallback-safe + headless-safe (no-op if GLTFLoader/model is unavailable).
+    const robotSpots = [ {x: CX-46, z: CZ+34, y: 0.4}, {x: CX-16, z: CZ+34, y: 0.0},
+                         {x: CX+16, z: CZ+34, y: -0.4}, {x: CX+46, z: CZ+34, y: 3.14} ];
+    for (const r of robotSpots) placeFactoryModel(TG, 'robot', r.x, r.z, 2.4, r.y);
+    for (const rec of sfAGVs) swapFactoryVisual(rec.mesh, 'agv', 1.5);
+    for (const rec of sfAMRs) swapFactoryVisual(rec.mesh, 'amr', 1.0);
+
+    TG.position.y = 0;
+    TG.visible = false;                                     // DEFAULT HIDDEN — PHASE 2 reveals it for smart-factory
+    smartFactoryGroup = TG;
+    scene.add(TG);
+  }
+
+  /* animateSmartFactory(dt) — advance the ENCLOSED HALL's motion: loop goods circulate the CLOSED conveyor
+   * loops, AGVs track the painted GUIDE-LINE, AMRs hop their flexible waypoints (with a dwell at each), robot
+   * arms oscillate, workers walk the aisles (limb swing + bob). ALLOC-FREE (scalar math + position/rotation
+   * writes on pre-built meshes). MEANINGFUL only when called — PHASE 2 calls it gated (smart-factory active +
+   * !reduceMotion). Reuses placeOnPath for every closed-path follower. Headless-safe (never runs in the
+   * harness; the render loop doesn't run headless). `sfAnimT` accumulates phase for arms/workers. */
+  let sfAnimT = 0;
+  function animateSmartFactory(dt){
+    if (!smartFactoryGroup) return;
+    sfAnimT += dt;
+    const T = sfAnimT;
+    // CLOSED-LOOP GOODS: advance arc-length cursor → circulate forever (placeOnPath wraps mod L)
+    for (let i = 0; i < sfLoopGoods.length; i++){ const r = sfLoopGoods[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
+    // AGVs: RIGIDLY track the guide-line (same arc-length follower → exact, predictable, even-spaced)
+    for (let i = 0; i < sfAGVs.length; i++){ const r = sfAGVs[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
+    // ROBOT ARMS: gentle bounded oscillation about each segment's captured base angle
+    for (let i = 0; i < sfArms.length; i++){ const a = sfArms[i];
+      a.seg1.rotation.z = a.baseZ1 + Math.sin(T*0.9 + a.phase)*0.30;
+      a.seg2.rotation.z = a.baseZ2 + Math.sin(T*1.1 + a.phase + 1.0)*0.30; }
+    // WORKERS: walk aisle loops with limb swing + step bob (matches the plaza/streamed worker read)
+    for (let i = 0; i < sfWorkers.length; i++){ const w = sfWorkers[i];
+      w.u += w.speed*dt; placeOnPath(w, w.grp);
+      const s = Math.sin(T*w.stride + w.phase);
+      w.grp.position.y = w.baseY + Math.abs(s)*0.05;
+      const swing = s*0.5;
+      w.legA.rotation.x =  swing; w.legB.rotation.x = -swing;
+      w.armA.rotation.x = -swing; w.armB.rotation.x =  swing; }
+    // AMRs: FREE-ROAM point-to-point along a flexible waypoint list — advance along the current segment, dwell
+    // at each waypoint, then aim at the NEXT (irregular, NOT the rigid guide-line). Alloc-free.
+    for (let i = 0; i < sfAMRs.length; i++){ const m = sfAMRs[i];
+      if (m.dwellT > 0){ m.dwellT -= dt; continue; }       // pausing at a waypoint (distinct stop-go behaviour)
+      m.t += (m.speed*dt) / m.segLen;                       // progress along current segment (0..1)
+      const n = m.wps.length, a = m.wps[m.i], b = m.wps[(m.i+1)%n];
+      if (m.t >= 1){
+        // arrived: snap to the waypoint, start a dwell, advance to the next segment + face it
+        m.mesh.position.x = b.x; m.mesh.position.z = b.z; m.mesh.position.y = m.baseY;
+        m.i = (m.i+1) % n; m.t = 0; m.dwellT = m.dwell;
+        const a2 = m.wps[m.i], b2 = m.wps[(m.i+1)%n];
+        m.segLen = Math.hypot(b2.x-a2.x, b2.z-a2.z) || 1;
+        m.mesh.rotation.y = Math.atan2(-(b2.z-a2.z), (b2.x-a2.x));
+        continue;
+      }
+      m.mesh.position.x = a.x + (b.x-a.x)*m.t;
+      m.mesh.position.z = a.z + (b.z-a.z)*m.t;
+      m.mesh.position.y = m.baseY; }
+  }
+
   // deterministic per-tile PRNG → a tile looks identical on every revisit (seed = chunk coords)
   function tileRng(cx, cz){
     let s = (cx*73856093 ^ cz*19349663 ^ 0x5f3759df) >>> 0;
@@ -2439,12 +2873,10 @@
    *  are identical. Biome chosen by ring. Returns the THREE.Group.
    * ---------------------------------------------------------------- */
   function buildChunk(cx, cz){
-    // THEME-AWARE: the smart-factory world reads as a MODERN FACTORY FLOOR (production lines + robots + AMRs
-    // on aisle lanes) — NO city road grid, NO street lane-dashes, NO logistics trucks. It is a SEPARATE build
-    // path; the default 'factory'/biome build below is UNCHANGED (same RNG draw order → chunkSignature stable,
-    // which the world+city harnesses probe at worldTheme==='factory'). The branch only runs once the
-    // smart-factory theme is active (never during the harness).
-    if (worldTheme === 'smart-factory') return buildFactoryFloorChunk(cx, cz);
+    // The streamed open world is the DEFAULT 'factory'/biome build below — the ONLY theme that streams now
+    // (smart-factory became a SINGLE ENCLOSED HALL, built once at init; the bounded themes don't stream). This
+    // path is UNCHANGED (same RNG draw order → chunkSignature stable, which the world+city harnesses probe at
+    // worldTheme==='factory').
     const g = new THREE.Group();
     g.userData.trucks = [];            // streamed logistics — freed when the chunk is recycled
     g.userData.beltGoods = [];         // goods riding conveyor belts — freed when the chunk is recycled
@@ -3080,8 +3512,8 @@
     const tx = Math.round(px/CHUNK), tz = Math.round(pz/CHUNK), key = tx+','+tz;
     if (!force && key === lastTileKey) return;
     lastTileKey = key;
-    // record the CONTENT class the chunks built this pass belong to (factory vs smart-factory floor), so a
-    // later theme switch can detect a content change and re-stream (see restreamIfThemeChanged).
+    // record the CONTENT class the chunks built this pass belong to. The streamed open world now exists ONLY
+    // for the 'factory' theme (bounded themes clear it via closeStreaming), so this resolves to 'factory'.
     builtChunkTheme = chunkContentClass(worldTheme);
     // load ring within VIEW_R
     for (let dx=-VIEW_R; dx<=VIEW_R; dx++) for (let dz=-VIEW_R; dz<=VIEW_R; dz++){
@@ -3320,6 +3752,11 @@
     // skyline (where ev.retail flow lands). Built right after makePlazaLife() so the shared ped/truck
     // templates exist to clone. Persistent (never streamed); NON-PICKABLE (no firmId / no pick registration).
     makeRetailDistrict();
+    // ENCLOSED SMART-FACTORY HALL: a SINGLE bounded factory building (shell + closed-loop lines + machines +
+    // robots + workers + AGVs + AMRs). Built ONCE here (after the shared templates exist to clone), added
+    // straight to the scene, and DEFAULT HIDDEN — PHASE 2 shows it only for the smart-factory theme. Persistent
+    // (never streamed); NON-PICKABLE (no firmId / no pick registration) so it never perturbs the default world.
+    buildSmartFactoryHall();
     streamChunks(0, 0, true);
 
     // ===== the four bounded DIORAMAS (market/finance/network/leaderboard) =====
@@ -3816,6 +4253,11 @@
           v.u += v.speed * dt;                                // advance arc-length cursor (wraps mod L)
           placeOnPath(v, v.mesh);                             // resolve (x,z) + travel heading (faces the way it drives)
         }
+        // ENCLOSED SMART-FACTORY HALL motion — drive ONLY when the smart-factory section is the active focus
+        // (the enclosed hall is that theme's slice). Gated by the !reduceMotion block above ⇒ all of its motion
+        // (loop goods, AGVs, AMRs, robot arms, workers) freezes under reduced-motion. Alloc-free. The hall is
+        // hidden under every other theme, so we skip its work entirely there.
+        if (activeSection === 'smart-factory') animateSmartFactory(dt);
       }
     }
 
@@ -3940,8 +4382,12 @@
     // endless base plane follows the viewpoint (snapped so the slide is invisible)
     if (skyFloor){ skyFloor.position.x = Math.round(vp.x/CHUNK)*CHUNK; skyFloor.position.z = Math.round(vp.z/CHUNK)*CHUNK; }
 
-    // STREAM the infinite world around the active viewpoint
-    streamChunks(vp.x, vp.z, false);
+    // STREAM the infinite world around the active viewpoint — ONLY for the 'factory' theme. The other world
+    // sections are BOUNDED slices (smart-city = central economy, smart-factory = the enclosed hall, shopping-
+    // mall = retail district) and do NOT stream the open world; applyThemeVisibility cleared the live chunks
+    // for them. (The world harness calls streamChunks DIRECTLY via __worldHeadless.streamAround on the default
+    // factory theme — the render loop never runs headless — so this gate does not affect it.)
+    if (worldTheme === 'factory') streamChunks(vp.x, vp.z, false);
     // keep the coords/region readout live
     updateRegionReadout(vp.x, vp.z);
     // keep the inspector's numbers moving live every frame while it is open
@@ -5564,44 +6010,49 @@
     }
   }
 
-  // PHASE 2: per-theme visibility of the ONE streamed origin world's slices. The four WORLD sections are
-  // alternate framed views of the SAME world, so switching theme just shows/hides which slice is the focus.
-  // Slice → group table (each slice toggled INDEPENDENTLY; nothing is rebuilt — only `.visible`/a flag):
-  //   factory       : economy ON , retail ON , production ON   (everything-in-one; BYTE-IDENTICAL to original)
-  //   smart-city    : economy ON , retail OFF, production OFF  (firm towers + exchange + plaza only)
-  //   smart-factory : economy OFF, retail OFF, production ON   (streamed production chunks only)
-  //   shopping-mall : economy OFF, retail ON , production OFF  (retail district only)
-  // Production chunks keep STREAMING regardless (so __worldHeadless.streamAround is unaffected); we only flip
-  // `chunksVisible`, which the render loop applies to each LIVE chunk group's `.visible` — and to any chunk
-  // streamed in while a theme is active (built hidden if the theme doesn't show production, visible if it does).
+  // PHASE 2: per-theme visibility of the world's slices. Each WORLD section reveals ONE slice of the build;
+  // switching theme shows/hides which slice is the focus (nothing is rebuilt — only `.visible`/a flag).
+  // Smart-factory is now a SINGLE ENCLOSED HALL (a closed space), NOT the streamed open world; only the
+  // 'factory' theme shows the streamed production chunks. Slice → group table:
+  //   factory       : streamed chunks ON, economy ON , retail ON , hall OFF  (everything-in-one; BYTE-IDENTICAL)
+  //   smart-city    : economy ON only     (firm towers + exchange + plaza)
+  //   smart-factory : HALL ON only        (the enclosed bounded factory building — no streamed chunks)
+  //   shopping-mall : retail ON only      (retail district)
+  // The streamed chunks STREAM only for 'factory' now (the render-loop streamChunks() call is gated to it);
+  // leaving 'factory' clears the live chunks (closeStreaming) so the bounded themes show no open world.
+  // `chunksVisible` flips per-frame onto each LIVE chunk group's `.visible` (and onto any chunk streamed in).
   // VIEW-ONLY + headless-safe (only boolean `.visible` writes on stubbed objects; no geometry, no economy).
-  // RE-STREAM when a world theme switch changes the chunk CONTENT (factory<->smart-factory): the smart-factory
-  // floor build is different geometry from the default biome/production build, so the LIVE chunks must be
-  // cleared + repopulated with the new theme's content. smart-city/shopping-mall only HIDE production (same
-  // content class as factory) → no re-stream. Recycle frees every per-chunk ref (incl. amrs) so no leak; we
-  // reset lastTileKey + force one streamChunks around the CURRENT viewpoint to refill immediately.
-  function restreamIfThemeChanged(theme){
-    const wantClass = chunkContentClass(theme);
-    if (builtChunkTheme !== null && builtChunkTheme === wantClass) return;   // content unchanged → nothing to do
+  // __worldHeadless.streamAround calls streamChunks DIRECTLY (not via the render loop) on the default factory
+  // theme, so gating the render-loop call does NOT affect the harness.
+  // CLEAR the live chunks when the active theme does NOT show streamed production (only 'factory' does). Recycle
+  // frees every per-chunk ref (incl. amrs) so no leak; reset lastTileKey so a later return to 'factory'
+  // re-evaluates the tile and refills around the viewpoint.
+  function closeStreaming(){
+    if (chunks.size === 0){ lastTileKey = null; builtChunkTheme = null; return; }
     for (const [,cg] of chunks) recycleChunk(cg);      // scene.remove + drop refs (bounded; no leak)
     chunks.clear();
-    lastTileKey = null;                                // so the forced stream below re-evaluates the tile
-    const vp = (typeof activeViewpoint === 'function') ? activeViewpoint() : { x: 0, z: 0 };
-    streamChunks(vp.x, vp.z, true);                    // repopulate with the active theme's chunk content
+    lastTileKey = null;                                // so a later forced stream re-evaluates the tile
+    builtChunkTheme = null;
   }
   function applyThemeVisibility(theme){
-    const econ = (theme === 'factory' || theme === 'smart-city');
+    const econ   = (theme === 'factory' || theme === 'smart-city');
     const retail = (theme === 'factory' || theme === 'shopping-mall');
-    const prod = (theme === 'factory' || theme === 'smart-factory');
-    // first, re-stream if the chunk CONTENT class changed (factory<->smart-factory). This rebuilds `chunks`
-    // with the right build before we set per-chunk visibility below.
-    restreamIfThemeChanged(theme);
-    if (economyGroup) economyGroup.visible = econ;
-    if (retailGroup)  retailGroup.visible  = retail;
+    const prod   = (theme === 'factory');                 // streamed open world ONLY for the factory theme
+    const hall   = (theme === 'smart-factory');           // the enclosed bounded factory hall ONLY for smart-factory
+    // streamed production chunks stream + show ONLY for 'factory'. For every other theme, clear the live
+    // chunks so the bounded slice (smart-city / hall / retail) shows no open world behind it.
+    if (prod){
+      const vp = (typeof activeViewpoint === 'function') ? activeViewpoint() : { x: 0, z: 0 };
+      streamChunks(vp.x, vp.z, true);                    // (re)populate the factory world around the viewpoint
+    } else {
+      closeStreaming();                                  // bounded theme → no streamed chunks
+    }
+    if (economyGroup)      economyGroup.visible      = econ;
+    if (retailGroup)       retailGroup.visible       = retail;
+    if (smartFactoryGroup) smartFactoryGroup.visible = hall;
     chunksVisible = prod;
-    // apply the production flag to whatever chunks are currently live (the render loop keeps them in sync,
-    // and reflects it onto chunks streamed in later); under a non-world/diorama theme the master
-    // centralGroup/chunk visibility set by selectSection still wins.
+    // apply the production flag to whatever chunks are currently live (only 'factory' has any after the
+    // gating above; the render loop keeps them in sync, and reflects it onto chunks streamed in later).
     for (const [,cg] of chunks){ if (cg) cg.visible = prod; }
   }
 
@@ -5643,13 +6094,14 @@
     syncSectionUI();
   }
 
-  // FRAME THE CAMERA for a WORLD section. These are alternate VIEWS of the same origin world, so we just
-  // aim the orbit target / re-home the roam start at the area the theme focuses on (no new geometry):
+  // FRAME THE CAMERA for a WORLD section. Each frames the area its theme focuses on (no new geometry):
   //   factory       : the live-economy metropolis at the world ORIGIN — BYTE-IDENTICAL to the original
   //                   factory homing (re-home orbit to ORBIT_DEFAULT, stop the diorama turntable; do NOT
   //                   touch mapCam/roam so the default factory camera is exactly as before).
   //   smart-city    : the live-economy metropolis at the world ORIGIN (firm towers + exchange)
-  //   smart-factory : the streamed PRODUCTION world (orbit target / roam start nudged into the chunked grid)
+  //   smart-factory : the ENCLOSED HALL at (600,0) — a 3/4 orbit looking down INTO the open-truss-roof
+  //                   building so the closed-loop lines / robots / AGVs / AMRs / workers fill the frame; the
+  //                   map/roam rig is bounded to the hall area.
   //   shopping-mall : the RETAIL district near the consumer skyline (~x48, ROW_Z[3])
   // VIEW-ONLY: only camera/orbit-target/roam-start writes; never the economy.
   function frameWorldTheme(section){
@@ -5662,24 +6114,30 @@
       }
       return;
     }
-    // focus point per FOCUSED theme (world-space x,z + a pleasant look-at height + orbit distance)
-    let fx = 0, fz = 0, fy = 26, dist = ORBIT_DEFAULT.dist;
+    // focus point per FOCUSED theme (world-space x,z + a pleasant look-at height + orbit distance + polar)
+    let fx = 0, fz = 0, fy = 26, dist = ORBIT_DEFAULT.dist, polar = ORBIT_DEFAULT.polar;
     if (section === 'shopping-mall'){
       // the retail district: mall + storefronts sit by the consumer skyline endpoint (see makeRetailDistrict)
       fx = 48; fz = ROW_Z[3]; fy = 14; dist = 110;
     } else if (section === 'smart-factory'){
-      // the streamed production world: aim just outside the central arena so the chunked machines/belts fill
-      // the frame (the metropolis stays behind the camera). Same origin world — only the framing differs.
-      fx = 0; fz = 140; fy = 18; dist = 130;
+      // the ENCLOSED HALL: orbit its centre (600,0) at a steeper 3/4 angle so the camera looks DOWN through
+      // the open truss roof and the bounded interior (lines/robots/AGVs/AMRs/workers) fills the view.
+      fx = 600; fz = 0; fy = 8; dist = 165; polar = 0.78;
     } /* smart-city → origin metropolis (defaults fx=fz=0, fy=26) */
     if (useOrbit && controls){
       controls.autoRotate = false;            // focused world views don't auto-spin (that's the diorama flourish)
       const d = ORBIT_DEFAULT;
-      orbitTo(fx, fy, fz, dist, d.polar, d.azimuth);
+      orbitTo(fx, fy, fz, dist, polar, d.azimuth);
     }
     // also re-home the hand-rolled MAP rig + ROAM start so V (roam) drops you at the framed area
     mapCam.tx = fx; mapCam.tz = fz;
-    if (roam.pos) roam.pos.set(fx, Math.max(12, fy + 6), fz + 96);
+    if (section === 'smart-factory'){
+      // bound the roam start to JUST INSIDE the hall (centre 600,0; ~150x100), looking across the floor so
+      // a free-roam drop lands inside the closed space rather than out in the void.
+      if (roam.pos) roam.pos.set(fx, 22, fz + 80);
+    } else if (roam.pos) {
+      roam.pos.set(fx, Math.max(12, fy + 6), fz + 96);
+    }
   }
   function syncSectionUI(){
     for (const s of SECTIONS){
