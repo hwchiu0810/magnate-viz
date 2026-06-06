@@ -4341,12 +4341,9 @@
 
     wireCameraInput();
 
-    // ===== DIGITAL-TWIN: build the circuit-board ground (once, hidden) + the selective-bloom composer.
-    //       Both are GUARDED and headless-safe: the composer is only constructed when the real
-    //       THREE.EffectComposer is present (offline / under the stubbed-THREE harness it stays null and
-    //       the frame loop falls back to renderer.render). buildCircuitGround() is plain Mesh/Texture work
-    //       that no-ops cleanly under the stub. Neither is pickable nor tagged with a firmId. =====
-    buildCircuitGround();
+    // ===== DIGITAL-TWIN: build the selective-bloom composer (GUARDED + headless-safe — only constructed
+    //       when the real THREE.EffectComposer is present; otherwise null and the frame loop falls back to
+    //       renderer.render). The decorative circuit-board "wireframe ground" was removed (meaningless). =====
     buildTwinComposer();
 
     resize(); window.addEventListener('resize', resize);
@@ -4589,18 +4586,6 @@
     if (scene && !twinMode){
       if (scene.background && scene.background.copy) scene.background.copy(C.sky);
       if (scene.fog && scene.fog.color && scene.fog.color.copy) scene.fog.color.copy(C.sky);
-    }
-    // DIGITAL-TWIN circuit ground: keep it centred under the active camera (so it spans whatever scene is
-    // shown — world or far-flung diorama) and scroll its PCB texture as a slow "data pulse". Motion gated
-    // by reduced-motion. Cheap; runs only while twinMode is ON and the ground exists.
-    if (twinMode && circuitGround){
-      if (cam && cam.position && circuitGround.position && circuitGround.position.set){
-        circuitGround.position.set(cam.position.x, 0.02, cam.position.z);
-      }
-      if (!reduceMotion && circuitMat && circuitMat.map && circuitMat.map.offset && dt > 0){
-        circuitMat.map.offset.x = (circuitMat.map.offset.x + dt * 0.04) % 1;
-        circuitMat.map.offset.y = (circuitMat.map.offset.y + dt * 0.018) % 1;
-      }
     }
   }
 
