@@ -4228,6 +4228,10 @@
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.shadowMap.enabled = true;
     if (THREE.PCFSoftShadowMap) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // HDR highlight rolloff: bright emissive surfaces + bloom roll off to a glow instead of clipping the
+    // whole screen to white at glancing angles (ACES filmic). Exposure < 1 keeps headroom.
+    if (THREE.ACESFilmicToneMapping !== undefined) renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.95;
 
     scene = new THREE.Scene();
     const SKY = 0x0b1426;
@@ -4269,7 +4273,7 @@
     scene.add(lightAmbient);
     lightHemi = new THREE.HemisphereLight(0x9fc0ff, 0x202838, 0.5);
     scene.add(lightHemi);
-    const key = new THREE.DirectionalLight(0xffe9c0, 1.2);
+    const key = new THREE.DirectionalLight(0xffe9c0, 1.0);
     key.position.set(-60, 120, 50); key.castShadow = true;
     if (key.shadow && key.shadow.mapSize) key.shadow.mapSize.set(2048, 2048);
     if (key.shadow && key.shadow.camera){
@@ -4370,7 +4374,9 @@
       composer.addPass(new THREE.RenderPass(scene, cam));
       // strength / radius / threshold tuned so ONLY bright emissive things bloom (the neon look) and the
       // dark navy stays crisp. threshold ~0.6 keeps the matte economy geometry out of the glow.
-      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.5, 0.6);
+      // gentler + more selective so a bright surface filling the frame can't white-out the screen:
+      // lower strength (1.1->0.6), tighter radius (0.5->0.4), higher threshold (0.6->0.85 = only near-white blooms).
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.4, 0.85);
       composer.addPass(bloomPass);
       // final FXAA ShaderPass for crisp edges (guarded — the page works without it). renderToScreen on
       // whichever is the last pass so the composed image reaches the canvas.
@@ -4515,7 +4521,7 @@
     // dawn (warm low sun, peach sky)
     { p:0.00, sun:[1.00,0.62,0.34], sunI:0.65, sky:[0.86,0.55,0.42], hs:[1.00,0.78,0.62], hg:[0.22,0.20,0.26], hemiI:0.42, ambI:0.30 },
     // mid-morning → midday (neutral bright)
-    { p:0.22, sun:[1.00,0.96,0.86], sunI:1.30, sky:[0.42,0.62,0.92], hs:[0.62,0.75,1.00], hg:[0.18,0.22,0.30], hemiI:0.62, ambI:0.40 },
+    { p:0.22, sun:[1.00,0.96,0.86], sunI:0.95, sky:[0.42,0.62,0.92], hs:[0.62,0.75,1.00], hg:[0.18,0.22,0.30], hemiI:0.62, ambI:0.40 },
     // dusk (warm orange, low sun again)
     { p:0.50, sun:[1.00,0.55,0.28], sunI:0.70, sky:[0.92,0.46,0.30], hs:[1.00,0.66,0.50], hg:[0.24,0.18,0.22], hemiI:0.40, ambI:0.30 },
     // night (dim cool — NOT pitch black; ambient/hemi floor keeps things legible)
