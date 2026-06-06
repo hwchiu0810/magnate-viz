@@ -38,6 +38,9 @@
   .btn:hover{background:#1e2e52}
   .btn:focus-visible{outline:2px solid var(--you);outline-offset:1px}
   .btn[aria-pressed="true"]{background:#234; border-color:#3a5a8a}
+  /* DIGITAL-TWIN toggle: neon-cyan accent + soft glow when the hologram mode is active */
+  #btn-twin[aria-pressed="true"]{background:#06283a;border-color:#3fd6ff;color:#8af5ff;
+    box-shadow:0 0 8px rgba(80,230,255,.55), inset 0 0 6px rgba(80,230,255,.25)}
   .ctl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
   input[type=range]{accent-color:var(--t2)}
 
@@ -174,6 +177,33 @@
   .sections .secbtn:focus-visible{outline:2px solid var(--you);outline-offset:2px}
   .sections .secbtn[aria-pressed="true"]{background:#234;border-color:#3a5a8a;color:var(--you)}
   .sections .secbtn .ico{margin-right:5px}
+  /* the Digital-Twin section is the neon centerpiece — cyan accent + glow when active */
+  .sections #sec-digital-twin[aria-pressed="true"]{background:#06283a;border-color:#3fd6ff;color:#8af5ff;
+    box-shadow:0 0 10px rgba(80,230,255,.5)}
+
+  /* ---------- DIGITAL-TWIN HUD overlay (PHASE 2) — crisp DOM gauges + waveform + spectrum, shown
+       ONLY when the digital-twin section is active. Lives OUTSIDE the bloom canvas so text/lines stay
+       razor-sharp regardless of the hologram glow behind it. Decorative + view-only. ---------- */
+  .twinhud{position:absolute;top:128px;left:10px;width:300px;z-index:5;display:none;
+    background:#04111ce6;border:1px solid #16466a;border-radius:12px;padding:10px 12px;
+    backdrop-filter:blur(6px);box-shadow:0 0 0 1px rgba(80,230,255,.12),0 10px 32px rgba(0,0,0,.5);
+    color:#bfeaff;font-variant-numeric:tabular-nums}
+  .twinhud.on{display:block}
+  .twinhud h3{margin:0 0 8px;font-size:10px;color:#5fc8f0;text-transform:uppercase;letter-spacing:1px;
+    display:flex;align-items:center;gap:6px}
+  .twinhud .tdot{width:7px;height:7px;border-radius:50%;background:#3fd6ff;
+    box-shadow:0 0 6px #3fd6ff;display:inline-block}
+  .twinhud .tgauges{display:flex;gap:8px;margin-bottom:8px}
+  .twinhud .tgauge{flex:1;text-align:center}
+  .twinhud .tgauge canvas{display:block;width:100%;height:74px}
+  .twinhud .tglabel{font-size:9px;color:#5fc8f0;text-transform:uppercase;letter-spacing:.6px;margin-top:1px}
+  .twinhud .twave-cap,.twinhud .tspec-cap{font-size:9px;color:#5fc8f0;text-transform:uppercase;
+    letter-spacing:.6px;margin:6px 0 3px}
+  .twinhud canvas.twave,.twinhud canvas.tspec{display:block;width:100%;height:48px;
+    border:1px solid #103048;border-radius:7px;background:#02101b}
+  .twinhud .tmeta{display:flex;justify-content:space-between;font-size:11px;color:#9fd8f5;margin-top:7px}
+  .twinhud .tmeta b{color:#dff6ff}
+  @media (prefers-reduced-motion: reduce){ .twinhud h3 .tdot{box-shadow:none} }
 
   /* ---------- leaderboard rows act as buttons (keyboard-accessible firm inspect) ---------- */
   tr.lbrow{cursor:pointer}
@@ -245,6 +275,7 @@
     <button class="btn" id="btn-reseed" aria-label="Reseed the economy with a new random seed">🎲 Reseed</button>
     <button class="btn" id="btn-cam" aria-label="Toggle camera between map and roam mode" aria-pressed="false">🛰️ Map cam</button>
     <button class="btn" id="btn-view" aria-label="Reset the camera view to downtown">🎯 Reset view</button>
+    <button class="btn" id="btn-twin" type="button" aria-label="Toggle Digital Twin render mode (neon hologram)" aria-pressed="false">🪐 Twin</button>
   </header>
 
   <!-- ===== time-scrubber: drag back through the last ~120 recorded ticks (read-only REPLAY) ===== -->
@@ -268,13 +299,31 @@
     <button class="secbtn" id="sec-finance"       type="button" data-section="finance"       aria-pressed="false"><span class="ico" aria-hidden="true">💰</span>Finance</button>
     <button class="secbtn" id="sec-network"     type="button" data-section="network"     aria-pressed="false"><span class="ico" aria-hidden="true">🕸</span>Network</button>
     <button class="secbtn" id="sec-leaderboard" type="button" data-section="leaderboard" aria-pressed="false"><span class="ico" aria-hidden="true">🏆</span>Leaderboard</button>
+    <button class="secbtn" id="sec-digital-twin" type="button" data-section="digital-twin" aria-pressed="false"><span class="ico" aria-hidden="true">🛰️</span>Digital Twin</button>
   </nav>
+
+  <!-- ===== DIGITAL-TWIN HUD (PHASE 2) — crisp DOM telemetry shown only while the digital-twin section
+       is active. Two gauges (load / temp), a live waveform, and a spectrum. Drawn on DOM canvases that
+       live OUTSIDE the bloomed WebGL canvas so they stay razor-sharp. View-only, decorative — values are
+       derived from the displayed economy frame; nothing here steps or mutates the economy. -->
+  <aside class="twinhud" id="twin-hud" aria-label="Digital twin telemetry" aria-hidden="true">
+    <h3><span class="tdot" aria-hidden="true"></span>Digital Twin · Turbine Telemetry</h3>
+    <div class="tgauges">
+      <div class="tgauge"><canvas id="twin-g-load" role="img" aria-label="Twin load gauge"></canvas><div class="tglabel">Load</div></div>
+      <div class="tgauge"><canvas id="twin-g-temp" role="img" aria-label="Twin temperature gauge"></canvas><div class="tglabel">Exhaust °</div></div>
+    </div>
+    <div class="twave-cap">Vibration waveform</div>
+    <canvas class="twave" id="twin-wave" role="img" aria-label="Vibration waveform"></canvas>
+    <div class="tspec-cap">Throughput spectrum</div>
+    <canvas class="tspec" id="twin-spec" role="img" aria-label="Throughput spectrum"></canvas>
+    <div class="tmeta"><span>RPM <b id="twin-rpm">—</b></span><span>Δflow <b id="twin-flow">—</b></span></div>
+  </aside>
 
   <!-- ===== top-left: region + coordinate readout (the world's compass) ===== -->
   <div class="hint" id="hint" role="status" aria-live="polite">
     <span class="region" id="hud-region">📍 Consumer Metropolis</span>
     <span class="coords" id="hud-coords">x 0 · z 0 · ring 0</span>
-    <span id="hud-camhint" style="display:block;margin-top:4px;opacity:.8">drag to pan · wheel to zoom · V = camera</span>
+    <span id="hud-camhint" style="display:block;margin-top:4px;opacity:.8">drag to pan · wheel to zoom · V = camera · B = digital twin</span>
   </div>
 
   <!-- ===== top-left: collapsible Maps panel (finviz treemap + interconnection network) ===== -->
@@ -409,6 +458,22 @@
 <!-- GLTFLoader (r128 global build): optional CC0 glTF model upgrades for the Smart Factory hall.
      The page works fully without it (procedural fallback); models load from ./assets/factory/*.glb. -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<!-- ===== DIGITAL-TWIN post-processing stack (r128 GLOBAL examples builds) =====
+     OPTIONAL: only used inside the "Twin" render mode (default OFF) for the selective neon bloom.
+     The page is fully functional without these (composer = null ⇒ Twin falls back to a no-glow look).
+     Load order matters: shaders BEFORE the passes that consume them, EffectComposer needs CopyShader,
+     UnrealBloomPass needs LuminosityHighPassShader, the FXAA ShaderPass needs FXAAShader. Lut gives the
+     viridis/jet colormap for the heat-flow. These CDN script-src refs survive the single-file
+     build_standalone inliner (same as OrbitControls/GLTFLoader above); offline they are harmless no-ops
+     (THREE.EffectComposer stays undefined ⇒ the guarded composer build skips ⇒ no crash, no glow). -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/Lut.js"></script>
 <!-- Shared deterministic economy engine (window.MagnateCore). Same dir, no build step. -->
 <script>/* inlined econ-core.js */
 "use strict";
@@ -1443,6 +1508,19 @@
    * ============================================================ */
   let scene, cam, renderer, gl;
   let ready = false;
+  // ===== DIGITAL-TWIN render mode (PHASE 1) — a reversible NEON-HOLOGRAM overlay over the EXISTING
+  //       scenes (world + dioramas). VIEW-ONLY: it only swaps background/fog, shows a circuit-board
+  //       ground, and routes the frame through a selective-bloom composer. It never touches the economy,
+  //       picking, streaming, or the Sankey layout. Default OFF ⇒ the page is byte-identical to before. =====
+  let twinMode = false;              // OFF by default (the harness path is identical to today)
+  let composer = null;              // selective-bloom EffectComposer (built guarded in init3D; null if unavailable)
+  let bloomPass = null, fxaaPass = null;
+  let circuitGround = null;          // the PCB-trace ground plane (built once, toggled visible in Twin mode)
+  let circuitMat = null;             // its material (the data-pulse scroll animates the texture offset)
+  const twinSaved = { background: undefined, fog: undefined, saved: false };  // restore target for OFF
+  let twinAuto = false;              // PHASE 2: true when twinMode was auto-enabled BY the digital-twin section
+                                     // (so leaving the section restores the prior render mode without clobbering
+                                     //  a render mode the user toggled manually).
   const buildings = {};              // firmId -> { grp, body, mat, marker, isYou }
   // Plain-JS pick registry (works with no GPU): firmId -> tower root mesh, + flat pickable list.
   const firmMeshes = {};             // firmId -> THREE.Group (tower root, tagged userData.firmId)
@@ -1465,7 +1543,7 @@
    *  Streaming is paused (frame-loop guard) when a non-factory scene
    *  is active; the __worldHeadless streaming contract is untouched.
    * ============================================================ */
-  const SECTIONS = ['market', 'factory', 'smart-city', 'smart-factory', 'shopping-mall', 'finance', 'network', 'leaderboard'];
+  const SECTIONS = ['market', 'factory', 'smart-city', 'smart-factory', 'shopping-mall', 'finance', 'network', 'leaderboard', 'digital-twin'];
   let activeSection = 'factory';     // default = the existing world (factory)
   // ----- WORLD SECTIONS: the four sections that share the ONE streamed origin world (central economy
   // district + streamed production chunks + retail district). They are alternate FRAMED VIEWS of the same
@@ -1481,10 +1559,11 @@
   // Each diorama lives at its own world position (well outside the factory arena so it never
   // collides with streamed chunks). The camera orbits a pivot above each.
   const SCENE_POS = {
-    market:      { x:  1200, z:     0 },
-    finance:     { x:     0, z:  1200 },
-    network:     { x: -1200, z:     0 },
-    leaderboard: { x:     0, z: -1200 },
+    market:        { x:  1200, z:     0 },
+    finance:       { x:     0, z:  1200 },
+    network:       { x: -1200, z:     0 },
+    leaderboard:   { x:     0, z: -1200 },
+    'digital-twin':{ x:  1200, z:  1200 },   // PHASE 2 hero diorama — its own corner, far from the streamed world
   };
   const sceneGroups = {};            // section -> THREE.Group (the diorama root)
   const sceneState  = {};            // section -> per-scene plain-JS state (bars, monuments, nodes, podia)
@@ -1598,8 +1677,9 @@
   const sfLoopGoods = [];   // goods circulating the CLOSED conveyor loops  { mesh, path, L, dir, speed, u, baseY }
   const sfAGVs      = [];   // AGVs rigidly tracking the painted floor GUIDE-LINE { mesh, path, L, dir, speed, u, baseY }
   const sfAMRs      = [];   // free-roaming AMRs hopping a flexible waypoint set { mesh, wps, i, t, segLen, speed, dwell, dwellT, baseY }
-  const sfArms      = [];   // robot-arm segments to oscillate { seg1, seg2, baseZ1, baseZ2, phase }
+  const sfArms      = [];   // robot-arm groups to oscillate { grp, seg1, seg2, baseZ1, baseZ2, phase } (guarded if swapped)
   const sfWorkers   = [];   // workers walking the aisles { grp, path, L, dir, speed, u, phase, stride, baseY, legA, legB, armA, armB }
+  const sfForklifts = [];   // forklifts driving a deterministic aisle path  { mesh, path, L, dir, speed, u, baseY }
 
   // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
   // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
@@ -2445,12 +2525,16 @@
    *  unchanged. Loaded scenes are cached + cloned; swaps ride the same animated group so motion
    *  continues. See assets/factory/MODELS.md for the Kenney CC0 drop-in manifest. */
   const FACTORY_MODELS = {
-    robot:    'assets/factory/robot.glb',     // bundled CC0 demo (three.js RobotExpressive); swap for a Kenney robot
-    agv:      'assets/factory/agv.glb',        // drop in a Kenney AGV/tug   → swaps the procedural AGVs
-    amr:      'assets/factory/amr.glb',        // drop in a Kenney AMR        → swaps the procedural AMRs
-    machine:  'assets/factory/machine.glb',    // drop in a Kenney CNC/machine
-    forklift: 'assets/factory/forklift.glb',
-    rack:     'assets/factory/rack.glb',
+    robot:    'assets/factory/robot.glb',      // bundled CC0 demo (three.js RobotExpressive); swap for a Kenney robot
+    agv:      'assets/factory/agv.glb',        // drop in a Kenney AGV/tug    → swaps the procedural AGVs
+    amr:      'assets/factory/amr.glb',        // drop in a Kenney AMR         → swaps the procedural AMRs
+    machine:  'assets/factory/machine.glb',    // drop in a Kenney CNC/machine → swaps each procedural station
+    robotarm: 'assets/factory/robotarm.glb',   // drop in a Kenney robot-arm   → swaps the procedural articulated arms
+    forklift: 'assets/factory/forklift.glb',   // drop in a Kenney forklift    → swaps the procedural forklifts
+    rack:     'assets/factory/rack.glb',       // drop in a Kenney shelving     → swaps each procedural storage rack
+    crate:    'assets/factory/crate.glb',      // drop in a Kenney crate/tote   → swaps each conveyor good
+    worker:   'assets/factory/worker.glb',     // drop in a Kenney worker/figure → swaps each walking worker
+    conveyor: 'assets/factory/conveyor.glb',   // drop in a Kenney conveyor segment (reserved; manifest completeness)
   };
   let _gltfLoader = null;
   const _gltfCache = {};            // key -> THREE scene | 'failed'
@@ -2616,13 +2700,16 @@
         if (onX) line.scale.set(len, 0.06, 0.4); else line.scale.set(0.4, 0.06, len);
         line.position.set(mx, beltTopY + 0.42, mz); TG.add(line);
       }
-      // GOODS circulating the closed loop (rigid groups slid by the animator; never fall off — it's a loop)
+      // GOODS circulating the closed loop (rigid groups slid by the animator; never fall off — it's a loop).
+      // makeGood already returns a THREE.Group, so it IS the swappable item group: drop a small 'crate'.glb
+      // and each tote upgrades to the model while the loop keeps sliding the same group. (Fallback-safe.)
       const gsize = reg === 3 ? 0.8 : (reg === 2 ? 0.66 : 0.58);
       const gy = beltTopY + 0.45 + gsize/2;
       for (let gi = 0; gi < nGoods; gi++){
         const mesh = makeGood(reg, gi, gsize);
         const rec = { mesh, path: loopPts, L, dir: 1, speed: gspeed, u: (gi/nGoods)*L, baseY: gy };
         placeOnPath(rec, mesh); TG.add(mesh); sfLoopGoods.push(rec);
+        swapFactoryVisual(mesh, 'crate', gsize*1.1);          // dormant until crate.glb is dropped in
       }
       return { L };
     };
@@ -2639,14 +2726,29 @@
     // render-loop oscillation. Stations sit just OUTSIDE each loop's long edge.
     const station = (mx, mz, reg) => {
       const mw = 4 + hrand()*2, md = 4 + hrand()*2, mh = 3.5 + hrand()*2;
-      const plinth = new THREE.Mesh(A.box, A.plinthMat); plinth.scale.set(mw+0.8, 0.6, md+0.8); plinth.position.set(mx, 0.3, mz); TG.add(plinth);
-      const housing = new THREE.Mesh(A.box, A.machineMat[reg]); housing.scale.set(mw, mh, md); housing.position.set(mx, mh/2+0.3, mz); housing.castShadow = true; TG.add(housing);
-      const panel = new THREE.Mesh(A.box, A.accentMat[reg]); panel.scale.set(mw*0.6, mh*0.3, 0.12); panel.position.set(mx, mh*0.62+0.3, mz - md*0.5 - 0.07); TG.add(panel);
-      const ind = new THREE.Mesh(A.box, A.indicatorMat); ind.scale.set(mw*0.3, mh*0.14, 0.1); ind.position.set(mx, 0.3 + mh*0.34, mz - md*0.5 - 0.08); TG.add(ind);
-      const vent = new THREE.Mesh(A.cyl, A.ventMat); const vH = mh*0.45 + 0.6; vent.scale.set(0.5, vH, 0.5); vent.position.set(mx + mw*0.28, 0.3 + mh + vH*0.5, mz - md*0.28); TG.add(vent);
-      // PROMINENT robot arm working at the station
-      const a = makeRobotArm(TG, mx, mz, mh + 0.3, 0.5 + hrand()*0.4, -0.8 - hrand()*0.5);
-      sfArms.push({ seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z, phase: hrand()*6.283 });
+      // MACHINE — build the plinth/housing/panel/indicator/vent into a per-station GROUP centred at (mx,mz)
+      // so a 'machine'.glb can swap the whole station. The group sits at the machine origin; children are in
+      // LOCAL space about it (so swapFactoryVisual seats the fitted model on the same floor + spot).
+      const mg = new THREE.Group(); mg.position.set(mx, 0, mz);
+      const part = (geo, mat, sx,sy,sz, px,py,pz) => { const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); mg.add(m); return m; };
+      part(A.box, A.plinthMat, mw+0.8, 0.6, md+0.8, 0, 0.3, 0);
+      const housing = part(A.box, A.machineMat[reg], mw, mh, md, 0, mh/2+0.3, 0); housing.castShadow = true;
+      part(A.box, A.accentMat[reg], mw*0.6, mh*0.3, 0.12, 0, mh*0.62+0.3, -md*0.5 - 0.07);
+      part(A.box, A.indicatorMat, mw*0.3, mh*0.14, 0.1, 0, 0.3 + mh*0.34, -md*0.5 - 0.08);
+      const vH = mh*0.45 + 0.6;
+      part(A.cyl, A.ventMat, 0.5, vH, 0.5, mw*0.28, 0.3 + mh + vH*0.5, -md*0.28);
+      TG.add(mg);
+      swapFactoryVisual(mg, 'machine', mh + 0.9);             // procedural station until machine.glb is dropped in
+      // PROMINENT robot arm working at the station — built into its OWN group so a 'robotarm'.glb can swap it.
+      // The group sits AT the station (mx,mz) and the arm is built in LOCAL space (ax=az=0) so a swapped model
+      // seats on the same spot and the whole-arm sweep rotates about the right pivot. The animated oscillation
+      // rides seg1/seg2; if a swap HIDES them, the oscillation guards (no crash) and gently swings the swapped
+      // model's root instead, so the arm keeps reading as alive.
+      const ag = new THREE.Group(); ag.position.set(mx, 0, mz);
+      const a = makeRobotArm(ag, 0, 0, mh + 0.3, 0.5 + hrand()*0.4, -0.8 - hrand()*0.5);
+      TG.add(ag);
+      sfArms.push({ grp: ag, seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z, phase: hrand()*6.283 });
+      swapFactoryVisual(ag, 'robotarm', mh + 1.0);            // procedural arm until robotarm.glb is dropped in
     };
     // stations along the OUTER long edges of each loop
     for (let i = 0; i < 4; i++){ const t = (i+0.5)/4; station(CX-46 + t*44, CZ-40, 1); }   // north of loop A
@@ -2656,15 +2758,20 @@
     station(CX + hw - 12, CZ - hd*0.0, 3);
 
     // ===== 7) STORAGE RACKING + CONTROL BOOTH + PALLET STACKS (modest detail) =====
-    // a run of storage racking against the north wall: uprights + 2 shelf levels
+    // a run of storage racking against the north wall: each rack is its OWN group (uprights + 2 shelf levels +
+    // a stage-themed tote) so a 'rack'.glb can swap any of them. Group origin sits at the rack's centre on the
+    // floor; children are in LOCAL space so the fitted model seats on the same spot. (Fallback-safe / dormant.)
     for (let i = 0; i < 5; i++){
-      const rx = CX - hw + 18 + i*22;
-      add(A.box, rackMat, 0.5, 9, 5, rx, 4.5, CZ - hd + 5);          // upright A
-      add(A.box, rackMat, 0.5, 9, 5, rx + 6, 4.5, CZ - hd + 5);      // upright B
-      add(A.box, rackMat, 6.5, 0.3, 5, rx + 3, 3.0, CZ - hd + 5);    // lower shelf
-      add(A.box, rackMat, 6.5, 0.3, 5, rx + 3, 6.0, CZ - hd + 5);    // upper shelf
-      // a stage-themed tote sitting on a shelf (reuse the goods palette) for read
-      const tote = new THREE.Mesh(A.box, A.goodMat[i % 4]); tote.scale.set(1.6,1.4,1.6); tote.position.set(rx + 3, 3.6, CZ - hd + 5); TG.add(tote);
+      const rcx = CX - hw + 18 + i*22 + 3, rcz = CZ - hd + 5;        // rack centre (matches old shelf centre)
+      const rg = new THREE.Group(); rg.position.set(rcx, 0, rcz);
+      const rpart = (geo, mat, sx,sy,sz, px,py,pz) => { const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); rg.add(m); return m; };
+      rpart(A.box, rackMat, 0.5, 9, 5, -3, 4.5, 0);                  // upright A
+      rpart(A.box, rackMat, 0.5, 9, 5,  3, 4.5, 0);                  // upright B
+      rpart(A.box, rackMat, 6.5, 0.3, 5, 0, 3.0, 0);                 // lower shelf
+      rpart(A.box, rackMat, 6.5, 0.3, 5, 0, 6.0, 0);                 // upper shelf
+      rpart(A.box, A.goodMat[i % 4], 1.6, 1.4, 1.6, 0, 3.6, 0);      // stage-themed tote (goods palette) for read
+      TG.add(rg);
+      swapFactoryVisual(rg, 'rack', 9);                              // procedural rack until rack.glb is dropped in
     }
     // CONTROL BOOTH in a back corner: a small raised box with a glazed front
     add(A.box, boothMat, 12, 5, 8, CX + hw - 9, 2.7, CZ - hd + 7);
@@ -2696,6 +2803,7 @@
           armA: grp.children[li.armA], armB: grp.children[li.armB],
         };
         placeOnPath(rec, grp); TG.add(grp); sfWorkers.push(rec);
+        swapFactoryVisual(grp, 'worker', 1.7);             // dormant until worker.glb is dropped in (walk loop keeps moving the group)
       }
     }
 
@@ -2773,11 +2881,54 @@
       TG.add(mesh); sfAMRs.push(rec);
     }
 
+    // ===== 6b) FORKLIFTS — driven, human-operated trucks on a deterministic aisle CIRCUIT =====
+    // Distinct from the AGVs/AMRs: a low counterbalance BODY + an upright MAST + protruding FORKS + a small
+    // overhead guard + wheels, assembled from the SHARED box/cyl geos (built once, ground-origin, length along
+    // +X like the trucks so placeOnPath aims them). They follow a fixed rectangular aisle loop along the spine
+    // (kept clear of the AGV guide-line/zones) — same arc-length follower as the AGVs/goods. Each rides its own
+    // group so a 'forklift'.glb upgrades it; the loop keeps driving the same group after a swap.
+    const forkBodyMat = new THREE.MeshStandardMaterial({ color: 0xffb023, roughness:.55, metalness:.35 }); // safety-orange truck
+    const makeForklift = () => {
+      const g = new THREE.Group();
+      const part = (geo, mat, sx,sy,sz, px,py,pz) => { const m = new THREE.Mesh(geo, mat); m.scale.set(sx,sy,sz); m.position.set(px,py,pz); g.add(m); return m; };
+      // counterbalance body + a darker engine cowl at the rear (-X)
+      part(A.box, forkBodyMat, 2.0, 0.9, 1.3, -0.2, 0.7, 0).castShadow = true;
+      part(A.box, A.amrBodyMat, 0.9, 1.0, 1.2, -1.0, 0.75, 0);                   // rear counterweight/cowl
+      // operator overhead guard: 4 posts + a flat roof cage
+      for (const px of [0.2, -0.7]) for (const sgn of [-1,1]) part(A.box, A.ventMat, 0.1, 1.2, 0.1, px, 1.7, sgn*0.55);
+      part(A.box, A.ventMat, 1.3, 0.1, 1.3, -0.25, 2.3, 0);                       // roof cage
+      // MAST: two tall uprights at the front (+X) + a raised carriage backplate
+      for (const sgn of [-1,1]) part(A.box, A.gantryMat, 0.16, 2.6, 0.16, 0.95, 1.3, sgn*0.35);
+      part(A.box, A.gantryMat, 0.12, 1.0, 0.8, 0.95, 1.0, 0);                      // carriage backplate
+      // FORKS: two flat tines projecting forward (+X) at deck height
+      for (const sgn of [-1,1]) part(A.box, A.ventMat, 1.4, 0.1, 0.18, 1.7, 0.18, sgn*0.3);
+      // a stage-themed pallet load resting on the forks (reuse goods palette) for read
+      part(A.box, A.goodMat[0], 1.0, 0.8, 0.9, 1.7, 0.65, 0);
+      part(A.box, A.goodGlowMat[0], 1.05, 0.12, 0.95, 1.7, 0.9, 0);
+      // 4 wheels (axle along Z so they roll along X); bottoms touch y≈0
+      for (const wx of [0.7, -1.05]) for (const sgn of [-1,1]){
+        const w = part(A.cyl, A.wheelMat, 0.28, 0.16, 0.28, wx, 0.28, sgn*0.6); w.rotation.x = Math.PI/2;
+      }
+      return g;
+    };
+    // a fixed rectangular aisle circuit hugging the spine (inside the AGV guide-line, clear of the loops/zones)
+    const forkPts = [ {x:CX-40,z:CZ-12}, {x:CX+40,z:CZ-12}, {x:CX+40,z:CZ+12}, {x:CX-40,z:CZ+12} ];
+    const forkL = loopLen(forkPts);
+    const N_FORK = 2;
+    for (let i = 0; i < N_FORK; i++){
+      const mesh = makeForklift();
+      const rec = { mesh, path: forkPts, L: forkL, dir: 1, speed: 2.6 + i*0.4, u: (i / N_FORK) * forkL, baseY: 0 };
+      placeOnPath(rec, mesh); TG.add(mesh); sfForklifts.push(rec);
+      swapFactoryVisual(mesh, 'forklift', 2.4);             // dormant until forklift.glb is dropped in (loop keeps driving)
+    }
+
     // ===== 7) OPTIONAL glTF MODEL UPGRADES (GLTFLoader + Kenney/CC0) =====
     // Bundled CC0 robot (assets/factory/robot.glb) placed at a few interior spots — a LIVE proof the
-    // loader works. AGV/AMR procedural visuals are swapped for a model the moment you drop a Kenney
-    // .glb into assets/factory/ (agv.glb / amr.glb); until then they keep the procedural look. All
-    // decorative + fallback-safe + headless-safe (no-op if GLTFLoader/model is unavailable).
+    // loader works. EVERY other element TYPE is ALSO swap-wired in-place at its build site above
+    // (machine / robotarm / rack / crate / worker via swapFactoryVisual; forklift just below; agv / amr here):
+    // drop a Kenney .glb named for the key into assets/factory/ and that element upgrades the moment the
+    // model loads, riding the same animated group so motion continues. All decorative + fallback-safe +
+    // headless-safe (no-op if the .glb is absent (404) / GLTFLoader is unavailable / running headless).
     const robotSpots = [ {x: CX-46, z: CZ+34, y: 0.4}, {x: CX-16, z: CZ+34, y: 0.0},
                          {x: CX+16, z: CZ+34, y: -0.4}, {x: CX+46, z: CZ+34, y: 3.14} ];
     for (const r of robotSpots) placeFactoryModel(TG, 'robot', r.x, r.z, 2.4, r.y);
@@ -2791,8 +2942,9 @@
   }
 
   /* animateSmartFactory(dt) — advance the ENCLOSED HALL's motion: loop goods circulate the CLOSED conveyor
-   * loops, AGVs track the painted GUIDE-LINE, AMRs hop their flexible waypoints (with a dwell at each), robot
-   * arms oscillate, workers walk the aisles (limb swing + bob). ALLOC-FREE (scalar math + position/rotation
+   * loops, AGVs + FORKLIFTS track their fixed circuits, AMRs hop their flexible waypoints (with a dwell at
+   * each), robot arms oscillate (guarded if a model swapped them), workers walk the aisles (limb swing + bob).
+   * Items that were upgraded to a .glb keep moving — the swap rides the same animated group. ALLOC-FREE (scalar math + position/rotation
    * writes on pre-built meshes). MEANINGFUL only when called — PHASE 2 calls it gated (smart-factory active +
    * !reduceMotion). Reuses placeOnPath for every closed-path follower. Headless-safe (never runs in the
    * harness; the render loop doesn't run headless). `sfAnimT` accumulates phase for arms/workers. */
@@ -2805,10 +2957,18 @@
     for (let i = 0; i < sfLoopGoods.length; i++){ const r = sfLoopGoods[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
     // AGVs: RIGIDLY track the guide-line (same arc-length follower → exact, predictable, even-spaced)
     for (let i = 0; i < sfAGVs.length; i++){ const r = sfAGVs[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
-    // ROBOT ARMS: gentle bounded oscillation about each segment's captured base angle
+    // FORKLIFTS: driven, follow the fixed aisle circuit (same arc-length follower → faces travel, even-spaced)
+    for (let i = 0; i < sfForklifts.length; i++){ const r = sfForklifts[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
+    // ROBOT ARMS: gentle bounded oscillation about each segment's captured base angle. If a 'robotarm'.glb
+    // swapped the procedural arm (seg1/seg2 hidden), oscillate the GROUP's swapped model root instead so the
+    // arm still reads as alive — and never touch the hidden segs (guard so nothing throws after a swap).
     for (let i = 0; i < sfArms.length; i++){ const a = sfArms[i];
-      a.seg1.rotation.z = a.baseZ1 + Math.sin(T*0.9 + a.phase)*0.30;
-      a.seg2.rotation.z = a.baseZ2 + Math.sin(T*1.1 + a.phase + 1.0)*0.30; }
+      if (a.seg1 && a.seg1.visible){
+        a.seg1.rotation.z = a.baseZ1 + Math.sin(T*0.9 + a.phase)*0.30;
+        a.seg2.rotation.z = a.baseZ2 + Math.sin(T*1.1 + a.phase + 1.0)*0.30;
+      } else if (a.grp){
+        a.grp.rotation.y = Math.sin(T*0.7 + a.phase)*0.25;   // swapped model: gentle whole-arm sweep
+      } }
     // WORKERS: walk aisle loops with limb swing + step bob (matches the plaza/streamed worker read)
     for (let i = 0; i < sfWorkers.length; i++){ const w = sfWorkers[i];
       w.u += w.speed*dt; placeOnPath(w, w.grp);
@@ -3768,10 +3928,157 @@
     roam.yaw = Math.PI; roam.pitch = -0.2;
 
     wireCameraInput();
+
+    // ===== DIGITAL-TWIN: build the circuit-board ground (once, hidden) + the selective-bloom composer.
+    //       Both are GUARDED and headless-safe: the composer is only constructed when the real
+    //       THREE.EffectComposer is present (offline / under the stubbed-THREE harness it stays null and
+    //       the frame loop falls back to renderer.render). buildCircuitGround() is plain Mesh/Texture work
+    //       that no-ops cleanly under the stub. Neither is pickable nor tagged with a firmId. =====
+    buildCircuitGround();
+    buildTwinComposer();
+
     resize(); window.addEventListener('resize', resize);
     return true;
   }
   let skyFloor = null;
+
+  /* ============================================================
+   *  DIGITAL-TWIN POST-PROCESSING — selective neon bloom (PHASE 1).
+   *  Built ONCE, GUARDED. Only the bright emissive viz (Sankey
+   *  runners, network nodes, lane dashes, machine indicators, tower
+   *  windows, the circuit traces) crosses the bloom threshold, so the
+   *  page only glows where it should. Runs ONLY in the browser frame
+   *  loop while twinMode is ON — never headless.
+   * ============================================================ */
+  function buildTwinComposer(){
+    composer = null; bloomPass = null; fxaaPass = null;
+    // GUARD: only with the real post-processing classes present (CDN reachable, real browser).
+    if (typeof THREE === 'undefined' || typeof THREE.EffectComposer !== 'function' ||
+        typeof THREE.RenderPass !== 'function' || typeof THREE.UnrealBloomPass !== 'function') return;
+    try {
+      const w = window.innerWidth || 1280, h = window.innerHeight || 720;
+      composer = new THREE.EffectComposer(renderer);
+      composer.addPass(new THREE.RenderPass(scene, cam));
+      // strength / radius / threshold tuned so ONLY bright emissive things bloom (the neon look) and the
+      // dark navy stays crisp. threshold ~0.6 keeps the matte economy geometry out of the glow.
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.5, 0.6);
+      composer.addPass(bloomPass);
+      // final FXAA ShaderPass for crisp edges (guarded — the page works without it). renderToScreen on
+      // whichever is the last pass so the composed image reaches the canvas.
+      if (typeof THREE.ShaderPass === 'function' && THREE.FXAAShader){
+        fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
+        const pr = renderer.getPixelRatio ? renderer.getPixelRatio() : 1;
+        if (fxaaPass.material && fxaaPass.material.uniforms && fxaaPass.material.uniforms.resolution){
+          fxaaPass.material.uniforms.resolution.value.set(1/(w*pr), 1/(h*pr));
+        }
+        fxaaPass.renderToScreen = true;
+        composer.addPass(fxaaPass);
+      } else if (bloomPass) {
+        bloomPass.renderToScreen = true;
+      }
+    } catch(_){ composer = null; bloomPass = null; fxaaPass = null; }
+  }
+  // ONE GL render entry point for the frame loop: route through the selective-bloom composer ONLY while the
+  // Digital-Twin overlay is ON and the composer was built; otherwise renderer.render exactly as before
+  // (byte-identical default path). HUD/text is DOM, never inside this canvas pass.
+  // NOTE: named renderFrameGL (NOT renderActive) — a *separate* renderActive() already exists later in this
+  // same scope for snapshot/HUD recompute; two same-named function declarations would collide (the later one
+  // wins under hoisting), so the GL draw must have its own unique name to actually reach the canvas/composer.
+  function renderFrameGL(){
+    if (twinMode && composer && composer.render){ composer.render(); }
+    else { renderer.render(scene, cam); }
+  }
+
+  /* ============================================================
+   *  DIGITAL-TWIN CIRCUIT-BOARD GROUND — a large plane with a PCB
+   *  CanvasTexture (dark board + glowing cyan traces/pads + a grid).
+   *  Built once, default HIDDEN; shown only in Twin mode under
+   *  whatever scene is active. A slow texture-offset scroll reads as
+   *  a "data pulse" travelling along the traces (motion gated by
+   *  reduced-motion in the frame loop). Decorative: NOT pickable,
+   *  NO userData.firmId, never pushed to pickables. Headless-safe.
+   * ============================================================ */
+  function buildCircuitGround(){
+    if (typeof THREE === 'undefined' || circuitGround) return;
+    const tex = pcbTexture();
+    circuitMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.92,
+      depthWrite: false, fog: false });
+    // emissive read comes from the bright traces in the texture itself (MeshBasic = unlit ⇒ glows under bloom)
+    circuitGround = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), circuitMat);
+    circuitGround.rotation.x = -Math.PI/2;
+    circuitGround.position.y = 0.02;          // hair above skyFloor so it reads as the active floor in Twin mode
+    circuitGround.renderOrder = -1;           // draw under the scene content
+    circuitGround.frustumCulled = false;      // it follows the camera; never cull
+    circuitGround.visible = false;            // OFF until applyTwinMode(true)
+    if (circuitGround.userData) circuitGround.userData.decorative = true;  // explicitly NOT a firm/pickable
+    scene.add(circuitGround);
+  }
+  // PCB-trace CanvasTexture: dark board + glowing cyan traces/pads + a faint grid. Guarded so it
+  // no-ops under the headless 2D-context stub (returns a CanvasTexture either way; the stub ignores draws).
+  function pcbTexture(){
+    const S = 512;
+    const c = document.createElement('canvas'); c.width = S; c.height = S;
+    const g = c.getContext('2d');
+    if (g && g.fillRect){
+      g.fillStyle = '#040a16'; g.fillRect(0, 0, S, S);                 // dark navy board
+      // faint grid
+      g.strokeStyle = 'rgba(60,150,200,.10)'; g.lineWidth = 1;
+      for (let i = 0; i <= S; i += 32){
+        g.beginPath(); g.moveTo(i, 0); g.lineTo(i, S); g.stroke();
+        g.beginPath(); g.moveTo(0, i); g.lineTo(S, i); g.stroke();
+      }
+      // glowing cyan traces: a few horizontal/vertical bus lines with right-angle elbows + via pads
+      const trace = (pts) => {
+        g.strokeStyle = 'rgba(80,230,255,.85)'; g.lineWidth = 3;
+        g.shadowColor = 'rgba(80,230,255,.9)'; g.shadowBlur = 6;
+        g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+        g.stroke(); g.shadowBlur = 0;
+      };
+      trace([[16,64],[200,64],[200,200],[460,200]]);
+      trace([[64,16],[64,300],[300,300],[300,496]]);
+      trace([[16,400],[160,400],[160,260],[420,260],[420,496]]);
+      trace([[360,16],[360,120],[496,120]]);
+      trace([[240,440],[496,440]]);
+      // via pads (bright cyan dots) at a few junctions
+      const pad = (x, y) => {
+        g.fillStyle = 'rgba(140,245,255,.95)'; g.shadowColor = 'rgba(120,240,255,.9)'; g.shadowBlur = 8;
+        g.beginPath(); g.arc(x, y, 5, 0, Math.PI*2); g.fill(); g.shadowBlur = 0;
+      };
+      pad(200,64); pad(200,200); pad(64,300); pad(300,300); pad(160,260); pad(420,260); pad(360,120);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    if (t.repeat && t.repeat.set) t.repeat.set(48, 48);   // tile across the big plane → fine PCB detail
+    return t;
+  }
+
+  /* ============================================================
+   *  applyTwinMode(on) — toggle the Digital-Twin overlay. ON: save +
+   *  swap background/fog to dark navy + subtle fog, reveal the circuit
+   *  ground, route the frame through the bloom composer. OFF: restore
+   *  the SAVED background/fog (byte-identical to before), hide the
+   *  circuit ground, render via renderer.render. HUD/text stays DOM
+   *  (never routed through bloom). Works in EVERY section.
+   * ============================================================ */
+  function applyTwinMode(on){
+    twinMode = !!on;
+    if (typeof THREE !== 'undefined' && scene){
+      if (twinMode){
+        // save the CURRENT background + fog ONCE so OFF restores exactly what the day/night cycle had.
+        if (!twinSaved.saved){ twinSaved.background = scene.background; twinSaved.fog = scene.fog; twinSaved.saved = true; }
+        scene.background = new THREE.Color(0x040a16);                 // dark navy "twin" backdrop
+        scene.fog = new THREE.Fog(0x040a16, 140, 620);                // subtle depth fog (looser than the world fog)
+        if (circuitGround) circuitGround.visible = true;
+      } else {
+        // restore the saved look (do NOT clobber the live day/night colours with a stale copy if never saved)
+        if (twinSaved.saved){ scene.background = twinSaved.background; scene.fog = twinSaved.fog; twinSaved.saved = false; }
+        if (circuitGround) circuitGround.visible = false;
+      }
+    }
+    const btn = (typeof $ === 'function') ? $('btn-twin') : null;
+    if (btn && btn.setAttribute) btn.setAttribute('aria-pressed', twinMode ? 'true' : 'false');
+  }
 
   /* ============================================================
    *  DAY / NIGHT LIGHTING CYCLE (global; VIEW-ONLY — touches lights/background/fog only).
@@ -3860,9 +4167,24 @@
     }
     if (lightAmbient) lightAmbient.intensity = s.ambI;
     // SKY: background + fog share one tone (day blue → sunset orange → deep night-blue, never black).
-    if (scene){
+    // SKIP while the Digital-Twin overlay owns the backdrop (it set a fixed dark-navy bg/fog in
+    // applyTwinMode); retinting here would clobber it every frame. OFF restores the saved bg/fog and
+    // this resumes — byte-identical to before.
+    if (scene && !twinMode){
       if (scene.background && scene.background.copy) scene.background.copy(C.sky);
       if (scene.fog && scene.fog.color && scene.fog.color.copy) scene.fog.color.copy(C.sky);
+    }
+    // DIGITAL-TWIN circuit ground: keep it centred under the active camera (so it spans whatever scene is
+    // shown — world or far-flung diorama) and scroll its PCB texture as a slow "data pulse". Motion gated
+    // by reduced-motion. Cheap; runs only while twinMode is ON and the ground exists.
+    if (twinMode && circuitGround){
+      if (cam && cam.position && circuitGround.position && circuitGround.position.set){
+        circuitGround.position.set(cam.position.x, 0.02, cam.position.z);
+      }
+      if (!reduceMotion && circuitMat && circuitMat.map && circuitMat.map.offset && dt > 0){
+        circuitMat.map.offset.x = (circuitMat.map.offset.x + dt * 0.04) % 1;
+        circuitMat.map.offset.y = (circuitMat.map.offset.y + dt * 0.018) % 1;
+      }
     }
   }
 
@@ -3905,8 +4227,18 @@
   }
   function resize(){
     if (!renderer) return;
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    cam.aspect = window.innerWidth / window.innerHeight; cam.updateProjectionMatrix();
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h);
+    cam.aspect = w / h; cam.updateProjectionMatrix();
+    // DIGITAL-TWIN post stack: keep the composer + bloom + FXAA resolutions in sync (guarded; no-op when
+    // the composer was never built — offline / headless). The composer render path itself runs only in
+    // Twin mode in the browser frame loop, never headless.
+    if (composer && composer.setSize) composer.setSize(w, h);
+    if (bloomPass && bloomPass.resolution && bloomPass.resolution.set) bloomPass.resolution.set(w, h);
+    if (fxaaPass && fxaaPass.material && fxaaPass.material.uniforms && fxaaPass.material.uniforms.resolution){
+      const pr = renderer.getPixelRatio ? renderer.getPixelRatio() : 1;
+      fxaaPass.material.uniforms.resolution.value.set(1/(w*pr), 1/(h*pr));
+    }
   }
 
   /* ============================================================
@@ -4342,8 +4674,9 @@
       drawMaps();
       ingestViewTick();
       drawHudFlow();
+      drawTwinHud();                           // PHASE 2: crisp DOM telemetry overlay (only the digital-twin section shows it)
       if (!reduceMotion) renderTape();
-      renderer.render(scene, cam);
+      renderFrameGL();                         // Twin bloom composer when ON, else renderer.render (as today)
       return;                                  // factory streaming/camera path is skipped for dioramas
     }
 
@@ -4417,7 +4750,7 @@
     // money-flow diagram (particles ∝ real per-tick ledger deltas; static under reduced-motion/replay)
     drawHudFlow();
 
-    renderer.render(scene, cam);
+    renderFrameGL();                           // Twin bloom composer when ON, else renderer.render (as today)
   }
 
   /* ============================================================
@@ -4918,11 +5251,17 @@
     };
     $('btn-cam').onclick = () => setCamMode(camMode === 'map' ? 'roam' : 'map');
     $('btn-view').onclick = resetView;
+    // DIGITAL-TWIN render-mode toggle (view-only neon hologram over the active scene). A manual toggle clears
+    // twinAuto so the digital-twin section's auto-restore won't later override the user's explicit choice.
+    const twinBtn = $('btn-twin');
+    if (twinBtn) twinBtn.onclick = () => { twinAuto = false; applyTwinMode(!twinMode); };
 
     // keyboard: Space = play/pause (map) or fly-up (roam handled in loop), S/"." = step, V = camera
     window.addEventListener('keydown', e => {
       if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
       if (e.code === 'KeyV'){ e.preventDefault(); setCamMode(camMode === 'map' ? 'roam' : 'map'); return; }
+      // KeyB: toggle the DIGITAL-TWIN render mode (neon hologram overlay). View-only; works in every scene.
+      if (e.code === 'KeyB'){ e.preventDefault(); twinAuto = false; applyTwinMode(!twinMode); return; }
       // KeyT: pause/resume the DAY/NIGHT auto-cycle (optional, unobtrusive). Pausing freezes the
       // current sky; pausing has no effect under reduced-motion (the clock is already held at midday).
       if (e.code === 'KeyT'){ e.preventDefault(); todPaused = !todPaused; return; }
@@ -5110,6 +5449,103 @@
       const flows = MagnateViz.financeFlows(world, mapsFrame());
       MagnateViz.drawMoneyFlow(cv, flows, { theme: mapsTheme(), reducedMotion: reduceMotion, paused: replaying() });
     } catch(_){ /* decoration — never break the page */ }
+  }
+
+  /* ============================================================
+   *  DIGITAL-TWIN HUD (PHASE 2) — crisp DOM telemetry drawn on small canvases (gauges + waveform +
+   *  spectrum). Drawn OUTSIDE the bloom canvas so it stays razor-sharp. The dials are DECORATIVE but
+   *  data-shaped: "load/RPM" tracks the displayed-frame leaderboard spread (top vs median net worth),
+   *  the spectrum bars come from the 4-account per-tick ledger deltas, the waveform is a synth trace.
+   *  VIEW-ONLY: reads the displayed frame only; never steps/mutates the economy. Motion-gated.
+   * ============================================================ */
+  let _twinHudPhase = 0;
+  function sizeTwinCanvas(cv){
+    // match the CSS pixel box (devicePixelRatio-aware) once it differs, so lines stay crisp.
+    const dpr = (typeof devicePixelRatio === 'number' && devicePixelRatio > 0) ? devicePixelRatio : 1;
+    const w = cv.clientWidth || 130, h = cv.clientHeight || 70;
+    const W = Math.max(1, Math.round(w * dpr)), H = Math.max(1, Math.round(h * dpr));
+    if (cv.width !== W) cv.width = W;
+    if (cv.height !== H) cv.height = H;
+    return { W, H };
+  }
+  function twinGauge(cv, frac, label, hex){
+    const g = cv.getContext && cv.getContext('2d'); if (!g || !g.beginPath) return;
+    const { W, H } = sizeTwinCanvas(cv);
+    g.clearRect(0, 0, W, H);
+    const cx = W / 2, cy = H * 0.92, R = Math.min(W, H * 1.7) * 0.42;
+    const a0 = Math.PI * 0.85, a1 = Math.PI * 2.15;     // 230° sweep
+    g.lineWidth = Math.max(4, R * 0.16); g.lineCap = 'round';
+    g.strokeStyle = '#103048';                          // track
+    g.beginPath(); g.arc(cx, cy, R, a0, a1); g.stroke();
+    g.strokeStyle = hex;                                // value arc
+    g.beginPath(); g.arc(cx, cy, R, a0, a0 + (a1 - a0) * Math.max(0, Math.min(1, frac))); g.stroke();
+    g.fillStyle = '#dff6ff'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.font = 'bold ' + Math.round(R * 0.5) + 'px Segoe UI';
+    g.fillText(label, cx, cy - R * 0.18);
+  }
+  function drawTwinHud(){
+    if (activeSection !== 'digital-twin') return;
+    const moving = !reduceMotion && !replaying();
+    if (moving) _twinHudPhase += 0.05;
+    // displayed-frame telemetry (decorative): leaderboard spread → load; ledger deltas → spectrum
+    let load = 0.6, temp = 0.55, rpm = 0;
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){
+        const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        load = Math.max(0.05, Math.min(1, (med ? top / (med * 2) : 0.6)));
+        rpm = Math.round(8000 + load * 9000);
+        temp = Math.max(0.1, Math.min(1, 0.4 + load * 0.5));
+      }
+    } catch(_){}
+    try {
+      const lg = $('twin-g-load'); if (lg) twinGauge(lg, load, Math.round(load*100) + '%', '#3fd6ff');
+      const tg = $('twin-g-temp'); if (tg) twinGauge(tg, temp, Math.round(420 + temp*480) + '°', '#ff9a3f');
+    } catch(_){}
+    // waveform — a synth vibration trace (gentle when load low). Crisp polyline on its own canvas.
+    try {
+      const cv = $('twin-wave'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#3fd6ff';
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W;
+          const ph = _twinHudPhase + i * 0.32;
+          const y = H/2 + Math.sin(ph) * (H*0.30) * (0.4 + load*0.6)
+                        + Math.sin(ph * 2.7) * (H*0.12) * load;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
+    // spectrum — bars from the 4-account |per-tick delta| (real ledger flow). Static under replay/reduced-motion.
+    try {
+      const cv = $('twin-spec'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        let flows = {};
+        try { flows = MagnateViz.financeFlows(world, mapsFrame()) || {}; } catch(_){}
+        const accts = (world.ACCOUNTS || Object.keys(flows));
+        const vals = accts.map(a => Math.abs(flows[a] || 0));
+        const mx = Math.max(1, ...vals);
+        const n = Math.max(1, vals.length), bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const wobble = moving ? (0.85 + 0.15 * Math.abs(Math.sin(_twinHudPhase + i))) : 1;
+          const bh = Math.max(2, (vals[i] / mx) * (H - 6) * wobble);
+          const c = twinHeatColor(i / Math.max(1, n - 1));
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+    const rEl = $('twin-rpm'); if (rEl) rEl.textContent = rpm ? rpm.toLocaleString() : '—';
+    const fEl = $('twin-flow');
+    if (fEl){
+      let net = 0; try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; for (const k in fl) net += Math.abs(fl[k]); } catch(_){}
+      fEl.textContent = net ? fmt$(net) : '—';
+    }
   }
 
   // Set the ledger TWEEN targets to the displayed-frame values; under reduced-motion/replay snap instantly.
@@ -5974,12 +6410,270 @@
     } catch(_){ /* headless / no 2d ctx — ignore */ }
   }
 
+  /* ============================================================
+   *  🛰️ DIGITAL-TWIN HERO SCENE (PHASE 2) — the poster centerpiece.
+   *  A procedural turbine/jet-engine rendered TWICE: a SOLID emissive-metal
+   *  "physical" engine and, overlaid, a glowing cyan WIREFRAME "digital twin"
+   *  (EdgesGeometry, additive). A SCAN plane sweeps physical→twin (the
+   *  "scanning" read). A heat-flow particle stream (THREE.Points) runs along
+   *  the engine axis THROUGH the turbine, coloured by a viridis/jet Lut
+   *  colormap (cold inlet → hot exhaust). A slowly-rotating NODE NETWORK
+   *  (Points + faint LineSegments) frames the hero, and a few holographic
+   *  framed panels float beside it. Renders through the bloom composer (the
+   *  section auto-enables twinMode). DECORATIVE + VIEW-ONLY: no userData.firmId,
+   *  never pushed to pickables, never steps the economy. Headless-safe: every
+   *  THREE call no-ops cleanly under the stub; Lut is guarded with a fallback.
+   * ============================================================ */
+  const TWIN_CYAN = 0x6fe9ff, TWIN_DEEP = 0x123a52;
+  const TWIN_BLADES = 18;        // fan blades around the hub
+  const TWIN_HEAT_N = 600;       // heat-flow particles (Points) along the axis
+  const TWIN_AX = 60;            // axial half-length of the engine (inlet at -AX, exhaust at +AX-ish)
+  const TWIN_NODES = 26;         // framing node-network points
+
+  // viridis-ish colormap sample t∈[0,1] → {r,g,b} 0..1. Prefers THREE.Lut ('rainbow'/'cooltowarm') when
+  // present, else a hand-rolled cold-blue → cyan → green → amber → hot-red ramp (the "multi-physics" jet read).
+  let _twinLut = null;
+  function twinHeatColor(t){
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    if (_twinLut && _twinLut.getColor){
+      try { const c = _twinLut.getColor(t); if (c && c.r !== undefined) return { r: c.r, g: c.g, b: c.b }; } catch(_){}
+    }
+    // fallback ramp (jet-like): blue → cyan → green → yellow → red
+    const stops = [
+      [0.00, 0.05, 0.10, 0.55], [0.25, 0.10, 0.75, 0.85],
+      [0.50, 0.15, 0.85, 0.45], [0.75, 0.95, 0.80, 0.20], [1.00, 0.95, 0.18, 0.12],
+    ];
+    for (let i = 0; i < stops.length - 1; i++){
+      const a = stops[i], b = stops[i+1];
+      if (t >= a[0] && t <= b[0]){
+        const f = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+        return { r: a[1] + (b[1]-a[1])*f, g: a[2] + (b[2]-a[2])*f, b: a[3] + (b[3]-a[3])*f };
+      }
+    }
+    return { r: 0.95, g: 0.18, b: 0.12 };
+  }
+
+  // build ONE engine assembly (hub + fan blades + nacelle ring + exhaust cone) under a group, returning it.
+  // `mode` = 'solid' (emissive metal) or 'wire' (additive cyan wireframe overlay). Shared simple geos.
+  function twinEngineAssembly(mode){
+    const grp = new THREE.Group();
+    const wire = (mode === 'wire');
+    const addMesh = (geo, hex, ei) => {
+      let mat;
+      if (wire){
+        // glowing cyan wireframe: EdgesGeometry → LineSegments, additive (crosses the bloom threshold)
+        const eg = (typeof THREE.EdgesGeometry === 'function') ? new THREE.EdgesGeometry(geo) : geo;
+        const m = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: TWIN_CYAN,
+          transparent: true, opacity: 0.85,
+          blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2), depthWrite: false }));
+        grp.add(m); return m;
+      }
+      mat = new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(TWIN_CYAN),
+        emissiveIntensity: ei !== undefined ? ei : 0.18, roughness: 0.32, metalness: 0.7 });
+      const m = new THREE.Mesh(geo, mat); grp.add(m); return m;
+    };
+    // nacelle ring (the engine cowling) — a torus-like open cylinder around the fan
+    const nacelle = addMesh(new THREE.CylinderGeometry(15, 15, 30, 28, 1, true), TWIN_DEEP, 0.12);
+    nacelle.rotation.z = Math.PI / 2; nacelle.position.x = -TWIN_AX * 0.18;
+    // hub (central spinner cone) + drive shaft
+    const hub = addMesh(new THREE.ConeGeometry(5, 16, 24), 0x1a4a64, 0.22);
+    hub.rotation.z = -Math.PI / 2; hub.position.x = -TWIN_AX * 0.18 - 16;
+    const shaft = addMesh(new THREE.CylinderGeometry(2.4, 2.4, 64, 18), 0x16384e, 0.14);
+    shaft.rotation.z = Math.PI / 2;
+    // fan of blades — a ring of thin tapered boxes, rotates as a sub-group ("fanSpin")
+    const fan = new THREE.Group(); fan.position.x = -TWIN_AX * 0.18; grp.add(fan);
+    for (let i = 0; i < TWIN_BLADES; i++){
+      const blade = addMesh(new THREE.BoxGeometry(1.0, 13, 3.0), 0x2a6f90, 0.2);
+      const ang = (i / TWIN_BLADES) * Math.PI * 2;
+      blade.position.set(0, Math.cos(ang) * 9.5, Math.sin(ang) * 9.5);
+      blade.rotation.x = ang; blade.rotation.z = 0.35;   // slight pitch
+      fan.add(blade);
+    }
+    // a second, smaller compressor stage downstream
+    const fan2 = new THREE.Group(); fan2.position.x = 14; grp.add(fan2);
+    for (let i = 0; i < TWIN_BLADES; i++){
+      const blade = addMesh(new THREE.BoxGeometry(0.8, 8, 2.2), 0x2a6f90, 0.2);
+      const ang = (i / TWIN_BLADES) * Math.PI * 2 + 0.2;
+      blade.position.set(0, Math.cos(ang) * 6.5, Math.sin(ang) * 6.5);
+      blade.rotation.x = ang; blade.rotation.z = -0.3;
+      fan2.add(blade);
+    }
+    // exhaust cone (the nozzle) at the rear
+    const exhaust = addMesh(new THREE.CylinderGeometry(6, 11, 22, 24, 1, true), 0x143546, 0.16);
+    exhaust.rotation.z = Math.PI / 2; exhaust.position.x = TWIN_AX * 0.5;
+    return { grp, fan, fan2 };
+  }
+
+  function buildDigitalTwinScene(){
+    const g = buildSceneRoot('digital-twin');
+    g.add(labelSpriteSafe('🛰️ DIGITAL TWIN · turbine multi-physics', '#8af5ff', 28, 0, 70, 0));
+    // try to grab a real Lut colormap (guarded — falls back to twinHeatColor's ramp if unavailable)
+    if (!_twinLut && typeof THREE !== 'undefined' && typeof THREE.Lut === 'function'){
+      try { _twinLut = new THREE.Lut('rainbow', 64); } catch(_){ _twinLut = null; }
+    }
+    const root = new THREE.Group(); root.position.y = 30; g.add(root);
+
+    // (1) HERO — SOLID physical engine + overlaid translucent WIREFRAME twin, both on the same axis.
+    const solid = twinEngineAssembly('solid');
+    root.add(solid.grp);
+    const twin = twinEngineAssembly('wire');
+    twin.grp.scale.setScalar(1.012);                 // a hair larger so the wire reads ON TOP of the solid skin
+    root.add(twin.grp);
+
+    // soft additive halo cylinder around the whole engine (volumetric "hologram field")
+    const halo = new THREE.Mesh(new THREE.CylinderGeometry(20, 20, 110, 28, 1, true),
+      new THREE.MeshBasicMaterial({ color: TWIN_CYAN, transparent: true, opacity: 0.05, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2),
+        side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2) }));
+    halo.rotation.z = Math.PI / 2; root.add(halo);
+
+    // (1b) SCAN/SWEEP plane — a thin bright disc that travels along the axis (physical→twin scanning read)
+    const scan = new THREE.Mesh(new THREE.CircleGeometry(19, 40),
+      new THREE.MeshBasicMaterial({ color: 0xbafcff, transparent: true, opacity: 0.5, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2),
+        side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2) }));
+    scan.rotation.y = Math.PI / 2; root.add(scan);
+    const scanRing = new THREE.Mesh(new THREE.TorusGeometry(19, 0.5, 8, 48),
+      new THREE.MeshBasicMaterial({ color: 0xeaffff, transparent: true, opacity: 0.9, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+    scanRing.rotation.y = Math.PI / 2; root.add(scanRing);
+
+    // (2) HEAT-FLOW — a THREE.Points stream along the axis THROUGH the turbine, viridis/jet-coloured by
+    //     axial position (cold inlet → hot exhaust). Positions/colours animate in updateDigitalTwinScene.
+    let heat = null, heatPos = null, heatPhase = null;
+    if (typeof THREE.BufferAttribute === 'function' && typeof THREE.Points === 'function'){
+      const geo = new THREE.BufferGeometry();
+      heatPos = new Float32Array(TWIN_HEAT_N * 3);
+      const col = new Float32Array(TWIN_HEAT_N * 3);
+      heatPhase = new Float32Array(TWIN_HEAT_N);
+      for (let i = 0; i < TWIN_HEAT_N; i++){
+        const ph = i / TWIN_HEAT_N;                  // 0..1 axial param (deterministic spread)
+        heatPhase[i] = ph;
+        const ang = i * 2.39996;                     // golden-angle swirl around the axis
+        const rad = 1.5 + (i % 9) * 0.9;
+        const x = -TWIN_AX + ph * (TWIN_AX * 2);
+        heatPos[i*3] = x; heatPos[i*3+1] = Math.cos(ang) * rad; heatPos[i*3+2] = Math.sin(ang) * rad;
+        const c = twinHeatColor(ph);
+        col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(heatPos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      heat = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.7, vertexColors: true,
+        transparent: true, opacity: 0.95, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+      root.add(heat);
+    }
+
+    // (3) CONTEXT — a slowly-rotating NODE NETWORK framing the hero: Points on a deterministic sphere shell
+    //     + faint LineSegments wiring nearest neighbours. Decorative scaffold (NOT economy data).
+    const netSpin = new THREE.Group(); root.add(netSpin);
+    let netPoints = null, netLines = null;
+    if (typeof THREE.BufferAttribute === 'function' && typeof THREE.Points === 'function'){
+      const npos = new Float32Array(TWIN_NODES * 3);
+      const R = 52;
+      const pts = [];
+      for (let i = 0; i < TWIN_NODES; i++){
+        const y = 1 - (i / Math.max(1, TWIN_NODES - 1)) * 2;
+        const rad = Math.sqrt(Math.max(0, 1 - y*y));
+        const th = i * 2.39996;
+        const p = [Math.cos(th)*rad*R, y*R*0.6, Math.sin(th)*rad*R];
+        pts.push(p); npos[i*3] = p[0]; npos[i*3+1] = p[1]; npos[i*3+2] = p[2];
+      }
+      const ngeo = new THREE.BufferGeometry();
+      ngeo.setAttribute('position', new THREE.BufferAttribute(npos, 3));
+      netPoints = new THREE.Points(ngeo, new THREE.PointsMaterial({ color: TWIN_CYAN, size: 2.2,
+        transparent: true, opacity: 0.85, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+      netSpin.add(netPoints);
+      // wire each node to its 2 nearest neighbours (deterministic, sparse → faint constellation)
+      const seg = [];
+      for (let i = 0; i < pts.length; i++){
+        const d = pts.map((q, j) => ({ j, d: (q[0]-pts[i][0])**2 + (q[1]-pts[i][1])**2 + (q[2]-pts[i][2])**2 }))
+          .filter(o => o.j !== i).sort((a,b) => a.d - b.d).slice(0, 2);
+        for (const o of d){ seg.push(pts[i][0], pts[i][1], pts[i][2], pts[o.j][0], pts[o.j][1], pts[o.j][2]); }
+      }
+      if (typeof THREE.LineSegments === 'function'){
+        const lgeo = new THREE.BufferGeometry();
+        lgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(seg), 3));
+        netLines = new THREE.LineSegments(lgeo, new THREE.LineBasicMaterial({ color: 0x2f88b8,
+          transparent: true, opacity: 0.28, depthWrite: false,
+          blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) }));
+        netSpin.add(netLines);
+      }
+    }
+
+    // (3b) holographic framed panels — thin emissive-bordered planes floating beside the hero (HUD-in-world)
+    const panels = [];
+    const mkPanel = (w, h, x, y, z, ry) => {
+      const pg = new THREE.Group(); pg.position.set(x, y, z); pg.rotation.y = ry;
+      const fill = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ color: 0x0a2236, transparent: true, opacity: 0.34, depthWrite: false,
+          side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2) }));
+      pg.add(fill);
+      // emissive border via EdgesGeometry of the plane (crisp glowing frame)
+      if (typeof THREE.EdgesGeometry === 'function' && typeof THREE.LineSegments === 'function'){
+        const border = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h)),
+          new THREE.LineBasicMaterial({ color: TWIN_CYAN, transparent: true, opacity: 0.9,
+            blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2), depthWrite: false }));
+        pg.add(border);
+      }
+      root.add(pg); panels.push(pg); return pg;
+    };
+    mkPanel(34, 20, -58, 34, -20, 0.5);
+    mkPanel(30, 18,  62, 30,  18, -0.6);
+    mkPanel(26, 15,  58, -2, -34, -0.4);
+
+    sceneState['digital-twin'] = {
+      root, solid, twin, scan, scanRing, halo,
+      heat, heatPos, heatPhase, netSpin, panels, t: 0,
+    };
+  }
+
+  // animate the hero: spin the fans, sweep the scan plane, advance the heat-flow particles. Motion-gated
+  // (frozen under reduced-motion or while replaying). VIEW-ONLY — no economy reads required, but it does
+  // glance at the displayed leaderboard spread purely to MODULATE the visual RPM (decorative only).
+  function updateDigitalTwinScene(){
+    const st = sceneState['digital-twin']; if (!st) return;
+    const moving = !reduceMotion && !replaying();
+    // gentle hero presence even when static: keep meshes valid. Advance the clock only when moving.
+    if (moving) st.t += 0.016;
+    const t = st.t;
+    // fan spin (both stages), counter-rotating slightly for parallax
+    if (st.solid){ if (st.solid.fan) st.solid.fan.rotation.x = t * 1.6; if (st.solid.fan2) st.solid.fan2.rotation.x = -t * 1.1; }
+    if (st.twin){ if (st.twin.fan) st.twin.fan.rotation.x = t * 1.6; if (st.twin.fan2) st.twin.fan2.rotation.x = -t * 1.1; }
+    // scan plane sweeps -AX..+AX and back (ping-pong); freeze at centre when not moving
+    if (st.scan && st.scan.position){
+      const sweep = -TWIN_AX + (0.5 + 0.5 * Math.sin(t * 0.6)) * (TWIN_AX * 2);
+      st.scan.position.x = sweep; if (st.scanRing) st.scanRing.position.x = sweep;
+    }
+    // node-network slow turn
+    if (st.netSpin && moving) st.netSpin.rotation.y = t * 0.12;
+    // heat-flow particles stream toward the exhaust; recycle past the rear; jet/viridis colour ∝ axial pos.
+    if (st.heat && st.heatPos && st.heatPhase && st.heat.geometry && st.heat.geometry.attributes
+        && st.heat.geometry.attributes.position){
+      if (moving){
+        const span = TWIN_AX * 2;
+        for (let i = 0; i < TWIN_HEAT_N; i++){
+          let ph = (st.heatPhase[i] + t * 0.18) % 1; if (ph < 0) ph += 1;
+          const ang = i * 2.39996 + t * 0.8;
+          const rad = 1.5 + (i % 9) * 0.9 * (1 + ph * 0.6);   // gently fan out toward the exhaust
+          st.heatPos[i*3]   = -TWIN_AX + ph * span;
+          st.heatPos[i*3+1] = Math.cos(ang) * rad;
+          st.heatPos[i*3+2] = Math.sin(ang) * rad;
+        }
+        const a = st.heat.geometry.attributes.position;
+        if (a) a.needsUpdate = true;
+      }
+    }
+  }
+
   function buildSectionScenes(){
     if (typeof THREE === 'undefined' || !scene) return;
     buildMarketScene();
     buildFinanceScene();
     buildNetworkScene();
     buildLeaderboardScene();
+    buildDigitalTwinScene();
     // dioramas hidden until their section is active (factory is the default visible world)
     for (const s in sceneGroups) sceneGroups[s].visible = false;
     updateSectionScenes();
@@ -5992,6 +6686,7 @@
     try { updateFinanceScene(); } catch(_){}
     try { updateNetworkScene(); } catch(_){}
     try { updateLeaderboardScene(); } catch(_){}
+    try { updateDigitalTwinScene(); } catch(_){}
   }
 
   // Aim the orbit-stage camera at a section's pivot and (re)arm the rotation transition.
@@ -6061,6 +6756,15 @@
   function selectSection(section){
     if (SECTIONS.indexOf(section) < 0) return;
     activeSection = section;
+    // PHASE 2: the Digital-Twin hero section is the hologram centerpiece — auto-enable the bloom render path
+    // so it glows. We only AUTO-flip the mode (recording twinAuto) so we don't fight a manual toggle: leaving
+    // the section while still auto-on restores the prior look. If the composer is unavailable applyTwinMode
+    // still runs (the navy backdrop + circuit ground show; the scene renders via renderer.render, less glow).
+    if (section === 'digital-twin'){
+      if (!twinMode){ twinAuto = true; applyTwinMode(true); }
+    } else if (twinAuto){
+      twinAuto = false; applyTwinMode(false);
+    }
     const isWorld = WORLD_SECTIONS.includes(section);
     // visibility: the four WORLD sections (factory + smart-city/-factory + shopping-mall) all reveal the
     // ONE streamed origin world (central economy + streamed chunks + sky floor); the data dioramas are
@@ -6151,6 +6855,13 @@
       if (activeSection === 'market')  setMapsMode('market');
       else if (activeSection === 'finance') setMapsMode('finance');
       else if (activeSection === 'network') setMapsMode('network');
+    }
+    // PHASE 2: show the crisp DOM Digital-Twin HUD overlay ONLY while that section is active.
+    const th = $('twin-hud');
+    if (th){
+      const on = activeSection === 'digital-twin';
+      if (th.classList) th.classList.toggle('on', on);
+      if (th.setAttribute) th.setAttribute('aria-hidden', on ? 'false' : 'true');
     }
   }
   function wireSections(){
@@ -6247,7 +6958,8 @@
     },
 
     // ---- per-section 3D background scenes (rotating stage) ----
-    // the five scene names (market/factory/finance/network/leaderboard).
+    // the scene names (market/factory/smart-city/smart-factory/shopping-mall/finance/network/leaderboard/
+    // digital-twin). The harness asserts the 5 CORE sections are present + that selection is view-only.
     sections(){ return SECTIONS.slice(); },
     // set the active section (and trigger the UI rotation). VIEW-ONLY: never steps/mutates the economy.
     selectSection(s){ selectSection(s); return activeSection; },
