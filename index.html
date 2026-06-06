@@ -204,6 +204,10 @@
   .twinhud .tmeta{display:flex;justify-content:space-between;font-size:11px;color:#9fd8f5;margin-top:7px}
   .twinhud .tmeta b{color:#dff6ff}
   @media (prefers-reduced-motion: reduce){ .twinhud h3 .tdot{box-shadow:none} }
+  /* SMART-FACTORY telemetry HUD (PHASE 2) — reuses the .twinhud chrome; only one of #twin-hud / #sf-hud is
+     ever shown (digital-twin vs smart-factory section), so they can share the same anchor. Slightly taller. */
+  .twinhud.sfhud{top:128px;left:10px}
+  .twinhud.sfhud .tdot{background:#46ffd0;box-shadow:0 0 6px #46ffd0}
 
   /* ---------- leaderboard rows act as buttons (keyboard-accessible firm inspect) ---------- */
   tr.lbrow{cursor:pointer}
@@ -317,6 +321,25 @@
     <div class="tspec-cap">Throughput spectrum</div>
     <canvas class="tspec" id="twin-spec" role="img" aria-label="Throughput spectrum"></canvas>
     <div class="tmeta"><span>RPM <b id="twin-rpm">—</b></span><span>Δflow <b id="twin-flow">—</b></span></div>
+  </aside>
+
+  <!-- ===== SMART-FACTORY telemetry HUD (PHASE 2): factory KPIs (throughput / per-stage temperature spectrum /
+       AGV+AMR utilisation / robot vibration+RPM / data-rate+OEE) — a crisp DOM overlay shown ONLY when the
+       smart-factory section is active; drawn on DPR-aware canvases OUTSIDE the bloom canvas. ===== -->
+  <aside class="twinhud sfhud" id="sf-hud" aria-label="Smart factory telemetry" aria-hidden="true">
+    <h3><span class="tdot" aria-hidden="true"></span>Smart Factory · Line Telemetry</h3>
+    <div class="tgauges">
+      <div class="tgauge"><canvas id="sf-g-oee" role="img" aria-label="Overall equipment effectiveness gauge"></canvas><div class="tglabel">OEE</div></div>
+      <div class="tgauge"><canvas id="sf-g-util" role="img" aria-label="AGV and AMR utilisation gauge"></canvas><div class="tglabel">AGV/AMR Util</div></div>
+    </div>
+    <div class="tspec-cap">Stage temperature spectrum</div>
+    <canvas class="tspec" id="sf-temp" role="img" aria-label="Per-stage machine temperature spectrum"></canvas>
+    <div class="tspec-cap">Data-transformation flow · raw → packaged</div>
+    <canvas class="tspec" id="sf-flow" role="img" aria-label="Per-stage data-transformation flow"></canvas>
+    <div class="twave-cap">Robot vibration waveform</div>
+    <canvas class="twave" id="sf-vib" role="img" aria-label="Robot vibration waveform"></canvas>
+    <div class="tmeta"><span>Throughput <b id="sf-thru">—</b></span><span>RPM <b id="sf-rpm">—</b></span></div>
+    <div class="tmeta"><span>Data-rate <b id="sf-rate">—</b></span><span>Δledger <b id="sf-led">—</b></span></div>
   </aside>
 
   <!-- ===== top-left: region + coordinate readout (the world's compass) ===== -->
@@ -1680,6 +1703,37 @@
   const sfArms      = [];   // robot-arm groups to oscillate { grp, seg1, seg2, baseZ1, baseZ2, phase } (guarded if swapped)
   const sfWorkers   = [];   // workers walking the aisles { grp, path, L, dir, speed, u, phase, stride, baseY, legA, legB, armA, armB }
   const sfForklifts = [];   // forklifts driving a deterministic aisle path  { mesh, path, L, dir, speed, u, baseY }
+  // ===== SMART-FACTORY DIGITAL-TWIN OVERLAYS (PHASE 1) — three pillars: STRUCTURE (a glowing-cyan wireframe
+  // "twin" of the shell/machines/conveyors/racks), PHYSICS (per-machine thermal emissive colormaps, a conveyor
+  // flow-field tint, a featured-machine heat-flow Points stream, robot-arm vibration), and the scan-sweep. ALL
+  // of this is a CHILD GROUP of the hall group (so it hides/shows with the hall) and is shown ONLY in twin-mode
+  // — fully reversible (twin-mode OFF restores the plain procedural hall). DECORATIVE + VIEW-ONLY: nothing here
+  // is pickable or tagged userData.firmId. Headless-safe (EdgesGeometry/Points/Lut all guarded; the frame loop
+  // never runs headless). Built once by buildSmartFactoryTwin() at the tail of buildSmartFactoryHall().
+  let sfTwinWire   = null;  // GROUP of additive cyan LineSegments (shell + machines + conveyor frames + racks) — shown only in twin-mode
+  let sfTwinScan   = null;  // { plane, ring, span0, span1 } — a bright plane that sweeps across the hall (the "scan into view" read)
+  let sfTwinHeat   = null;  // { points, pos, phase, base } — featured-machine heat-flow Points stream (multi-physics exemplar)
+  const sfThermal  = [];    // per-machine thermal records { mat, base, temp, act, label, lmat } — emissive tinted by twinHeatColor(temp)
+  const sfBeltFlow = [];    // conveyor flow-field strips  { mat, base, hue } — flowing-field colourmap over the moving goods
+  let sfTwinOn     = false; // whether the factory twin overlays are currently shown (mirrors twin-mode while the hall is active)
+  let sfTwinT      = 0;     // twin-overlay animation clock (advances only in twin-mode + !reduceMotion)
+  const SF_CX = 600, SF_CZ = 0, SF_HALL_W = 150, SF_HALL_D = 100;   // hall centre + footprint (mirrors buildSmartFactoryHall)
+  // ===== DATA-TRANSFORMATION FLOW (PHASE 2) — the third digital-twin pillar. Data PACKETS (small emissive
+  // pulses) flow along the production line in supply-chain STAGE order (raw → processed → fabricated →
+  // assembled → packaged), coloured by stage, visibly carrying material/data through the transformation.
+  // Thin stage-to-stage CONNECTOR lines link the stage anchors; per-stage STATE labels ride the HUD. The
+  // packet rate/intensity is tied to REAL sim throughput (per-tick production / ledger deltas) where
+  // available (read-only), else a sensible illustrative rate. ALL of this is a CHILD of the twin root group
+  // (shown ONLY in twin-mode), bounded (capped packet count), reduced-motion-gated, and reversible.
+  let sfFlowGrp    = null;  // GROUP of the connector lines + packet meshes (child of sfTwinWire; hidden off-twin)
+  const sfPackets  = [];    // flowing data packets { mesh, mat, baseHue, u, speed, seg, stageFrom, stageTo } — alloc-free per frame
+  const sfStages   = [];    // stage anchors { x, z, y, hue, name } in supply-chain order (raw→…→packaged)
+  let sfFlowRate   = 0.5;   // packet-flow intensity in [0,1], driven by sim throughput each HUD frame (read-only)
+  // ===== TELEMETRY DOM HUD (PHASE 2) — crisp DOM overlay (#sf-hud) shown ONLY while the smart-factory section
+  // is active: line THROUGHPUT, per-stage machine TEMPERATURE spectrum (jet bars), AGV/AMR UTILISATION, robot
+  // VIBRATION/RPM, and a DATA-RATE/OEE gauge. Drawn on DPR-aware DOM <canvas>es OUTSIDE the bloom canvas,
+  // driven by the economy/sim data (view-only) + the PHASE 1 physics values. Reuses drawTwinHud patterns. =====
+  let _sfHudPhase  = 0;     // HUD animation phase (advances only when live + motion; frozen under replay/reduced-motion)
 
   // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
   // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
@@ -2633,6 +2687,16 @@
     // length of a closed polyline (wraps last→first) so a cursor can advance in metres
     const loopLen = (pts) => { let L = 0; for (let i=0;i<pts.length;i++){ const a=pts[i], b=pts[(i+1)%pts.length]; L += Math.hypot(b.x-a.x, b.z-a.z); } return L; };
 
+    // ---- TWIN-OVERLAY COLLECTORS (PHASE 1) — captured as the PHYSICAL hall is built so buildSmartFactoryTwin()
+    // can trace a wireframe twin over the same boxes WITHOUT re-deriving geometry. Each entry is {mesh} (a
+    // shell/conveyor box), a per-station group, or a rack group. Capped at build (shell + machines + conveyor
+    // frames + featured) so the wireframe stays bounded. Cleared/owned per build; the twin reads them once. ----
+    const twinShellMeshes = [];   // shell boxes (walls/roof truss/skylights) → wireframe twin of the building
+    const twinConvMeshes  = [];   // conveyor belt-body boxes → wireframe twin of the line frames
+    const twinMachineGrps = [];   // per-station GROUPS (mg) → wireframe twin + thermal physics per machine
+    const twinRackGrps    = [];   // rack GROUPS (rg) → wireframe twin of the racking
+    const beltEdges       = [];   // each conveyor edge { onX, len, mx, mz, y, reg, gspeed } → flow-field strips
+
     // ===== 1) ENCLOSED BUILDING SHELL =====
     // FLOOR slab (the closed-space floor)
     const floor = add(A.box, slabMat, HALL_W, 0.4, HALL_D, CX, -0.2, CZ); floor.receiveShadow = true;
@@ -2640,6 +2704,9 @@
     // industrial building (not a black box) + a thin base/cap trim. Walls inset to the footprint edge.
     const bandH = WALL_H * 0.45, glazeH = WALL_H * 0.5, glazeY = bandH + glazeH/2;
     const wall = (cx, cz, lenX, lenZ) => {
+      // capture the FULL-HEIGHT wall envelope (one box from base→cap) for the wireframe twin so the building
+      // reads as a glowing cyan shell — NOT the small band/glaze/trim slices individually (bounded + clean).
+      twinShellMeshes.push({ s:[lenX, WALL_H, lenZ], p:[cx, WALL_H/2, cz] });
       add(A.box, wallMat,    lenX, bandH, lenZ, cx, bandH/2, cz);                 // lower opaque band
       add(A.box, glazeMat,   lenX*0.98, glazeH, lenZ*0.98, cx, glazeY, cz);       // translucent window band
       add(A.box, wallTrimMat,lenX*1.01, 0.5, lenZ*1.01, cx, WALL_H, cz);          // top cap trim
@@ -2661,9 +2728,11 @@
     const beamY = WALL_H + 0.4;
     for (let i = -3; i <= 3; i++){                          // X-spanning beams (along X), spaced in Z
       add(A.box, trussMat, HALL_W*0.98, 0.4, 0.6, CX, beamY, CZ + i*(HALL_D/7));
+      twinShellMeshes.push({ s:[HALL_W*0.98, 0.4, 0.6], p:[CX, beamY, CZ + i*(HALL_D/7)] });
     }
     for (let i = -4; i <= 4; i++){                          // Z-spanning beams (along Z), spaced in X
       add(A.box, trussMat, 0.5, 0.4, HALL_D*0.98, CX + i*(HALL_W/9), beamY + 0.5, CZ);
+      twinShellMeshes.push({ s:[0.5, 0.4, HALL_D*0.98], p:[CX + i*(HALL_W/9), beamY + 0.5, CZ] });
     }
     for (const sx of [-1, 1]) for (const sz of [-1, 0, 1]){ // skylight panels (translucent, glow at night)
       add(A.box, glazeMat, HALL_W*0.18, 0.2, HALL_D*0.2, CX + sx*HALL_W*0.26, beamY + 0.9, CZ + sz*HALL_D*0.28);
@@ -2696,9 +2765,14 @@
         const belt = new THREE.Mesh(A.box, A.beltMat);
         if (onX) belt.scale.set(len + 2.4, 0.7, 2.4); else belt.scale.set(2.4, 0.7, len + 2.4);
         belt.position.set(mx, beltTopY - 0.35, mz); belt.castShadow = true; TG.add(belt);
+        twinConvMeshes.push({ s:[belt.scale.x, belt.scale.y, belt.scale.z], p:[mx, beltTopY - 0.35, mz] });
         const line = new THREE.Mesh(A.box, A.beltLineMat);
         if (onX) line.scale.set(len, 0.06, 0.4); else line.scale.set(0.4, 0.06, len);
         line.position.set(mx, beltTopY + 0.42, mz); TG.add(line);
+        // PHYSICS — CONVEYOR FLOW: remember this belt edge so the twin can lay a DEDICATED flow-field strip
+        // (its OWN material — never the shared A.beltLineMat) over it, tinted by throughput/velocity. The
+        // loop's product register + belt speed read distinctly per line. (reg/gspeed captured in buildLoop.)
+        beltEdges.push({ onX, len, mx, mz, y: beltTopY + 0.55, reg, gspeed });
       }
       // GOODS circulating the closed loop (rigid groups slid by the animator; never fall off — it's a loop).
       // makeGood already returns a THREE.Group, so it IS the swappable item group: drop a small 'crate'.glb
@@ -2738,6 +2812,12 @@
       const vH = mh*0.45 + 0.6;
       part(A.cyl, A.ventMat, 0.5, vH, 0.5, mw*0.28, 0.3 + mh + vH*0.5, -md*0.28);
       TG.add(mg);
+      // TWIN capture: the per-station group (for a wireframe twin of the housing) + a deterministic THERMAL
+      // baseline. Furnace/extraction registers (reg2/reg3) read HOTTEST; the activity term (set per frame from
+      // the arm/throughput) modulates on top. The housing's bounding box (centred on the group) lets the twin
+      // seat a dedicated emissive THERMAL SHELL (its OWN material — the shared A.machineMat is never mutated).
+      const baseTemp = (reg === 3 ? 0.82 : reg === 2 ? 0.70 : reg === 1 ? 0.42 : 0.30) + hrand()*0.08;
+      twinMachineGrps.push({ grp: mg, mw, mh, md, reg, baseTemp, phase: hrand()*6.283 });
       swapFactoryVisual(mg, 'machine', mh + 0.9);             // procedural station until machine.glb is dropped in
       // PROMINENT robot arm working at the station — built into its OWN group so a 'robotarm'.glb can swap it.
       // The group sits AT the station (mx,mz) and the arm is built in LOCAL space (ax=az=0) so a swapped model
@@ -2747,7 +2827,11 @@
       const ag = new THREE.Group(); ag.position.set(mx, 0, mz);
       const a = makeRobotArm(ag, 0, 0, mh + 0.3, 0.5 + hrand()*0.4, -0.8 - hrand()*0.5);
       TG.add(ag);
-      sfArms.push({ grp: ag, seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z, phase: hrand()*6.283 });
+      // VIBRATION/RPM characteristic (PHASE 1 physics): a deterministic per-arm RPM + vibration amplitude.
+      // In twin-mode the animator adds a small extra high-frequency jitter (vib) on top of the base sweep;
+      // the rpm value is surfaced to the HUD in PHASE 2. Decorative.
+      sfArms.push({ grp: ag, seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z,
+                    phase: hrand()*6.283, rpm: Math.round(1200 + hrand()*2400), vib: 0.015 + hrand()*0.02 });
       swapFactoryVisual(ag, 'robotarm', mh + 1.0);            // procedural arm until robotarm.glb is dropped in
     };
     // stations along the OUTER long edges of each loop
@@ -2771,6 +2855,8 @@
       rpart(A.box, rackMat, 6.5, 0.3, 5, 0, 6.0, 0);                 // upper shelf
       rpart(A.box, A.goodMat[i % 4], 1.6, 1.4, 1.6, 0, 3.6, 0);      // stage-themed tote (goods palette) for read
       TG.add(rg);
+      // TWIN capture: the rack envelope (uprights span y∈[0,9], width 6.5, depth 5) → a clean box wireframe.
+      twinRackGrps.push({ p:[rcx, 4.5, rcz], s:[7, 9, 5] });
       swapFactoryVisual(rg, 'rack', 9);                              // procedural rack until rack.glb is dropped in
     }
     // CONTROL BOOTH in a back corner: a small raised box with a glazed front
@@ -2935,10 +3021,333 @@
     for (const rec of sfAGVs) swapFactoryVisual(rec.mesh, 'agv', 1.5);
     for (const rec of sfAMRs) swapFactoryVisual(rec.mesh, 'amr', 1.0);
 
+    // ===== 8) DIGITAL-TWIN OVERLAYS (PHASE 1) — build the wireframe twin + physics fields as a CHILD GROUP of
+    // the hall (so they hide/show with it). Shown ONLY in twin-mode (see applyFactoryTwin). All decorative +
+    // headless-safe + reversible. Built last so the collectors above are fully populated. =====
+    buildSmartFactoryTwin(TG, { CX, CZ, HALL_W, HALL_D, WALL_H, hw, hd, beltTopY,
+      shell: twinShellMeshes, conv: twinConvMeshes, machines: twinMachineGrps, racks: twinRackGrps, beltEdges });
+
     TG.position.y = 0;
     TG.visible = false;                                     // DEFAULT HIDDEN — PHASE 2 reveals it for smart-factory
     smartFactoryGroup = TG;
     scene.add(TG);
+  }
+
+  /* ============================================================
+   *  SMART-FACTORY DIGITAL-TWIN OVERLAYS (PHASE 1) — buildSmartFactoryTwin(TG, info)
+   *  Turns the procedural hall into a genuine DIGITAL TWIN by overlaying the holographic style already built
+   *  for the Digital-Twin hero (cyan EdgesGeometry wireframe, viridis/jet heat-flow Points, a scan-sweep plane,
+   *  thermal colourmaps via twinHeatColor). Three pillars:
+   *    STRUCTURE — a glowing-cyan WIREFRAME twin (EdgesGeometry → additive LineSegments, exactly the
+   *                twinEngineAssembly('wire') recipe) of the SHELL (walls + roof truss), each MACHINE station,
+   *                the CONVEYOR frames, and the racks. A SCAN-SWEEP plane (the hero scan) travels across the
+   *                hall so the twin "scans" into view.
+   *    PHYSICS  — per-machine THERMAL emissive shells (twinHeatColor(temp); furnace stations hottest) + a heat
+   *                value-marker, a CONVEYOR FLOW-FIELD strip over each belt (throughput/velocity colourmap), a
+   *                FEATURED machine with a heat-flow Points stream (the hero turbine stream + Lut), and a
+   *                vibration/RPM characteristic on the robot arms (animated in animateSmartFactory).
+   *  Everything is a CHILD of `sfTwinWire`/per-pillar groups parented to the hall group TG; default HIDDEN
+   *  (applyFactoryTwin reveals/restores). VIEW-ONLY: nothing pickable, no userData.firmId. Headless-safe: every
+   *  THREE constructor is guarded; the wireframe/Points/Lut all no-op cleanly under the stub.
+   * ============================================================ */
+  function buildSmartFactoryTwin(TG, info){
+    if (typeof THREE === 'undefined' || !TG) return;
+    const CYAN = 0x6fe9ff;
+    const ADD  = (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2);
+    // try to grab a real Lut colormap (guarded — twinHeatColor falls back to its ramp if unavailable), exactly
+    // as the hero section does, so the factory physics share the SAME multi-physics jet/viridis read.
+    if (!_twinLut && typeof THREE.Lut === 'function'){ try { _twinLut = new THREE.Lut('rainbow', 64); } catch(_){ _twinLut = null; } }
+
+    // ROOT twin group — a child of the hall so it hides/shows with the hall; default HIDDEN until twin-mode.
+    const root = new THREE.Group(); root.visible = false; TG.add(root);
+    sfTwinWire = root;
+
+    // ---- STRUCTURE: a box-wireframe helper (EdgesGeometry of a unit box → additive cyan LineSegments, scaled
+    //      + placed). Reuses twinEngineAssembly('wire')'s exact material recipe so the read matches the hero. ----
+    const wireBox = (parent, sx,sy,sz, px,py,pz, opacity) => {
+      let geo;
+      if (typeof THREE.EdgesGeometry === 'function'){
+        try { geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)); } catch(_){ geo = new THREE.BoxGeometry(1,1,1); }
+      } else { geo = new THREE.BoxGeometry(1,1,1); }
+      const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: CYAN,
+        transparent: true, opacity: (opacity !== undefined ? opacity : 0.7),
+        blending: ADD, depthWrite: false }));
+      if (m.scale && m.scale.set) m.scale.set(sx,sy,sz);
+      if (m.position && m.position.set) m.position.set(px,py,pz);
+      parent.add(m); return m;
+    };
+    // SHELL twin (walls + roof truss) — one cyan wire box per captured shell element (bounded: ~4 walls + ~16
+    // truss beams). The building reads as a glowing wireframe envelope.
+    const shellG = new THREE.Group(); root.add(shellG);
+    for (const s of info.shell) wireBox(shellG, s.s[0], s.s[1], s.s[2], s.p[0], s.p[1], s.p[2], 0.55);
+    // CONVEYOR-FRAME twin — a cyan wire box per belt-body segment (bounded: 2 loops × 4 edges).
+    const convG = new THREE.Group(); root.add(convG);
+    for (const c of info.conv) wireBox(convG, c.s[0], c.s[1], c.s[2], c.p[0], c.p[1], c.p[2], 0.8);
+    // RACK twin — a cyan wire box per rack envelope (bounded: 5 racks).
+    const rackG = new THREE.Group(); root.add(rackG);
+    for (const r of info.racks) wireBox(rackG, r.s[0], r.s[1], r.s[2], r.p[0], r.p[1], r.p[2], 0.6);
+
+    // ---- STRUCTURE + PHYSICS: per-MACHINE twin (housing wireframe) + THERMAL emissive shell + heat value.
+    //      The thermal shell is a TRANSLUCENT additive box (its OWN material) a hair larger than the housing,
+    //      tinted each frame by twinHeatColor(temp). A tiny floating value-marker rides above (a small bright
+    //      sprite-less box sized by temp → a crisp "gauge"). The shared A.machineMat is NEVER touched. ----
+    const machG = new THREE.Group(); root.add(machG);
+    for (const mInfo of info.machines){
+      const g = mInfo.grp;                                  // the station group (already at (mx,0,mz))
+      const hh = mInfo.mh, hy = mInfo.mh/2 + 0.3;           // housing height + centre (LOCAL to the group)
+      // build the wire + thermal shell in the STATION's LOCAL frame by parenting a small group at its origin
+      // (so the twin tracks the station spot, and a swapped 'machine'.glb keeps the overlay seated correctly).
+      const tg = new THREE.Group(); if (tg.position && tg.position.copy) tg.position.copy(g.position); machG.add(tg);
+      wireBox(tg, mInfo.mw*1.005, hh*1.005, mInfo.md*1.005, 0, hy, 0, 0.85);   // housing wire twin
+      // THERMAL SHELL — additive translucent box (own MeshBasicMaterial; tinted by twinHeatColor each frame)
+      const shellMat = new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.18,
+        blending: ADD, depthWrite: false });
+      const thermal = new THREE.Mesh(A0box(), shellMat);
+      if (thermal.scale && thermal.scale.set) thermal.scale.set(mInfo.mw*1.04, hh*1.04, mInfo.md*1.04);
+      if (thermal.position && thermal.position.set) thermal.position.set(0, hy, 0);
+      tg.add(thermal);
+      // floating HEAT value-marker — a thin bright bar above the machine whose height/colour reads the temp.
+      const markMat = new THREE.MeshBasicMaterial({ color: 0xff9a3f, transparent: true, opacity: 0.9,
+        blending: ADD, depthWrite: false });
+      const mark = new THREE.Mesh(A0box(), markMat);
+      if (mark.scale && mark.scale.set) mark.scale.set(0.5, 2.2, 0.5);
+      if (mark.position && mark.position.set) mark.position.set(0, hh + 2.6, 0);
+      tg.add(mark);
+      sfThermal.push({ shellMat, markMat, mark, base: mInfo.baseTemp, reg: mInfo.reg, phase: mInfo.phase, temp: mInfo.baseTemp });
+    }
+
+    // ---- PHYSICS: CONVEYOR FLOW-FIELD strips — a DEDICATED thin emissive strip lying over each belt centre
+    //      (its OWN MeshBasicMaterial; the shared A.beltLineMat is never mutated). Tinted by a flowing
+    //      throughput/velocity colourmap each frame so the belt reads as a moving field. ----
+    const flowG = new THREE.Group(); root.add(flowG);
+    for (const e of info.beltEdges){
+      const fmat = new THREE.MeshBasicMaterial({ color: 0x2fe6ff, transparent: true, opacity: 0.85,
+        blending: ADD, depthWrite: false });
+      const strip = new THREE.Mesh(A0box(), fmat);
+      if (strip.scale && strip.scale.set){ if (e.onX) strip.scale.set(e.len, 0.05, 0.7); else strip.scale.set(0.7, 0.05, e.len); }
+      if (strip.position && strip.position.set) strip.position.set(e.mx, e.y, e.mz);
+      flowG.add(strip);
+      // throughput proxy = belt speed (faster line = hotter flow); register varies the base hue offset.
+      sfBeltFlow.push({ fmat, flow: e.gspeed / 5, hueOff: (e.reg * 0.12) });
+    }
+
+    // ---- PHYSICS: FEATURED machine — a heat-flow Points stream THROUGH it (the hero turbine stream + Lut),
+    //      the multi-physics exemplar. Pick the HOTTEST machine (furnace reg3) as the featured station; run a
+    //      compact vertical heat plume rising through its vent, viridis/jet-coloured by height (cold base →
+    //      hot top), animated in animateSmartFactory. Bounded particle count. Guarded headless-safe. ----
+    let featured = null;
+    for (const mInfo of info.machines){ if (!featured || mInfo.reg > featured.reg) featured = mInfo; }
+    if (featured && typeof THREE.BufferAttribute === 'function' && typeof THREE.Points === 'function'){
+      const N = 200;                                         // bounded heat-flow particles (the exemplar)
+      const geo = new THREE.BufferGeometry();
+      const pos = new Float32Array(N*3), col = new Float32Array(N*3), phase = new Float32Array(N);
+      const baseX = featured.grp.position.x, baseZ = featured.grp.position.z;
+      const topY = featured.mh + 4.5;                        // plume rises from the deck up past the vent
+      for (let i = 0; i < N; i++){
+        const ph = i / N; phase[i] = ph;
+        const ang = i * 2.39996;                             // golden-angle swirl
+        const rad = 0.4 + (i % 7) * 0.18;
+        pos[i*3]   = baseX + Math.cos(ang) * rad;
+        pos[i*3+1] = 0.5 + ph * topY;
+        pos[i*3+2] = baseZ + Math.sin(ang) * rad;
+        const c = twinHeatColor(ph);
+        col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.9, vertexColors: true,
+        transparent: true, opacity: 0.95, depthWrite: false, blending: ADD }));
+      root.add(pts);
+      sfTwinHeat = { points: pts, pos, phase, baseX, baseZ, topY, N };
+    }
+
+    // ---- STRUCTURE: SCAN-SWEEP plane — a thin bright plane (+ leading ring) that travels across the hall
+    //      along +X (the "scan into view" read), reusing the hero scan recipe. Spans the hall height/depth. ----
+    if (typeof THREE.PlaneGeometry === 'function'){
+      const scanG = new THREE.Group(); root.add(scanG);
+      const planeMat = new THREE.MeshBasicMaterial({ color: 0xbafcff, transparent: true, opacity: 0.16,
+        blending: ADD, depthWrite: false, side: (THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2) });
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(info.HALL_D, info.WALL_H + 4), planeMat);
+      if (plane.rotation) plane.rotation.y = Math.PI/2;       // face along X so it sweeps across the hall
+      if (plane.position && plane.position.set) plane.position.set(info.CX - info.HALL_W*0.5, (info.WALL_H)/2, info.CZ);
+      scanG.add(plane);
+      sfTwinScan = { plane, x0: info.CX - info.HALL_W*0.5, x1: info.CX + info.HALL_W*0.5 };
+    }
+
+    // ---- DATA TRANSFORMATION (PHASE 2, the third pillar) — material/data flowing + transforming through the
+    //      production line. Build the stage anchors + connector lines + the flowing data packets here, as a
+    //      CHILD of `root` so they hide/show with the twin. ----
+    buildSmartFactoryFlow(root, info, { CYAN, ADD });
+  }
+
+  /* ============================================================
+   *  DATA-TRANSFORMATION FLOW (PHASE 2) — buildSmartFactoryFlow(root, info, opts)
+   *  The third digital-twin pillar: material/data visibly TRANSFORMING through the production line. Lays out
+   *  five SUPPLY-CHAIN STAGE anchors in canonical order (raw → processed → fabricated → assembled → packaged),
+   *  anchored on the real hall topology (the furnace/extraction stations feed the fabrication loop, which feeds
+   *  the packaging loop), draws thin emissive STAGE-TO-STAGE CONNECTOR lines between them (stage-coloured), and
+   *  seeds a bounded pool of small emissive PACKET pulses that travel each connector from stage to stage. Each
+   *  packet is coloured by the stage it is travelling between (it visibly "carries" the transformation forward).
+   *  Per-stage STATE labels live in the HUD (drawSfHud). All a CHILD of the twin root → shown only in twin-mode,
+   *  reversible, bounded, reduced-motion-gated (animated in animateSmartFactoryTwin). Headless-safe: every THREE
+   *  constructor is guarded; nothing pickable / no userData.firmId. The packet RATE is driven read-only by sim
+   *  throughput each HUD frame via `sfFlowRate` (see drawSfHud).
+   * ============================================================ */
+  function buildSmartFactoryFlow(root, info, opts){
+    if (typeof THREE === 'undefined' || !root) return;
+    const ADD = opts.ADD;
+    const CX = info.CX, CZ = info.CZ, y = info.beltTopY + 2.2;   // float just above the belts/goods
+    sfFlowGrp = new THREE.Group(); sfFlowGrp.visible = true;     // child of the (hidden) root → tracks twin visibility
+    root.add(sfFlowGrp);
+    sfStages.length = 0;
+    // FIVE supply-chain stages, anchored on the real hall topology. Hue = stage colour (0..1 along the jet ramp).
+    // raw (extraction, east furnace reg3 wall) → processed (west furnace reg2 wall) → fabricated (north loop A) →
+    // assembled (central spine) → packaged (south loop B / dock). Positions mirror buildSmartFactoryHall.
+    const stageDefs = [
+      { name: 'RAW',        hue: 0.04, x: CX + info.hw - 12, z: CZ },                    // extraction furnace (reg3)
+      { name: 'PROCESSED',  hue: 0.30, x: CX - info.hw + 12, z: CZ },                    // refining furnace (reg2)
+      { name: 'FABRICATED', hue: 0.52, x: CX - 24,           z: CZ - 27 },               // north loop A (fabrication)
+      { name: 'ASSEMBLED',  hue: 0.74, x: CX,                z: CZ },                     // central assembly spine
+      { name: 'PACKAGED',   hue: 0.94, x: CX + 24,           z: CZ + 27 },               // south loop B (packaging)
+    ];
+    for (const s of stageDefs) sfStages.push({ name: s.name, hue: s.hue, x: s.x, y, z: s.z });
+
+    // small floating STAGE MARKER (a bright stage-coloured node) at each anchor so the path reads in-scene too.
+    for (const s of sfStages){
+      const c = twinHeatColor(s.hue);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x66ffff, transparent: true, opacity: 0.92,
+        blending: ADD, depthWrite: false });
+      if (mat.color && mat.color.setRGB) mat.color.setRGB(c.r, c.g, c.b);
+      const node = new THREE.Mesh(A0box(), mat);
+      if (node.scale && node.scale.set) node.scale.set(1.3, 1.3, 1.3);
+      if (node.position && node.position.set) node.position.set(s.x, s.y, s.z);
+      sfFlowGrp.add(node);
+    }
+
+    // STAGE-TO-STAGE CONNECTOR LINES — a thin emissive line between consecutive stage anchors (the data path).
+    // LineSegments of stage-pair endpoints (cheap; reuses the additive cyan recipe but tinted toward the
+    // downstream stage hue so the path reads as transforming colour). Headless-safe (guarded).
+    if (typeof THREE.BufferGeometry === 'function' && typeof THREE.BufferAttribute === 'function'){
+      for (let i = 0; i < sfStages.length - 1; i++){
+        const a = sfStages[i], b = sfStages[i+1];
+        const geo = new THREE.BufferGeometry();
+        const pos = new Float32Array([ a.x, a.y, a.z, b.x, b.y, b.z ]);
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        const c = twinHeatColor((a.hue + b.hue) * 0.5);
+        const lmat = (typeof THREE.LineBasicMaterial === 'function')
+          ? new THREE.LineBasicMaterial({ color: 0x66ffff, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false })
+          : new THREE.MeshBasicMaterial({ color: 0x66ffff });
+        if (lmat.color && lmat.color.setRGB) lmat.color.setRGB(c.r, c.g, c.b);
+        const line = (typeof THREE.Line === 'function') ? new THREE.Line(geo, lmat) : new THREE.Mesh(geo, lmat);
+        sfFlowGrp.add(line);
+      }
+    }
+
+    // FLOWING DATA PACKETS — a BOUNDED pool of small emissive pulses, PK per connector, travelling stage→stage.
+    // Each packet rides one segment with an arc-length cursor `u`∈[0,1); when it reaches the downstream stage it
+    // recycles to the start of the SAME segment (so each segment continuously feeds the next stage). The packet
+    // is tinted toward the downstream stage hue (it "becomes" the next stage's material as it arrives). Alloc-free
+    // per frame (the animator only writes position/scale/colour on these pre-built meshes). Bounded: (stages-1)×PK.
+    sfPackets.length = 0;
+    const PK = 5;                                              // packets per connector (bounded)
+    for (let seg = 0; seg < sfStages.length - 1; seg++){
+      const a = sfStages[seg], b = sfStages[seg+1];
+      for (let k = 0; k < PK; k++){
+        const mat = new THREE.MeshBasicMaterial({ color: 0x88ffff, transparent: true, opacity: 0.95,
+          blending: ADD, depthWrite: false });
+        const mesh = new THREE.Mesh(A0box(), mat);
+        if (mesh.scale && mesh.scale.set) mesh.scale.set(0.7, 0.7, 0.7);
+        sfFlowGrp.add(mesh);
+        sfPackets.push({ mesh, mat, seg, ax: a.x, ay: a.y, az: a.z, bx: b.x, by: b.y, bz: b.z,
+          hueFrom: a.hue, hueTo: b.hue, u: k / PK, speed: 0.35 + seg * 0.05 });
+      }
+    }
+  }
+  // shared unit-box geo for twin overlay solids (built once; reused). Headless-safe.
+  let _sfTwinBoxGeo = null;
+  function A0box(){
+    if (_sfTwinBoxGeo) return _sfTwinBoxGeo;
+    _sfTwinBoxGeo = (chunkAssets && chunkAssets.box) ? chunkAssets.box : new THREE.BoxGeometry(1,1,1);
+    return _sfTwinBoxGeo;
+  }
+
+  /* applyFactoryTwin(on) — show/hide the smart-factory digital-twin overlays. ON: reveal sfTwinWire (wireframe
+   * twin + physics fields + scan). OFF: hide them all (the plain procedural PHYSICAL hall remains) + reset any
+   * tinted overlay materials to a neutral idle so a later ON starts clean. Idempotent + headless-safe. The
+   * solid procedural hall is NEVER hidden — the wireframe is an ADDITIVE overlay, so OFF leaves zero residual. */
+  function applyFactoryTwin(on){
+    sfTwinOn = !!on;
+    if (sfTwinWire){ sfTwinWire.visible = sfTwinOn; }
+    if (!sfTwinOn){
+      // reset physics tints to a calm idle so re-enabling looks fresh (no residual heat baked in)
+      for (const t of sfThermal){ if (t.shellMat && t.shellMat.color) t.shellMat.color.setHex(0x3fd6ff); }
+      // reset DATA-TRANSFORMATION packets to a neutral idle (no residual transformed-colour baked in)
+      for (let i = 0; i < sfPackets.length; i++){ const p = sfPackets[i];
+        if (p.mat && p.mat.color && p.mat.color.setHex){ p.mat.color.setHex(0x88ffff); p.mat.opacity = 0.95; } }
+    }
+  }
+  /* animateSmartFactoryTwin(dt) — advance the twin PHYSICS + scan. Gated by the caller to twin-mode +
+   * smart-factory active + !reduceMotion. Alloc-free (scalar maths + colour/scale/position writes on pre-built
+   * meshes). Headless-safe (never runs headless; the render loop doesn't run in the harness). */
+  function animateSmartFactoryTwin(dt){
+    if (!sfTwinOn || !sfTwinWire) return;
+    sfTwinT += dt; const T = sfTwinT;
+    // THERMAL — each machine's temperature = deterministic baseline + an activity wobble; tint its emissive
+    // shell via twinHeatColor(temp) (cold→hot) and size/colour the floating heat value-marker.
+    for (let i = 0; i < sfThermal.length; i++){ const t = sfThermal[i];
+      const act = 0.12 * (0.5 + 0.5 * Math.sin(T*0.8 + t.phase));   // activity modulation (0..0.12)
+      t.temp = Math.max(0, Math.min(1, t.base + act));
+      const c = twinHeatColor(t.temp);
+      if (t.shellMat && t.shellMat.color){ t.shellMat.color.setRGB(c.r, c.g, c.b); t.shellMat.opacity = 0.12 + t.temp*0.16; }
+      if (t.markMat && t.markMat.color){ t.markMat.color.setRGB(c.r, c.g, c.b); }
+      if (t.mark && t.mark.scale && t.mark.scale.set) t.mark.scale.set(0.5, 1.2 + t.temp*3.2, 0.5);
+    }
+    // CONVEYOR FLOW — flowing throughput/velocity colourmap: animate each strip's tint along the jet ramp by a
+    // travelling phase (flow rate ∝ belt speed), so the belt reads as a moving field.
+    for (let i = 0; i < sfBeltFlow.length; i++){ const b = sfBeltFlow[i];
+      if (!b.fmat || !b.fmat.color) continue;
+      const u = (0.5 + 0.5 * Math.sin(T * (0.6 + b.flow) + i*0.7)) * 0.7 + b.hueOff;
+      const c = twinHeatColor(Math.max(0, Math.min(1, u)));
+      b.fmat.color.setRGB(c.r, c.g, c.b);
+    }
+    // FEATURED heat-flow — particles rise through the featured machine; recycle past the top; viridis/jet
+    // colour already baked per particle by axial param (constant). Only positions stream.
+    if (sfTwinHeat && sfTwinHeat.points && sfTwinHeat.points.geometry && sfTwinHeat.points.geometry.attributes
+        && sfTwinHeat.points.geometry.attributes.position){
+      const H = sfTwinHeat;
+      for (let i = 0; i < H.N; i++){
+        let ph = (H.phase[i] + T * 0.22) % 1; if (ph < 0) ph += 1;
+        const ang = i * 2.39996 + T * 0.9;
+        const rad = 0.4 + (i % 7) * 0.18 * (1 + ph * 0.5);
+        H.pos[i*3]   = H.baseX + Math.cos(ang) * rad;
+        H.pos[i*3+1] = 0.5 + ph * H.topY;
+        H.pos[i*3+2] = H.baseZ + Math.sin(ang) * rad;
+      }
+      const a = H.points.geometry.attributes.position; if (a) a.needsUpdate = true;
+    }
+    // SCAN-SWEEP — the bright plane travels across the hall (ping-pong), so the twin "scans" into view.
+    if (sfTwinScan && sfTwinScan.plane && sfTwinScan.plane.position){
+      const f = 0.5 + 0.5 * Math.sin(T * 0.35);
+      sfTwinScan.plane.position.x = sfTwinScan.x0 + (sfTwinScan.x1 - sfTwinScan.x0) * f;
+    }
+    // DATA TRANSFORMATION — advance each packet along its connector; recycle at the downstream stage; tint it
+    // from the upstream→downstream stage hue along its progress so it visibly "transforms" into the next stage's
+    // material as it arrives. Flow rate scales with sfFlowRate (driven read-only by sim throughput in drawSfHud).
+    // Alloc-free (scalar lerps + position/scale/colour writes on pre-built meshes).
+    const rate = 0.5 + sfFlowRate;                            // [0.5..1.5] illustrative-to-busy
+    for (let i = 0; i < sfPackets.length; i++){ const p = sfPackets[i];
+      p.u += p.speed * rate * dt;
+      if (p.u >= 1) p.u -= Math.floor(p.u);                   // recycle to the start of the same segment
+      const u = p.u;
+      if (p.mesh && p.mesh.position && p.mesh.position.set){
+        p.mesh.position.set(p.ax + (p.bx - p.ax) * u, p.ay + (p.by - p.ay) * u, p.az + (p.bz - p.az) * u);
+      }
+      // size pulse (a travelling "data pulse") + transforming colour (upstream hue → downstream hue)
+      const pulse = 0.55 + 0.35 * Math.abs(Math.sin(T * 3 + p.seg + p.u * 6.283));
+      if (p.mesh && p.mesh.scale && p.mesh.scale.set) p.mesh.scale.set(pulse, pulse, pulse);
+      const c = twinHeatColor(p.hueFrom + (p.hueTo - p.hueFrom) * u);
+      if (p.mat && p.mat.color && p.mat.color.setRGB){ p.mat.color.setRGB(c.r, c.g, c.b); p.mat.opacity = 0.7 + 0.25 * pulse; }
+    }
   }
 
   /* animateSmartFactory(dt) — advance the ENCLOSED HALL's motion: loop goods circulate the CLOSED conveyor
@@ -2963,11 +3372,14 @@
     // swapped the procedural arm (seg1/seg2 hidden), oscillate the GROUP's swapped model root instead so the
     // arm still reads as alive — and never touch the hidden segs (guard so nothing throws after a swap).
     for (let i = 0; i < sfArms.length; i++){ const a = sfArms[i];
+      // VIBRATION (twin-mode only): a tiny high-frequency jitter on top of the base sweep ∝ the arm's rpm,
+      // so the twin reads the machine's mechanical character. Zero off-twin (the procedural arm is unchanged).
+      const vib = sfTwinOn ? Math.sin(T * (8 + (a.rpm||1800)/300) + a.phase) * (a.vib||0) : 0;
       if (a.seg1 && a.seg1.visible){
-        a.seg1.rotation.z = a.baseZ1 + Math.sin(T*0.9 + a.phase)*0.30;
-        a.seg2.rotation.z = a.baseZ2 + Math.sin(T*1.1 + a.phase + 1.0)*0.30;
+        a.seg1.rotation.z = a.baseZ1 + Math.sin(T*0.9 + a.phase)*0.30 + vib;
+        a.seg2.rotation.z = a.baseZ2 + Math.sin(T*1.1 + a.phase + 1.0)*0.30 + vib;
       } else if (a.grp){
-        a.grp.rotation.y = Math.sin(T*0.7 + a.phase)*0.25;   // swapped model: gentle whole-arm sweep
+        a.grp.rotation.y = Math.sin(T*0.7 + a.phase)*0.25 + vib;   // swapped model: gentle whole-arm sweep
       } }
     // WORKERS: walk aisle loops with limb swing + step bob (matches the plaza/streamed worker read)
     for (let i = 0; i < sfWorkers.length; i++){ const w = sfWorkers[i];
@@ -4078,6 +4490,10 @@
     }
     const btn = (typeof $ === 'function') ? $('btn-twin') : null;
     if (btn && btn.setAttribute) btn.setAttribute('aria-pressed', twinMode ? 'true' : 'false');
+    // SMART-FACTORY twin overlays: show the wireframe twin + physics fields ONLY when twin-mode is ON AND the
+    // smart-factory section is active (the hall is the only theme that shows the hall). Toggling twin-mode OFF
+    // (B / Twin button) or leaving the section restores the plain procedural hall — fully reversible.
+    if (typeof applyFactoryTwin === 'function') applyFactoryTwin(twinMode && activeSection === 'smart-factory');
   }
 
   /* ============================================================
@@ -4589,7 +5005,13 @@
         // (the enclosed hall is that theme's slice). Gated by the !reduceMotion block above ⇒ all of its motion
         // (loop goods, AGVs, AMRs, robot arms, workers) freezes under reduced-motion. Alloc-free. The hall is
         // hidden under every other theme, so we skip its work entirely there.
-        if (activeSection === 'smart-factory') animateSmartFactory(dt);
+        if (activeSection === 'smart-factory'){
+          animateSmartFactory(dt);
+          // DIGITAL-TWIN overlays (PHASE 1): advance the physics fields + scan ONLY while the twin is shown
+          // (twin-mode ON + smart-factory active). Gated by this !reduceMotion block too → all twin motion
+          // freezes under reduced-motion (the wireframe + static thermal still render; only animation stops).
+          if (sfTwinOn) animateSmartFactoryTwin(dt);
+        }
       }
     }
 
@@ -4749,6 +5171,10 @@
     if (!reduceMotion) renderTape();
     // money-flow diagram (particles ∝ real per-tick ledger deltas; static under reduced-motion/replay)
     drawHudFlow();
+    // PHASE 2: crisp DOM SMART-FACTORY telemetry overlay (only the smart-factory world section shows it).
+    // Drawn here in the WORLD render path (smart-factory is a WORLD_SECTION, so it never takes the diorama
+    // path where drawTwinHud is called). drawSfHud is its own gate (activeSection === 'smart-factory').
+    drawSfHud();
 
     renderFrameGL();                           // Twin bloom composer when ON, else renderer.render (as today)
   }
@@ -5546,6 +5972,137 @@
       let net = 0; try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; for (const k in fl) net += Math.abs(fl[k]); } catch(_){}
       fEl.textContent = net ? fmt$(net) : '—';
     }
+  }
+
+  /* ============================================================
+   *  SMART-FACTORY TELEMETRY HUD (PHASE 2) — drawSfHud()
+   *  A crisp DOM overlay (#sf-hud) shown ONLY while the smart-factory section is active, drawn on DPR-aware
+   *  <canvas>es OUTSIDE the bloom canvas (so it stays razor-sharp). Factory KPIs, all VIEW-ONLY:
+   *    • THROUGHPUT  — real per-tick PRODUCTION proxy: this tick's cleared trade VOLUME (Σ vol) + |ledger flow|
+   *                    (the displayed-frame snapshot pair, never live-leaks). Also drives sfFlowRate (read-only)
+   *                    so the in-scene data packets speed up when the line is busy.
+   *    • OEE gauge   — leaderboard spread (top vs median net worth, the same proxy the twin HUD uses) ×
+   *                    average machine activity → a 0..1 "overall equipment effectiveness".
+   *    • AGV/AMR UTILISATION gauge — PHASE 1 fleet (AGV + AMR counts × their motion), modulated by throughput.
+   *    • per-stage TEMPERATURE spectrum — jet-coloured bars from the PHASE 1 sfThermal[].temp values, grouped
+   *      into the five supply-chain stages (twinHeatColor — the same multi-physics read as the 3D thermal shells).
+   *    • DATA-TRANSFORMATION flow spectrum — per-stage flow magnitude bars (stage-hue), reads the live throughput.
+   *    • robot VIBRATION/RPM waveform — a synth trace whose amplitude tracks the PHASE 1 arm vib×rpm characteristic.
+   *  Reuses sizeTwinCanvas/twinGauge/twinHeatColor. Motion-gated: the phase only advances when LIVE + !reduceMotion
+   *  + !replaying(); under replay/reduced-motion the canvases settle to static (final) values. Reads the displayed
+   *  frame only — NEVER steps/mutates the economy. Headless-safe (every getContext/canvas op is guarded + no-ops).
+   * ============================================================ */
+  function drawSfHud(){
+    if (activeSection !== 'smart-factory') return;
+    const moving = !reduceMotion && !replaying();
+    if (moving) _sfHudPhase += 0.05;
+
+    // ---- REAL sim THROUGHPUT (view-only): this tick's cleared trade volume from the displayed snapshot pair,
+    //      plus the |finance flow| magnitude. Drives the numbers, the flow-rate, and the gauges. ----
+    let thruVol = 0, ledgerNet = 0, load = 0.5;
+    try {
+      const vt = replaying() ? replayTick : world.tick;
+      const sa = world.snapshotAt(vt);
+      if (sa && sa.ev && Array.isArray(sa.ev.trades)){
+        for (const tr of sa.ev.trades){ if (tr && tr.vol > 0) thruVol += tr.vol; }
+      }
+    } catch(_){}
+    try { const fl = MagnateViz.financeFlows(world, mapsFrame()) || {}; for (const k in fl) ledgerNet += Math.abs(fl[k]); } catch(_){}
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){
+        const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        load = Math.max(0.05, Math.min(1, (med ? top / (med * 2) : 0.5)));
+      }
+    } catch(_){}
+    // illustrative-but-data-shaped flow intensity in [0,1]: trade volume saturates a soft curve (fallback 0.45
+    // when there is no captured trade volume so the line never looks dead). PUBLISHED read-only to the packets.
+    const flowI = thruVol > 0 ? Math.min(1, thruVol / 40) : (0.45 + 0.1 * load);
+    sfFlowRate = flowI;                                        // read-only hand-off to animateSmartFactoryTwin
+
+    // ---- PHASE 1 physics readbacks (decorative; computed once per frame) ----
+    let avgTemp = 0.5, avgVib = 0.02, rpm = 0;
+    if (sfThermal.length){ let s = 0; for (const t of sfThermal) s += (t.temp || t.base || 0.5); avgTemp = s / sfThermal.length; }
+    if (sfArms.length){ let sv = 0, sr = 0; for (const a of sfArms){ sv += (a.vib || 0); sr += (a.rpm || 0); }
+      avgVib = sv / sfArms.length; rpm = Math.round(sr / sfArms.length); }
+    const fleet = sfAGVs.length + sfAMRs.length;               // PHASE 1 logistics fleet size
+    const util  = Math.max(0.05, Math.min(1, 0.35 + 0.45 * flowI + 0.04 * fleet * 0.05));
+    const oee   = Math.max(0.05, Math.min(1, 0.45 * load + 0.35 * avgTemp + 0.20 * flowI));
+
+    // ---- GAUGES (reuse twinGauge): OEE + AGV/AMR utilisation ----
+    try {
+      const og = $('sf-g-oee');  if (og) twinGauge(og, oee, Math.round(oee*100) + '%', '#46ffd0');
+      const ug = $('sf-g-util'); if (ug) twinGauge(ug, util, Math.round(util*100) + '%', '#3fd6ff');
+    } catch(_){}
+
+    // ---- per-stage TEMPERATURE spectrum (jet-coloured bars): average sfThermal[].temp into the five stages,
+    //      coloured by twinHeatColor(temp) — the same multi-physics read as the 3D thermal shells. ----
+    try {
+      const cv = $('sf-temp'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        // bucket the thermal machines into 5 stage bands by index (stable order); fall back to a smooth ramp.
+        const NB = 5, sums = new Array(NB).fill(0), cnts = new Array(NB).fill(0);
+        for (let i = 0; i < sfThermal.length; i++){ const b = Math.min(NB - 1, Math.floor(i * NB / Math.max(1, sfThermal.length)));
+          sums[b] += (sfThermal[i].temp || sfThermal[i].base || 0.5); cnts[b]++; }
+        const bw = W / NB, pad = bw * 0.22;
+        for (let i = 0; i < NB; i++){
+          let temp = cnts[i] ? sums[i] / cnts[i] : (0.25 + 0.6 * (i / (NB - 1)));
+          const wobble = moving ? (0.9 + 0.1 * Math.abs(Math.sin(_sfHudPhase * 0.8 + i))) : 1;
+          const bh = Math.max(2, Math.min(1, temp) * (H - 6) * wobble);
+          const c = twinHeatColor(Math.max(0, Math.min(1, temp)));
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+
+    // ---- DATA-TRANSFORMATION flow spectrum: per-stage flow magnitude bars, coloured by stage hue (raw→packaged).
+    //      Magnitude = the live flow intensity with a small per-stage travelling pulse (the line "flowing"). ----
+    try {
+      const cv = $('sf-flow'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H);
+        const stages = sfStages.length ? sfStages : [{hue:0.04},{hue:0.30},{hue:0.52},{hue:0.74},{hue:0.94}];
+        const n = stages.length, bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const pulse = moving ? (0.55 + 0.45 * Math.abs(Math.sin(_sfHudPhase + i * 0.9))) : 0.8;
+          const mag = Math.max(0.08, Math.min(1, flowI * pulse));
+          const bh = Math.max(2, mag * (H - 6));
+          const c = twinHeatColor(stages[i].hue);
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+
+    // ---- robot VIBRATION waveform: a synth trace whose amplitude tracks the PHASE 1 arm vib×rpm characteristic
+    //      (busier line → larger amplitude). Crisp polyline on its own canvas; frozen under reduced-motion/replay. ----
+    try {
+      const cv = $('sf-vib'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#46ffd0';
+        const amp = 0.3 + Math.min(1, avgVib * 18) * 0.7 + flowI * 0.2;
+        const hf = 1.2 + (rpm / 3000);                          // higher RPM → tighter wave
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W;
+          const ph = _sfHudPhase * 1.4 + i * 0.34 * hf;
+          const y = H/2 + Math.sin(ph) * (H*0.30) * amp + Math.sin(ph * 2.6) * (H*0.12) * amp * flowI;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
+
+    // ---- text meta: THROUGHPUT (units/tick) · RPM · DATA-RATE (a busy-scaled rate) · Δledger ($) ----
+    const tEl = $('sf-thru'); if (tEl) tEl.textContent = thruVol ? (thruVol.toLocaleString() + ' u/t') : '—';
+    const rpmEl = $('sf-rpm'); if (rpmEl) rpmEl.textContent = rpm ? rpm.toLocaleString() : '—';
+    const dEl = $('sf-rate'); if (dEl) dEl.textContent = Math.round(40 + flowI * 920).toLocaleString() + ' pkt/s';
+    const lEl = $('sf-led'); if (lEl) lEl.textContent = ledgerNet ? fmt$(ledgerNet) : '—';
   }
 
   // Set the ledger TWEEN targets to the displayed-frame values; under reduced-motion/replay snap instantly.
@@ -6760,10 +7317,20 @@
     // so it glows. We only AUTO-flip the mode (recording twinAuto) so we don't fight a manual toggle: leaving
     // the section while still auto-on restores the prior look. If the composer is unavailable applyTwinMode
     // still runs (the navy backdrop + circuit ground show; the scene renders via renderer.render, less glow).
-    if (section === 'digital-twin'){
+    // The Digital-Twin hero AND the Smart-Factory hall are both holographic-twin sections: auto-enable the
+    // bloom render path so they glow + (for smart-factory) the wireframe twin + physics fields show by default.
+    // We only AUTO-flip the mode (recording twinAuto) so we don't fight a manual toggle: leaving an auto-on
+    // section restores the prior look. activeSection is already set above, so applyTwinMode → applyFactoryTwin
+    // correctly shows/hides the factory twin for THIS section. (If twin-mode is already on manually, we still
+    // re-run applyTwinMode below to re-evaluate the factory-twin visibility for the new section.)
+    const twinSection = (section === 'digital-twin' || section === 'smart-factory');
+    if (twinSection){
       if (!twinMode){ twinAuto = true; applyTwinMode(true); }
+      else applyTwinMode(true);                 // already on → re-evaluate factory-twin visibility for this section
     } else if (twinAuto){
       twinAuto = false; applyTwinMode(false);
+    } else {
+      applyTwinMode(twinMode);                   // not auto, manual twin may be on → hide the factory twin off-section
     }
     const isWorld = WORLD_SECTIONS.includes(section);
     // visibility: the four WORLD sections (factory + smart-city/-factory + shopping-mall) all reveal the
@@ -6862,6 +7429,14 @@
       const on = activeSection === 'digital-twin';
       if (th.classList) th.classList.toggle('on', on);
       if (th.setAttribute) th.setAttribute('aria-hidden', on ? 'false' : 'true');
+    }
+    // PHASE 2: show the crisp DOM SMART-FACTORY telemetry HUD overlay ONLY while the smart-factory section is
+    // active (it shares the #twin-hud anchor; only one is ever shown). Mirrors the twin-hud show/hide pattern.
+    const sfh = $('sf-hud');
+    if (sfh){
+      const onSf = activeSection === 'smart-factory';
+      if (sfh.classList) sfh.classList.toggle('on', onSf);
+      if (sfh.setAttribute) sfh.setAttribute('aria-hidden', onSf ? 'false' : 'true');
     }
   }
   function wireSections(){
@@ -7006,6 +7581,42 @@
       return { region: u.region, ring: u.ring, trucks: n(u.trucks), amrs: amrMobile,
                beltGoods: n(u.beltGoods), arms: n(u.arms), drills: n(u.drills),
                smoke: n(u.smoke), peds: n(u.peds) };
+    },
+    // ---- DIGITAL-TWIN overlay introspection (PHASE 1; view-only). Reports the built overlay element counts
+    //      (the three twin pillars: STRUCTURE wireframe + PHYSICS fields) + whether the twin is currently
+    //      shown, so a harness can confirm the twin built + is twin-mode-gated + reversible. Reads only the
+    //      overlay state arrays/groups; mutates NOTHING in the economy/world. The hall is decorative so this
+    //      never affects picking/streaming/Sankey. `wireGroups` = the wireframe child groups under sfTwinWire.
+    twin(){
+      const wireGroups = (sfTwinWire && sfTwinWire.children) ? sfTwinWire.children.length : 0;
+      return {
+        built:     !!sfTwinWire,
+        shown:     !!sfTwinOn,
+        wireGroups,
+        thermal:   sfThermal.length,                 // per-machine thermal records (STRUCTURE+PHYSICS)
+        beltFlow:  sfBeltFlow.length,                // conveyor flow-field strips (PHYSICS)
+        heatFlow:  !!sfTwinHeat,                     // featured-machine heat-flow Points stream (PHYSICS)
+        scan:      !!sfTwinScan,                     // scan-sweep plane (STRUCTURE reveal)
+        armsRPM:   sfArms.map(a => a.rpm || 0),      // robot-arm vibration/RPM characteristic (PHYSICS)
+        stages:    sfStages.map(s => s.name),        // PHASE 2: supply-chain stage labels (DATA TRANSFORMATION)
+        packets:   sfPackets.length,                 // PHASE 2: flowing data packets (DATA TRANSFORMATION)
+        flowRate:  sfFlowRate,                        // PHASE 2: current packet-flow intensity [0,1] (sim-driven, read-only)
+      };
+    },
+    // Drive `frames` twin-overlay animation steps (physics fields + scan + arm vibration) WITHOUT the renderer,
+    // so a harness can confirm the per-frame twin animation runs clean (no throw) when the twin is shown. Toggles
+    // the factory twin ON for the duration, then RESTORES the prior state (reversible). VIEW-ONLY: it touches only
+    // decorative overlay meshes — never the economy/world/picking. Returns the post-run twin state.
+    animateTwin(frames){
+      const prevSection = activeSection, prevOn = sfTwinOn;
+      activeSection = 'smart-factory'; applyFactoryTwin(true);
+      const N = Math.max(1, frames | 0);
+      for (let i = 0; i < N; i++){ animateSmartFactory(0.016); animateSmartFactoryTwin(0.016);
+        if (typeof drawSfHud === 'function') drawSfHud(); }   // PHASE 2: exercise the telemetry HUD path too (headless-safe; view-only)
+      const out = this.twin();
+      // restore prior state exactly (no residual): re-evaluate twin visibility for the prior section.
+      activeSection = prevSection; applyFactoryTwin(prevOn);
+      return out;
     },
   };
 
