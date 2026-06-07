@@ -60,8 +60,17 @@
 
 import { createRegistry, makeRng, reduceMotion } from '../core/index.mjs';
 import { easingFn, EASING_NAMES } from './easing.mjs';
+import {
+  EMISSIVE_MAX, DAYNIGHT_DEFAULTS, DEFAULT_STOPS,
+  buildDayNightState, dayNightStep, dayNightRest, dayNightRead,
+  sampleDayNight, sampleDayNightCycle, cyclePhase,
+} from './daynight.mjs';
+import {
+  ORCH_NODE_CAP, ORCH_DEP_CAP, normalizeSpec, resolve as resolveOrchestration,
+  evalCondition, createOrchestrator,
+} from './orchestrate.mjs';
 
-export const VERSION = '0.2.0-p5-dynamics';
+export const VERSION = '0.3.0-p5.3-dynamics';
 export const NAME = 'engine/dynamics';
 
 /** Hard CAP on a dynamic's multi-target fan-out (INV-4). A dynamic bound to an
@@ -69,6 +78,10 @@ export const NAME = 'engine/dynamics';
 export const FANOUT_CAP = 1024;
 /** Hard CAP on the trajectory sample count read from a matrix (INV-4). */
 export const SAMPLE_CAP = 8192;
+/** Sub-white emissive clamp the day/night cycle rides (INV-3). Re-exported. */
+export { EMISSIVE_MAX };
+/** Orchestration fan-out caps (INV-4). Re-exported for the conformance harness. */
+export { ORCH_NODE_CAP, ORCH_DEP_CAP };
 
 /** merge defaults <- over into a FRESH object (no shared mutation). */
 function withDefaults(defaults, over) {
@@ -516,6 +529,44 @@ function createFlow(host, arg) {
   });
 }
 
+/* ---- daynight: a time-driven COLOUR/INTENSITY cycle over the timeline -------
+ *
+ *  P5.3. A DECLARATIVE gradient of `[{t, color:[r,g,b], intensity}]` stops over a
+ *  normalised cycle phase (mapped from the host `elapsed` by `period`), sampled
+ *  piecewise into a single `{color,intensity}` reading and written into any bound
+ *  target's `color`/`intensity` IN PLACE. SUB-WHITE (INV-3): every emitted
+ *  component rides the `EMISSIVE_MAX` (0.85) clamp so it cannot blow out under
+ *  bloom. reduceMotion FREEZES to a declared resting phase / phase 0 (INV-2). The
+ *  per-frame reading is built ONCE and mutated in place (alloc-free, INV-4). The
+ *  motion math lives in ./daynight.mjs (pure, headless-safe).
+ * ------------------------------------------------------------------------- */
+function createDayNight(host, arg) {
+  return wrapDynamic(host, DEFAULTS.daynight, arg, {
+    initState(p) { return buildDayNightState(p); },
+    onParams(p, st) { const ns = buildDayNightState(p); st.stops = ns.stops; st.reading = ns.reading; },
+    step(h, targets, dt, elapsed, p, st) { dayNightStep(h, targets, dt, elapsed, p, st); },
+    onReduced(h, targets, p, st) { dayNightRest(h, targets, p, st); },
+    read(st) { return dayNightRead(st); },
+  });
+}
+
+/* ---- orchestrate: sequence MANY registered dynamics from ONE declarative spec
+ *
+ *  P5.3. The choreography layer. `spec.nodes[]` is a declarative list of
+ *  { id, registryId, params, trigger, dependsOn[], condition } over REGISTERED
+ *  dynamics; on update(dt,elapsed) the orchestrator resolves the ACTIVE set +
+ *  deterministic stable topological ORDER as a PURE fn of (spec, elapsed, seeded
+ *  signals) and dispatches each active child IN ORDER (alloc-free, INV-4). The
+ *  node count is CAPPED at ORCH_NODE_CAP and dependsOn fan-in at ORCH_DEP_CAP.
+ *  Triggers/deps/conditions are declarative parameter maps — NO functions, NO eval
+ *  (INV-5). The orchestrator resolves child `registryId`s against THIS registry.
+ *  Logic lives in ./orchestrate.mjs (pure resolver, headless-safe).
+ * ------------------------------------------------------------------------- */
+function createOrchestrate(host, arg) {
+  // children resolve against the live DynamicsRegistry (defined below; closure-safe).
+  return createOrchestrator(host, arg || {}, DynamicsRegistry);
+}
+
 /* =============================================================================
  *  DESCRIPTOR DEFAULT PARAMS — controls are INFERRED from these. `fanoutCap`/
  *  `sampleCap` document the bounds (INV-4); `seed` makes jitter deterministic.
@@ -530,11 +581,21 @@ const DEFAULTS = {
   // `matrix` path); `k` is the proportionality constant (channel = value·k).
   trajectory: { data: null, k: 1, matrix: [], stride: 3, duration: 4, loop: true, sampleCap: SAMPLE_CAP, fanoutCap: FANOUT_CAP },
   flow:       { axis: 'x', speed: 1.0, base: 0, span: 0, stagger: 0, seed: 1, fanoutCap: FANOUT_CAP },
+  // P5.3: day/night cycle. `period` seconds maps elapsed -> phase; `stops` is the
+  // declarative gradient; `resting` is the reduceMotion frozen phase; `emissiveMax`
+  // documents the sub-white cap (INV-3). All defaults are sub-white (<=0.85).
+  daynight:   { period: DAYNIGHT_DEFAULTS.period, stops: DEFAULT_STOPS.map((s) => ({ t: s.t, color: s.color.slice(), intensity: s.intensity })), easing: 'linear', resting: 0, emissiveMax: EMISSIVE_MAX, fanoutCap: FANOUT_CAP },
+  // P5.3: orchestrator. `spec` is the declarative {nodes:[{id,registryId,params,
+  // trigger,dependsOn,condition}]} graph; `signals` a numeric snapshot map;
+  // `nodeCap`/`depCap` document the bounds (INV-4); `seed` seeds children.
+  orchestrate: { spec: { nodes: [] }, signals: {}, seed: 1, nodeCap: ORCH_NODE_CAP, depCap: ORCH_DEP_CAP },
 };
 
 function categoryFor(desc) {
   if (desc.id === 'keyframe' || desc.id === 'trajectory') return 'Timeline';
   if (desc.id === 'flow') return 'Flow';
+  if (desc.id === 'daynight') return 'Cycle';
+  if (desc.id === 'orchestrate') return 'Orchestration';
   return 'Motion';
 }
 
@@ -556,6 +617,9 @@ DynamicsRegistry.register({ id: 'orbit', kind: 'Circular orbit path', params: DE
 DynamicsRegistry.register({ id: 'keyframe', kind: 'Eased keyframe timeline (pure fn of elapsed)', params: DEFAULTS.keyframe, factory: createKeyframe });
 DynamicsRegistry.register({ id: 'trajectory', kind: 'Matrix→trajectory ([t,n,f] timeseries) over time', params: DEFAULTS.trajectory, factory: createTrajectory });
 DynamicsRegistry.register({ id: 'flow', kind: 'Flow phase advance', params: DEFAULTS.flow, factory: createFlow });
+// P5.3 additive ids (orchestration + day/night) — same register()/list() shape.
+DynamicsRegistry.register({ id: 'daynight', kind: 'Day/night colour+intensity cycle (sub-white, pure fn of elapsed)', params: DEFAULTS.daynight, factory: createDayNight });
+DynamicsRegistry.register({ id: 'orchestrate', kind: 'Multi-object orchestration (declarative triggers/deps/conditions)', params: DEFAULTS.orchestrate, factory: createOrchestrate });
 
 /* =============================================================================
  *  PURE PRIMITIVES — exported so the conformance/test layer can freeze the motion
@@ -606,14 +670,31 @@ export function sampleTrajectory(nd, elapsed, opts = {}) {
 export { EASING_NAMES };
 export { easing } from './easing.mjs';
 
+/* =============================================================================
+ *  P5.3 PURE PRIMITIVES — re-exported so the conformance/test layer can freeze the
+ *  day/night + orchestration resolution directly (no host, no GPU). All pure,
+ *  alloc-light, deterministic; the orchestrator resolver is a pure fn of (spec,
+ *  elapsed, signals), the day/night sampler a pure fn of (stops, elapsed).
+ * ========================================================================== */
+export { sampleDayNightCycle, sampleDayNight, buildDayNightState, cyclePhase, DEFAULT_STOPS };
+export { normalizeSpec, resolveOrchestration, evalCondition };
+export { daynight } from './daynight.mjs';
+export { orchestrate } from './orchestrate.mjs';
+
 export const dynamics = Object.freeze({
   name: NAME,
   version: VERSION,
   registry: DynamicsRegistry,
   FANOUT_CAP,
   SAMPLE_CAP,
+  EMISSIVE_MAX,
+  ORCH_NODE_CAP,
+  ORCH_DEP_CAP,
   sampleKeyframes,
   sampleTrajectory,
+  sampleDayNightCycle,
+  normalizeSpec,
+  resolveOrchestration,
   easingNames: EASING_NAMES,
 });
 

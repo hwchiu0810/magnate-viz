@@ -412,6 +412,10 @@
     var effects = [];   // flat list of attached effect handles (for cap + dispose)
     var nextId = 1;
     var selected = 'stage';   // current target: an object id | 'stage' | 'scene'
+    // world-space anchor added to every placed object's formula position. Default [0,0,0] keeps placement
+    // byte-identical to the formula (the golden tests rely on this); the host re-points it per section so
+    // objects land in the ACTIVE scene. Applies to BOTH UI placeObjects and prompt-DSL `place`.
+    var placeOrigin = [0, 0, 0];
 
     function findObj(id) { for (var k = 0; k < objects.length; k++) if (objects[k].id === id) return objects[k]; return null; }
     function effectCount() { return effects.length; }
@@ -456,9 +460,13 @@
       count = Math.min(count, MAX_PLACE, Math.max(0, MAX_OBJECTS - objects.length));
       var posFormula = compilePosition(opts.position);
       var created = [];
+      // explicit per-call origin wins; otherwise the section placeOrigin (default [0,0,0] = no offset).
+      var origin = (opts.origin && opts.origin.length === 3)
+        ? [num(opts.origin[0], 0), num(opts.origin[1], 0), num(opts.origin[2], 0)] : placeOrigin;
       for (var i = 0; i < count; i++) {
         var p = posFormula(i, count, 0, 0);   // t=0 placement frame
         var pos = toVec3(p);
+        if (origin[0] || origin[1] || origin[2]) pos = [pos[0] + origin[0], pos[1] + origin[1], pos[2] + origin[2]];
         var id = nextId++;
         var mesh = null;
         if (THREE && group) {
@@ -776,6 +784,9 @@
     return {
       // the ACTION LAYER (the typed surface both front-ends + the copilot use)
       placeObjects: placeObjects,
+      // set the world-space anchor that subsequent placements are offset by (lets the host place objects
+      // into the ACTIVE section's scene). Returns the resolved origin. Does NOT move existing objects.
+      setPlaceOrigin: function (v) { if (v && v.length === 3) placeOrigin = [num(v[0], 0), num(v[1], 0), num(v[2], 0)]; return placeOrigin.slice(); },
       selectTarget: selectTarget,
       applyEffect: applyEffect,
       transform: transform,

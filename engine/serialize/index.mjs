@@ -17,9 +17,24 @@
  *    validate(doc)        -> { ok:true, doc } | { ok:false, reason }
  *    migrate(doc)         -> { ok:true, doc } | { ok:false, reason }   (forward chain STUB)
  *    saveProject(state)   -> { ok:true, doc } | { ok:false, reason }   (registry ids + params)
- *    loadProject(doc)     -> { ok:true, state } | { ok:false, reason } (no live GPU objects)
+ *    loadProject(doc, opts) -> { ok:true, state, report? } | { ok:false, reason } (no live GPU objects)
+ *    clampProject(doc, controlTables) -> { ok:true, doc, report } | { ok:false, reason }  (P7.4 security closure)
  *    SCHEMA_VERSION, FORMAT, CHANNELS, DATA_KINDS, SCALE_TYPES, DTYPES (frozen vocab)
+ *
+ *  P7.4 SECURITY CLOSURE (ADDITIVE — §Security Architecture). On loadProject/validate
+ *  of UNTRUSTED input, `clampProject` sanitizes every section's `params`: numerics
+ *  clamped to their control descriptor (min/max/step), counts to caps (INV-4),
+ *  colours sub-white (<=0.85, INV-3); "code in data" dropped (INV-5, already
+ *  rejected at the whole-doc grain by validate() — clampProject is defence in depth
+ *  at the per-binding grain); non-allowlisted asset URLs rejected (no-op on
+ *  404/absent). The clamp NEVER throws and hands back a SAFE handle. The clamp math
+ *  lives in ./clamp.mjs (pure, headless, firewall-clean).
  * ========================================================================== */
+
+import {
+  clampParams as _clampParams, clampValue as _clampValue,
+  isAllowedAssetUrl as _isAllowedAssetUrl, ASSET_ORIGINS, COLOR_SUBWHITE_MAX,
+} from './clamp.mjs';
 
 /* ---- frozen vocabularies (mirror project.schema.json + Consistency Rules) -- */
 export const FORMAT = 'magnate-viz-project';
@@ -115,11 +130,78 @@ function validateObject(o, where) {
   return null;
 }
 
+/** Declarative ORCHESTRATION vocabularies (ADR-D4 / INV-5). A multi-object
+ *  orchestration block (Story P5.3) is a DECLARATIVE parameter map embedded in a
+ *  dynamics[] entry's `params.spec` — triggers/dependencies/conditions are plain
+ *  data, NEVER serialized functions. These closed sets mirror engine/dynamics'
+ *  orchestrator + day/night and are duplicated here as plain constants (the
+ *  firewall forbids importing engine/dynamics). A drift is a breaking, versioned
+ *  change keyed by the conformance suite. */
+export const ORCH_TRIGGER_KINDS = Object.freeze(['always', 'at', 'after', 'while']);
+export const ORCH_CONDITION_OPS = Object.freeze(['lt', 'lte', 'gt', 'gte', 'eq', 'between']);
+
+/** Validate a declarative Condition `{signal, op, value|min,max}` (no functions). */
+function validateCondition(c, where) {
+  if (!isPlainObject(c)) return `${where} must be an object`;
+  if (typeof c.signal !== 'string' || !c.signal) return `${where}.signal must be a non-empty string`;
+  if (!ORCH_CONDITION_OPS.includes(c.op)) return `${where}.op not in {${ORCH_CONDITION_OPS.join('|')}}`;
+  if (c.op === 'between') {
+    if (typeof c.min !== 'number' || typeof c.max !== 'number') return `${where} (op "between") needs numeric min+max`;
+  } else if (typeof c.value !== 'number') {
+    return `${where} (op "${c.op}") needs a numeric value`;
+  }
+  return null;
+}
+
+/** Validate ONE declarative orchestration node. Triggers/deps/condition are plain
+ *  parameter maps — embedded EncodeSpec-style declarative data, NO functions (INV-5). */
+function validateOrchNode(node, where) {
+  if (!isPlainObject(node)) return `${where} must be an object`;
+  if (typeof node.id !== 'string' || !ID_RE.test(node.id)) return `${where}.id missing or malformed`;
+  if (typeof node.registryId !== 'string' || !ID_RE.test(node.registryId)) return `${where}.registryId missing or malformed`;
+  if ('params' in node && !isPlainObject(node.params)) return `${where}.params must be an object`;
+  if ('dependsOn' in node) {
+    if (!Array.isArray(node.dependsOn)) return `${where}.dependsOn must be an array of node ids`;
+    for (let i = 0; i < node.dependsOn.length; i++) {
+      if (typeof node.dependsOn[i] !== 'string' || !ID_RE.test(node.dependsOn[i])) return `${where}.dependsOn[${i}] must be a node-id string`;
+    }
+  }
+  if ('trigger' in node && node.trigger !== null) {
+    const tr = node.trigger;
+    if (!isPlainObject(tr)) return `${where}.trigger must be an object`;
+    if (!ORCH_TRIGGER_KINDS.includes(tr.kind)) return `${where}.trigger.kind not in {${ORCH_TRIGGER_KINDS.join('|')}}`;
+    if (tr.kind === 'at' && typeof tr.t !== 'number') return `${where}.trigger (kind "at") needs a numeric t`;
+    if (tr.kind === 'after' && (typeof tr.ref !== 'string' || !ID_RE.test(tr.ref))) return `${where}.trigger (kind "after") needs a node-id ref`;
+    if (tr.kind === 'while') { const e = validateCondition(tr.cond, `${where}.trigger.cond`); if (e) return e; }
+  }
+  if ('condition' in node && node.condition !== null) { const e = validateCondition(node.condition, `${where}.condition`); if (e) return e; }
+  return null;
+}
+
+/** Validate an embedded declarative orchestration spec `{nodes:[...]}` (if present).
+ *  ADDITIVE: only runs when a dynamics[] entry carries `params.spec.nodes` — a plain
+ *  declarative graph. Confirms it is serialization-first (no functions; closed
+ *  trigger/condition vocabularies), re-creatable by the factory on load (INV-5). */
+function validateOrchestrationSpec(spec, where) {
+  if (spec === undefined) return null;                  // optional block
+  if (!isPlainObject(spec)) return `${where} must be an object`;
+  if (!('nodes' in spec)) return null;                  // a spec without nodes is a no-op graph (valid)
+  if (!Array.isArray(spec.nodes)) return `${where}.nodes must be an array`;
+  for (let i = 0; i < spec.nodes.length; i++) { const e = validateOrchNode(spec.nodes[i], `${where}.nodes[${i}]`); if (e) return e; }
+  return null;
+}
+
 function validateDynamic(d, where) {
   if (!isPlainObject(d)) return `${where} must be an object`;
   if (typeof d.registryId !== 'string' || !ID_RE.test(d.registryId)) return `${where}.registryId missing or malformed`;
   if ('id' in d && (typeof d.id !== 'string' || !ID_RE.test(d.id))) return `${where}.id malformed`;
   if ('params' in d && !isPlainObject(d.params)) return `${where}.params must be an object`;
+  // ADDITIVE (P5.3): if this dynamic embeds a declarative orchestration spec, validate
+  // the declarative trigger/dependsOn/condition graph (no functions — INV-5).
+  if (isPlainObject(d.params) && 'spec' in d.params) {
+    const e = validateOrchestrationSpec(d.params.spec, `${where}.params.spec`);
+    if (e) return e;
+  }
   return null;
 }
 
@@ -251,8 +333,28 @@ export function saveProject(state) {
  * the "state" is the validated, migrated declarative document itself (the
  * runtime would later derive handles by calling registry factories with these
  * params). It re-creates NO live GPU objects.
+ *
+ * P7.4 (ADDITIVE, OPT-IN): pass `opts.clamp:true` (+ optional `opts.controlTables`)
+ * to CLAMP-ON-INGEST untrusted input — numerics to control min/max/step, counts to
+ * caps (INV-4), colours sub-white (INV-3), non-allowlisted asset URLs rejected, and
+ * "code in data" dropped (INV-5). The default (no opts) is the unchanged P1 behavior
+ * so the existing round-trip stays byte-identical. The clamped load NEVER throws and
+ * returns the safe `state` plus a `report` of every clamp (audit). When clamping, a
+ * doc that does not even validate still hands back a typed reject (never a partial).
+ *
+ * @param {object} doc
+ * @param {{clamp?:boolean, controlTables?:object}} [opts]
+ *   controlTables: { <registryId>: { <paramKey>: <controlDescriptor> }, ... } — the
+ *   registry `list()` controls, supplied by the caller so engine/serialize stays
+ *   firewall-clean (it never imports a registry).
  */
-export function loadProject(doc) {
+export function loadProject(doc, opts) {
+  if (opts && opts.clamp) {
+    const c = clampProject(doc, opts.controlTables || {});
+    if (!c.ok) return c;                                  // typed reject — never a partial
+    const state = JSON.parse(JSON.stringify(c.doc));
+    return { ok: true, state, report: c.report };
+  }
   const m = migrate(doc);
   if (!m.ok) return m;
   // a defensive deep clone so the returned state shares no reference with the input.
@@ -260,4 +362,67 @@ export function loadProject(doc) {
   return { ok: true, state };
 }
 
-export default { FORMAT, SCHEMA_VERSION, CHANNELS, DATA_KINDS, SCALE_TYPES, DTYPES, validate, migrate, saveProject, loadProject };
+/* --------------------------------------------------------------------------- */
+/* clampProject(doc, controlTables)  — P7.4 SECURITY CLOSURE                    */
+/*  "tolerate garbage, never throw, hand back a SAFE handle" on untrusted input. */
+/*  Migrate + validate first (typed reject on a malformed/forbidden doc), THEN  */
+/*  clamp every section's `params` (numbers/counts/colours/asset-urls) and DROP  */
+/*  any "code in data" at the per-binding grain. Returns the safe doc + a report */
+/*  of every clamp (audit). NEVER widens a value; NEVER invents one.            */
+/* --------------------------------------------------------------------------- */
+
+/** the param-bearing sections of the doc whose `params` are clamped on ingest. */
+const CLAMP_SECTIONS = Object.freeze(['scenes', 'objects', 'dynamics', 'effects']);
+
+/** clamp ONE section entry's params in place on a fresh clone; record changes. */
+function clampSectionEntry(entry, controlTables, where, report) {
+  if (!isPlainObject(entry)) return entry;
+  const out = {};
+  for (const k of Object.keys(entry)) out[k] = entry[k];
+  const regId = typeof entry.registryId === 'string' ? entry.registryId : null;
+  const table = (regId && isPlainObject(controlTables) && isPlainObject(controlTables[regId])) ? controlTables[regId] : {};
+  if (isPlainObject(entry.params)) {
+    const r = _clampParams(entry.params, table);
+    out.params = r.params;
+    for (const ch of r.changes) report.push({ where: `${where}.params`, registryId: regId, ...ch });
+  }
+  // nested objects[] inside a scene are clamped recursively (same discipline).
+  if (Array.isArray(entry.objects)) {
+    out.objects = entry.objects.map((o, j) => clampSectionEntry(o, controlTables, `${where}.objects[${j}]`, report));
+  }
+  // an object's embedded dynamics[] / effects[] params are clamped too.
+  if (Array.isArray(entry.dynamics)) {
+    out.dynamics = entry.dynamics.map((d, j) => clampSectionEntry(d, controlTables, `${where}.dynamics[${j}]`, report));
+  }
+  if (Array.isArray(entry.effects)) {
+    out.effects = entry.effects.map((e, j) => clampSectionEntry(e, controlTables, `${where}.effects[${j}]`, report));
+  }
+  return out;
+}
+
+export function clampProject(doc, controlTables = {}) {
+  // migrate + validate first: a malformed/forbidden doc gets the SAME typed reject
+  // as the unclamped path (no partial; the security pass does not loosen validation).
+  const m = migrate(doc);
+  if (!m.ok) return m;
+  const report = [];
+  const safe = { format: m.doc.format, schemaVersion: m.doc.schemaVersion };
+  // `data` carries no clampable control params (shape/src only) — passed through.
+  safe.data = Array.isArray(m.doc.data) ? JSON.parse(JSON.stringify(m.doc.data)) : [];
+  for (const section of CLAMP_SECTIONS) {
+    const arr = Array.isArray(m.doc[section]) ? m.doc[section] : [];
+    safe[section] = arr.map((entry, i) => clampSectionEntry(entry, controlTables, `${section}[${i}]`, report));
+  }
+  // the clamped doc must STILL validate (clamping never produces an invalid doc).
+  const v = validate(safe);
+  if (!v.ok) return v;
+  return { ok: true, doc: v.doc, report };
+}
+
+export { ASSET_ORIGINS, COLOR_SUBWHITE_MAX };
+/** Re-export the asset-URL guard so the host loader can pre-check a URL (no-op on 404). */
+export function isAllowedAssetUrl(url, policy) { return _isAllowedAssetUrl(url, policy); }
+/** Re-export the per-value clamp for the copilot re-apply path (defence in depth, P7.4). */
+export function clampValue(key, value, control) { return _clampValue(key, value, control); }
+
+export default { FORMAT, SCHEMA_VERSION, CHANNELS, DATA_KINDS, SCALE_TYPES, DTYPES, ORCH_TRIGGER_KINDS, ORCH_CONDITION_OPS, ASSET_ORIGINS, COLOR_SUBWHITE_MAX, validate, migrate, saveProject, loadProject, clampProject, clampValue, isAllowedAssetUrl };

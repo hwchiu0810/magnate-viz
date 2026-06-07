@@ -233,26 +233,94 @@
   .twinhud.cityhud .tdot{background:#7fd4ff;box-shadow:0 0 6px #7fd4ff}
 
   /* ============================================================
-     VFX LAB control panels — four crisp DOM overlays shown ONLY while the
-     'vfx-lab' section is active (toggled by .on). Same neon/holographic chrome
-     as .twinhud (dark glass card, cyan accents, blur). They live OUTSIDE the
-     bloom canvas so the text/sliders stay razor-sharp. All purely decorative.
+     VFX LAB EDITOR — ONE collapsible, scrollable SIDEBAR (option B).
+     ============================================================
+     P7.y "single-sidebar" rebuild (supersedes the old multi-overlay dock
+     layout). Every VFX-Lab editor surface (Palette · Layers · Parameters ·
+     Builder · Data→Viz · dev Prompt · sample chips) is now a STACKED,
+     independently-COLLAPSIBLE SECTION inside ONE fixed container (#vfx-editor).
+     Because there is exactly one container, inter-panel OVERLAP is impossible.
+
+     BOUNDED CLEAR OF CHROME — the sidebar is the side with the least chrome:
+       · TOP    nav <header>  : top:0 full-width, ~44px tall  → sidebar top:52px (below it)
+       · scrubber .scrub      : top:44px, horizontally CENTRED → cleared (left rail)
+       · CONSERVE badge       : inside the header (top-left)   → cleared (sidebar starts at 52px)
+       · firm/desk #inspector : top:54px, CENTRED, w340       → cleared (left rail, w310)
+       · Twin button #btn-twin: in the header, top-RIGHT      → cleared (left rail)
+       · bottom nav .sections : bottom:14px, CENTRED, ~44px   → sidebar bottom:64px (above it)
+       · #twin-hud/#sf-hud/#city-hud: all gated OFF in vfx-lab (syncSectionUI only
+         toggles them on for digital-twin/smart-factory/smart-city) → not present here.
+     The container is LEFT-anchored (left:10px), top:52px, bottom:64px, width:310px,
+     overflow-y:auto. z-index:7 — above the decorative canvas (z5/6) yet physically
+     bounded so it NEVER covers the nav (z6) or the scrubber (z6).
      ============================================================ */
-  .vfxlab{position:absolute;z-index:6;display:none;
-    background:#04111ce6;border:1px solid #16466a;border-radius:12px;
+  /* ----- the single fixed sidebar container + master collapse ----- */
+  #vfx-editor{position:fixed;left:10px;top:52px;bottom:64px;width:310px;z-index:7;display:none;
+    flex-direction:column;background:#04111ce6;border:1px solid #16466a;border-radius:12px;
     backdrop-filter:blur(6px);box-shadow:0 0 0 1px rgba(80,230,255,.12),0 10px 32px rgba(0,0,0,.5);
+    color:#bfeaff;font-variant-numeric:tabular-nums;overflow:hidden}
+  #vfx-editor.on{display:flex}
+  /* MASTER header — title + collapse-the-whole-sidebar toggle */
+  #vfx-editor-head{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:9px 11px;
+    border-bottom:1px solid #103048;font-size:10px;color:#5fc8f0;text-transform:uppercase;letter-spacing:1px}
+  #vfx-editor-head .tdot{width:7px;height:7px;border-radius:50%;background:#3fd6ff;
+    box-shadow:0 0 6px #3fd6ff;display:inline-block;flex:0 0 auto}
+  #vfx-editor-head .etitle{font-weight:800}
+  #vfx-editor-head .grow{flex:1}
+  #vfx-editor-master{background:#072233;border:1px solid #16466a;color:#7fd4f2;border-radius:6px;
+    width:24px;height:22px;line-height:1;cursor:pointer;font-size:13px;padding:0;flex:0 0 auto}
+  #vfx-editor-master:hover{background:#0c3550;color:#bfeaff}
+  #vfx-editor-master:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
+  /* the scrolling body that holds the stacked sections */
+  #vfx-editor-body{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;padding:8px 9px 10px;min-height:0}
+  /* COLLAPSED master state → the whole sidebar shrinks to a small reopen tab */
+  #vfx-editor.collapsed{bottom:auto;width:auto}
+  #vfx-editor.collapsed #vfx-editor-body{display:none}
+  #vfx-editor.collapsed #vfx-editor-head{border-bottom:0}
+  #vfx-editor.collapsed .etitle{display:none}
+  #vfx-editor.collapsed #vfx-editor-master{font-size:11px}
+  /* ----- independently-collapsible STACKED sections ----- */
+  .vfx-sec{margin-bottom:8px;border:1px solid #103048;border-radius:9px;overflow:hidden;background:#03101b80}
+  .vfx-sec:last-child{margin-bottom:0}
+  .vfx-sec-head{display:flex;align-items:center;gap:6px;width:100%;cursor:pointer;background:#072233;
+    border:0;border-radius:0;padding:6px 9px;font-size:10px;font-weight:800;color:#7fd4f2;
+    text-transform:uppercase;letter-spacing:.6px;font-family:inherit;text-align:left}
+  .vfx-sec-head:hover{background:#0c3550;color:#bfeaff}
+  .vfx-sec-head:focus-visible{outline:2px solid #3fd6ff;outline-offset:-2px}
+  .vfx-sec-head .caret{transition:transform .15s;font-size:9px;flex:0 0 auto}
+  .vfx-sec.collapsed .caret{transform:rotate(-90deg)}
+  .vfx-sec-head .sttl{flex:1}
+  .vfx-sec-body{padding:8px 9px 9px}
+  .vfx-sec.collapsed .vfx-sec-body{display:none}
+  /* TARGET selector (in-scene VFX targeting) */
+  #vfx-target label{display:block;margin:6px 0 2px;font-size:9px;color:#7fb6cf;text-transform:uppercase;letter-spacing:.6px}
+  #vfx-target select{width:100%;box-sizing:border-box;background:#0a1822;color:#dff1fb;border:1px solid #1c4a63;border-radius:6px;padding:5px 7px;font:11px/1.4 ui-monospace,monospace}
+  .vfx-target-now{font-size:10px;color:#bfe7f8;margin-bottom:2px}
+  .vfx-target-now b{color:#9be7ff}
+  .vfx-target-btns{display:flex;gap:6px;margin-top:6px}
+  #vfx-target-pick.on{background:#0d3a52;border-color:#3fd6ff;color:#dff6ff;box-shadow:0 0 0 1px #3fd6ff inset}
+  .vfx-target-hint{font-size:8.5px;color:#5a8197;margin-top:6px;line-height:1.4}
+  #vfx-target-badge{font-variant-numeric:tabular-nums}
+  /* DRIVE-BY-FORMULA (animate an effect param live) */
+  #vfx-drive{margin-top:8px;border-top:1px solid #103048;padding-top:8px}
+  #vfx-drive .row{display:flex;gap:6px}
+  #vfx-drive select,#vfx-drive input{flex:1;min-width:0;box-sizing:border-box;background:#0a1822;color:#dff1fb;border:1px solid #1c4a63;border-radius:6px;padding:5px 7px;font:11px/1.4 ui-monospace,monospace}
+  .vfx-drive-active{font-size:9px;color:#7fd4a8;margin-top:5px;line-height:1.4;font-variant-numeric:tabular-nums}
+  /* ----- re-parented panels are now STATIC blocks inside their section bodies
+       (the absolute-positioning + per-panel card chrome is gone; the sidebar IS
+       the card). The .vfxlab base now just neutralises any legacy positioning so
+       getElementById hooks resolve unchanged. ----- */
+  .vfxlab{position:static;z-index:auto;display:block;background:transparent;border:0;
+    border-radius:0;backdrop-filter:none;box-shadow:none;padding:0;width:auto;max-height:none;
     color:#bfeaff;font-variant-numeric:tabular-nums}
-  .vfxlab.on{display:block}
   .vfxlab h3{margin:0 0 8px;font-size:10px;color:#5fc8f0;text-transform:uppercase;letter-spacing:1px;
     display:flex;align-items:center;gap:6px}
   .vfxlab h3 .tdot{width:7px;height:7px;border-radius:50%;background:#3fd6ff;
     box-shadow:0 0 6px #3fd6ff;display:inline-block}
   .vfxlab h3 .grow{flex:1}
   .vfxlab .vsub{font-size:9px;color:#5fc8f0;text-transform:uppercase;letter-spacing:.6px;margin:7px 0 3px}
-  /* PALETTE (left) — collapsible category groups + search + add buttons */
-  #vfx-palette{top:128px;left:10px;width:230px;padding:10px 11px;max-height:calc(100% - 200px);
-    overflow:auto;display:none}
-  #vfx-palette.on{display:block}
+  /* PALETTE — collapsible category groups + search + add buttons */
+  #vfx-palette{overflow:visible}
   #vfx-search{width:100%;background:#02101b;border:1px solid #16466a;color:#dff6ff;border-radius:7px;
     padding:5px 8px;font-size:11px;font-family:inherit;margin-bottom:7px}
   #vfx-search:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
@@ -275,8 +343,7 @@
   .vfx-eff .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vfx-eff .kd{color:#5fc8f0;font-size:9px;text-transform:uppercase;letter-spacing:.4px;flex:0 0 auto}
   .vfx-empty{color:#5fc8f0;font-size:10px;padding:4px 5px}
-  /* MANAGEMENT list (the 'layers') — active stacked effects */
-  #vfx-layers{top:128px;left:248px;width:236px;padding:10px 11px;max-height:calc(100% - 200px);overflow:auto}
+  /* MANAGEMENT list (the 'layers') — active stacked effects (now a static section block) */
   .vfx-layer{display:flex;align-items:center;gap:5px;border:1px solid #103048;border-radius:7px;
     padding:4px 5px;margin-bottom:4px;background:#02101b;font-size:11px}
   .vfx-layer.sel{border-color:#3fd6ff;box-shadow:0 0 8px rgba(80,230,255,.35);background:#06283a}
@@ -290,8 +357,7 @@
   .vfx-lbtn:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
   .vfx-lbtn.act{background:#06405e;border-color:#3fd6ff;color:#e6fbff}
   .vfx-lbtn.rm:hover{background:#3a1420;border-color:#ff6f6f;color:#ffb0b0}
-  /* PARAMETER panel (right) — Tweakpane + actions + quarks import */
-  #vfx-params{top:48px;right:10px;width:268px;padding:10px 11px;max-height:calc(100% - 60px);overflow:auto}
+  /* PARAMETER panel — Tweakpane + actions + quarks import (now a static section block) */
   #vfx-pane-host{margin:2px 0 6px}
   .vfx-actions{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px}
   .vfx-abtn{flex:1;background:#16223e;border:1px solid #16466a;color:#bfeaff;border-radius:7px;
@@ -307,28 +373,51 @@
   #vfx-quarks-text:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
   .vfx-msg{font-size:10px;color:#5fc8f0;min-height:13px;margin-top:4px}
   .vfx-msg.warn{color:#ffcf5a}
-  /* PREVIEW (sample-object selector) — bottom-centre chip row */
-  #vfx-preview{bottom:64px;left:50%;transform:translateX(-50%);padding:8px 11px;text-align:center}
-  #vfx-preview .vchips{display:flex;gap:5px;flex-wrap:wrap;justify-content:center}
+  /* PREVIEW (sample-object selector) — chip row (now a static section block) */
+  #vfx-preview .vchips{display:flex;gap:5px;flex-wrap:wrap}
   #vfx-preview .vchip{background:#072233;border:1px solid #16466a;color:#7fd4f2;border-radius:9px;
     padding:4px 10px;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit}
   #vfx-preview .vchip:hover{background:#0c3550;color:#bfeaff}
   #vfx-preview .vchip:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
   #vfx-preview .vchip[aria-pressed="true"]{background:#06405e;border-color:#3fd6ff;color:#e6fbff;
     box-shadow:0 0 8px rgba(80,230,255,.45)}
-  @media (prefers-reduced-motion: reduce){ .vfxlab h3 .tdot{box-shadow:none} .vfx-cat-head .caret{transition:none} }
-  /* ===== OBJECT + VFX BUILDER (additive panel in the VFX Lab) — bottom-left dock, neon chrome ===== */
-  #vfx-builder{bottom:64px;left:10px;width:300px;padding:10px 11px;max-height:calc(100% - 220px);overflow:auto}
+  @media (prefers-reduced-motion: reduce){ .vfxlab h3 .tdot{box-shadow:none} .vfx-cat-head .caret{transition:none} .vfx-sec-head .caret{transition:none} }
+  /* ===== BUILDER + DATA→VIZ + dev PROMPT — each is now its OWN collapsible
+       accordion SECTION inside #vfx-editor (the old bottom tab-dock wrapper +
+       data-tool tab CSS are gone; the accordion replaces the tabbing). #dv-sec
+       (Data→Viz) is re-parented OUT of #vfx-builder into its own section body, so
+       Builder and Data→Viz no longer share a host — yet every #dv-*/bld-* id is
+       preserved. ===== */
+  /* the dev Prompt slot is empty + inert unless the dev block mounts into it */
+  #vfx-prompt-slot:empty{display:none}
+  /* OBJECT + VFX BUILDER — static block inside its section body */
+  #vfx-builder{position:static;width:auto;padding:0;background:transparent;border:0;
+    box-shadow:none;backdrop-filter:none;max-height:none;overflow:visible;border-radius:0}
+  /* DEV PROMPT slot: the dev module mounts its panel here. Neutralise its own
+     position:fixed/right/bottom so it sits inline in the section body (the slot's
+     child <section> is the dev panel; targeted generically so no dev-only id/token
+     appears in the production HTML or the stripped dist). */
+  #vfx-prompt-slot > section{position:static!important;right:auto!important;bottom:auto!important;
+    width:auto!important;max-width:none!important;margin:0!important;
+    box-shadow:none!important;border:0!important;background:transparent!important;
+    padding:0!important;backdrop-filter:none!important}
+  /* Builder + Data→Viz share these control styles. #dv-sec is now re-parented out
+     of #vfx-builder into its own section, so the selectors are widened to cover it
+     too (every #dv-*/bld-* id + behaviour is otherwise unchanged). */
   #vfx-builder .bsec{border-top:1px solid #103048;padding-top:7px;margin-top:7px}
   #vfx-builder .bsec:first-of-type{border-top:0;padding-top:0;margin-top:2px}
-  #vfx-builder label{display:block;font-size:9px;color:#5fc8f0;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
-  #vfx-builder input[type=text], #vfx-builder textarea, #vfx-builder select{width:100%;background:#02101b;
+  /* #dv-sec is the sole .bsec in the Data→Viz section now → no leading divider */
+  #dv-sec.bsec{border-top:0;padding-top:0;margin-top:0}
+  #vfx-builder label,#dv-sec label{display:block;font-size:9px;color:#5fc8f0;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
+  #vfx-builder input[type=text], #vfx-builder textarea, #vfx-builder select,
+  #dv-sec input[type=text], #dv-sec textarea, #dv-sec select{width:100%;background:#02101b;
     border:1px solid #16466a;color:#dff6ff;border-radius:7px;padding:5px 7px;font-size:11px;font-family:inherit;box-sizing:border-box}
-  #vfx-builder textarea{height:50px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px}
-  #vfx-builder input:focus-visible, #vfx-builder textarea:focus-visible, #vfx-builder select:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
-  #vfx-builder .brow{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
-  #vfx-builder .brow > *{flex:1 1 auto}
-  #vfx-builder input[type=range]{flex:1 1 100%;accent-color:#3fd6ff}
+  #vfx-builder textarea,#dv-sec textarea{height:50px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px}
+  #vfx-builder input:focus-visible, #vfx-builder textarea:focus-visible, #vfx-builder select:focus-visible,
+  #dv-sec input:focus-visible, #dv-sec textarea:focus-visible, #dv-sec select:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
+  #vfx-builder .brow,#dv-sec .brow{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+  #vfx-builder .brow > *,#dv-sec .brow > *{flex:1 1 auto}
+  #vfx-builder input[type=range],#dv-sec input[type=range]{flex:1 1 100%;accent-color:#3fd6ff}
   .bchip{background:#072233;border:1px solid #16466a;color:#7fd4f2;border-radius:8px;padding:3px 9px;
     cursor:pointer;font-size:10px;font-weight:700;font-family:inherit;flex:0 0 auto}
   .bchip:hover{background:#0c3550;color:#bfeaff}
@@ -340,9 +429,9 @@
   .bbtn:focus-visible{outline:2px solid #3fd6ff;outline-offset:1px}
   .bbtn.primary{background:#06405e;border-color:#3fd6ff;color:#e6fbff}
   .bbtn.danger:hover{background:#3a1420;border-color:#ff6f6f;color:#ffb0b0}
-  #vfx-builder .bcount{color:#5fc8f0;font-size:9px;font-weight:700;margin-left:auto}
-  #vfx-builder .bsel{font-size:10px;color:#bfeaff}
-  #vfx-builder .bsel b{color:#46ffd0}
+  #vfx-builder .bcount,#dv-sec .bcount{color:#5fc8f0;font-size:9px;font-weight:700;margin-left:auto}
+  #vfx-builder .bsel,#dv-sec .bsel{font-size:10px;color:#bfeaff}
+  #vfx-builder .bsel b,#dv-sec .bsel b{color:#46ffd0}
   .bmsg{font-size:10px;color:#5fc8f0;min-height:13px;margin-top:5px}
   .bmsg.warn{color:#ffcf5a}
   /* Tweakpane v4 theme → neon HUD palette (CSS vars consumed by the pane built into #vfx-pane-host). */
@@ -603,47 +692,105 @@
     <div class="tmeta"><span>Mobility <b id="city-mob">—</b></span><span>Active links <b id="city-links">—</b></span></div>
   </aside>
 
-  <!-- ===== VFX LAB control panels — FOUR crisp DOM overlays (outside the bloom canvas) shown ONLY while the
-       'vfx-lab' section is active. Decorative effect-authoring workbench for the standalone VFX library
-       (window.VFX) wired to a Tweakpane param panel (window.Tweakpane). Everything is OPTIONAL: when vfx.js /
-       Tweakpane are absent (offline, or the headless harness) the panels stay empty + hidden and the page runs
-       unchanged. The bodies are populated lazily in JS (built ONLY when the section is first entered in a real
-       browser); these elements are just the anchors. VIEW-ONLY: effects drive the Lab's own preview stage /
-       sample object — never the economy, picking, streaming, or Sankey scenes. ===== -->
-  <!-- 1 · EFFECT CATEGORY palette (left): collapsible category groups from VFX.list() + search + add (+) -->
-  <aside class="vfxlab" id="vfx-palette" aria-label="VFX effect palette" aria-hidden="true">
-    <h3><span class="tdot" aria-hidden="true"></span>Effects<span class="grow"></span></h3>
-    <input id="vfx-search" type="search" placeholder="search effects…" aria-label="Filter effects" autocomplete="off">
-    <div id="vfx-cats"></div>
-  </aside>
-  <!-- 2 · EFFECT MANAGEMENT list (the 'layers'): active stacked effects — toggle / solo / reorder / remove -->
-  <aside class="vfxlab" id="vfx-layers" aria-label="Active effect stack" aria-hidden="true">
-    <h3><span class="tdot" aria-hidden="true"></span>Effect stack<span class="grow"></span><span class="lkind" id="vfx-layer-cnt">0</span></h3>
-    <div id="vfx-layer-list"><div class="vfx-empty">No effects yet — add one from the palette.</div></div>
-  </aside>
-  <!-- 3 · EFFECT PARAMETER control panel (right): a Tweakpane Pane auto-generated from the selected effect -->
-  <aside class="vfxlab" id="vfx-params" aria-label="Effect parameters" aria-hidden="true">
-    <h3><span class="tdot" aria-hidden="true"></span><span id="vfx-param-title">Parameters</span></h3>
-    <div class="vfx-actions">
-      <button class="vfx-abtn" id="vfx-reset" type="button" aria-label="Reset selected effect to defaults">↺ Reset</button>
-      <button class="vfx-abtn" id="vfx-copy" type="button" aria-label="Copy current params as JSON">⧉ Copy JSON</button>
+  <!-- ===== VFX LAB EDITOR — ONE collapsible, scrollable SIDEBAR (option B).
+       A SINGLE fixed container (#vfx-editor) holding every editor surface as a
+       STACKED, independently-COLLAPSIBLE accordion SECTION: Palette · Layers ·
+       Parameters · Builder · Data→Viz · (dev) Prompt · Sample object. Shown ONLY
+       while the 'vfx-lab' section is active (toggled by .on). Because there is
+       exactly ONE container, inter-panel overlap is impossible. Bounded LEFT,
+       below the top nav + above the bottom section bar (see #vfx-editor CSS).
+       Decorative effect-authoring workbench for the standalone VFX library
+       (window.VFX) wired to a Tweakpane param panel (window.Tweakpane). Everything
+       is OPTIONAL: when vfx.js / Tweakpane are absent (offline, or the headless
+       harness) the panels stay empty + the sidebar hidden and the page runs
+       unchanged. The bodies are populated lazily in JS (built ONLY when the section
+       is first entered in a real browser); these elements are just the anchors.
+       VIEW-ONLY: effects drive the Lab's own preview stage / sample object — never
+       the economy, picking, streaming, or Sankey scenes. The master toggle
+       collapses/expands the whole sidebar; each section toggles independently; the
+       body scrolls when open sections exceed the bounded height. ===== -->
+  <aside class="vfxlab" id="vfx-editor" aria-label="VFX Lab editor" aria-hidden="true">
+    <div id="vfx-editor-head">
+      <span class="tdot" aria-hidden="true"></span><span class="etitle">VFX Lab</span><span class="grow"></span>
+      <button id="vfx-editor-master" type="button" aria-label="Collapse or expand the VFX Lab sidebar" aria-expanded="true" title="Collapse / expand">▾</button>
     </div>
-    <div id="vfx-pane-host"></div>
-    <div class="vfx-noparam" id="vfx-noparam">Select an effect to edit its parameters.</div>
-    <div id="vfx-quarks">
-      <div class="vsub">Import three.quarks JSON → Particles</div>
-      <textarea id="vfx-quarks-text" placeholder='paste a three.quarks ParticleSystem JSON…' aria-label="three.quarks JSON to import"></textarea>
-      <div class="vfx-actions" style="margin-top:5px">
-        <button class="vfx-abtn" id="vfx-quarks-add" type="button" aria-label="Import the pasted three.quarks JSON onto the stage">＋ Import to stage</button>
-      </div>
-    </div>
-    <div class="vfx-msg" id="vfx-msg" role="status" aria-live="polite"></div>
-  </aside>
-  <!-- 4 · EFFECT PREVIEW: sample-object selector (the camera orbits the stage; effects re-target live) -->
-  <aside class="vfxlab" id="vfx-preview" aria-label="Preview sample object" aria-hidden="true">
-    <div class="vsub" style="margin-top:0">Sample object</div>
-    <div class="vchips" id="vfx-sample-chips" role="group" aria-label="Preview sample object"></div>
-  </aside>
+    <div id="vfx-editor-body">
+
+      <!-- 0 · TARGET selector: WHAT the effects apply to. Lets the VFX Lab apply effects to objects in
+           EVERY section (not just the lab preview stage): the lab pedestal, a scene object (click-to-pick
+           or choose from the list of the current section's objects), or an object group. View-only. -->
+      <section class="vfx-sec" id="vfx-sec-target">
+        <button class="vfx-sec-head" type="button" aria-expanded="true" aria-controls="vfx-target"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Target</span><span class="lkind" id="vfx-target-badge">stage</span></button>
+        <div class="vfx-sec-body">
+          <aside class="vfxlab" id="vfx-target" aria-label="VFX target selector" aria-hidden="true">
+            <div class="vfx-target-now" id="vfx-target-now">Applying to: <b>Lab pedestal</b></div>
+            <label for="vfx-target-sel">Apply effects to</label>
+            <select id="vfx-target-sel" aria-label="Choose the object or group that effects apply to"></select>
+            <div class="vfx-target-btns">
+              <button class="vfx-abtn" id="vfx-target-pick" type="button" aria-pressed="false" aria-label="Toggle click-to-pick: then click an object in the scene to target it">◎ Pick in scene</button>
+            </div>
+            <div class="vfx-target-hint">Pick an object (click it after arming, or choose above), then add effects from the Palette. Each added effect stays bound to the object it was applied to. POST effects are always full-screen.</div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- 1 · EFFECT CATEGORY palette: collapsible category groups from VFX.list() + search + add (+) -->
+      <section class="vfx-sec" id="vfx-sec-palette">
+        <button class="vfx-sec-head" type="button" aria-expanded="true" aria-controls="vfx-palette"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Palette</span></button>
+        <div class="vfx-sec-body">
+          <aside class="vfxlab" id="vfx-palette" aria-label="VFX effect palette" aria-hidden="true">
+            <input id="vfx-search" type="search" placeholder="search effects…" aria-label="Filter effects" autocomplete="off">
+            <div id="vfx-cats"></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- 2 · EFFECT MANAGEMENT list (the 'layers'): active stacked effects — toggle / solo / reorder / remove -->
+      <section class="vfx-sec collapsed" id="vfx-sec-layers">
+        <button class="vfx-sec-head" type="button" aria-expanded="false" aria-controls="vfx-layers"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Layers</span><span class="lkind" id="vfx-layer-cnt">0</span></button>
+        <div class="vfx-sec-body">
+          <aside class="vfxlab" id="vfx-layers" aria-label="Active effect stack" aria-hidden="true">
+            <div id="vfx-layer-list"><div class="vfx-empty">No effects yet — add one from the palette.</div></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- 3 · EFFECT PARAMETER control panel: a Tweakpane Pane auto-generated from the selected effect -->
+      <section class="vfx-sec" id="vfx-sec-params">
+        <button class="vfx-sec-head" type="button" aria-expanded="true" aria-controls="vfx-params"><span class="caret" aria-hidden="true">▾</span><span class="sttl"><span id="vfx-param-title">Parameters</span></span></button>
+        <div class="vfx-sec-body">
+          <aside class="vfxlab" id="vfx-params" aria-label="Effect parameters" aria-hidden="true">
+            <div class="vfx-actions">
+              <button class="vfx-abtn" id="vfx-reset" type="button" aria-label="Reset selected effect to defaults">↺ Reset</button>
+              <button class="vfx-abtn" id="vfx-copy" type="button" aria-label="Copy current params as JSON">⧉ Copy JSON</button>
+            </div>
+            <div id="vfx-pane-host"></div>
+            <div class="vfx-noparam" id="vfx-noparam">Select an effect to edit its parameters.</div>
+            <!-- DRIVE BY FORMULA: bind a numeric param of the selected effect to a live formula in t
+                 (e.g. 0.5+0.5*sin(t)). Evaluated every frame (frozen under reduced-motion). -->
+            <div id="vfx-drive">
+              <div class="vsub">Drive a param by formula</div>
+              <div class="row">
+                <select id="vfx-drive-param" aria-label="Parameter to drive"></select>
+                <input id="vfx-drive-formula" type="text" value="0.5+0.5*sin(t)" aria-label="Formula in t (and i,n for groups)" spellcheck="false" autocomplete="off">
+              </div>
+              <div class="vfx-actions" style="margin-top:5px">
+                <button class="vfx-abtn" id="vfx-drive-bind" type="button" aria-label="Drive the selected parameter by the formula">∿ Drive</button>
+                <button class="vfx-abtn" id="vfx-drive-stop" type="button" aria-label="Stop driving and clear formula bindings">■ Stop</button>
+              </div>
+              <div class="vfx-drive-active" id="vfx-drive-active"></div>
+            </div>
+            <div id="vfx-quarks">
+              <div class="vsub">Import three.quarks JSON → Particles</div>
+              <textarea id="vfx-quarks-text" placeholder='paste a three.quarks ParticleSystem JSON…' aria-label="three.quarks JSON to import"></textarea>
+              <div class="vfx-actions" style="margin-top:5px">
+                <button class="vfx-abtn" id="vfx-quarks-add" type="button" aria-label="Import the pasted three.quarks JSON onto the stage">＋ Import to stage</button>
+              </div>
+            </div>
+            <div class="vfx-msg" id="vfx-msg" role="status" aria-live="polite"></div>
+          </aside>
+        </div>
+      </section>
 
   <!-- ===== OBJECT + VFX BUILDER (additive panel inside the VFX Lab) — the user workflow:
        (1) place objects via a FORMULA or PROMPT, (2) select an existing object / stage / scene,
@@ -651,8 +798,10 @@
        vfx-lab section is active. Entirely OPTIONAL + headless-safe: every use of BuilderCore / VFX is
        guarded; absent ⇒ stays empty + hidden + inert. VIEW-ONLY: its OWN stage objects + its OWN raycast
        set (the economy `pickables` array is never touched — stays length 2). ===== -->
+      <section class="vfx-sec collapsed" id="vfx-sec-builder">
+        <button class="vfx-sec-head" type="button" aria-expanded="false" aria-controls="vfx-builder"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Builder</span></button>
+        <div class="vfx-sec-body">
   <aside class="vfxlab" id="vfx-builder" aria-label="Object and VFX builder" aria-hidden="true">
-    <h3><span class="tdot" aria-hidden="true"></span>Object + VFX Builder<span class="grow"></span></h3>
 
     <!-- PLACE: shape + count + position-formula (with preset buttons) -->
     <div class="bsec">
@@ -728,12 +877,22 @@
       </div>
     </div>
 
-    <!-- DATA -> VIZ: a MATRIX becomes a visualization through the REAL P3 grammar
-         (engine/data -> engine/transform -> engine/encode, via window.__dataViz).
-         dataset picker + projection picker + a small EncodeSpec UI + Generate -> places
-         that many builder-stage objects with position/scale/color from the channel buffers.
-         If window.__dataViz is absent (engine path unreachable / single-file dist) this whole
-         section shows an "engine modules not loaded" notice and is otherwise inert. -->
+    <div class="bmsg" id="bld-msg" role="status" aria-live="polite"></div>
+  </aside>
+        </div>
+      </section>
+
+      <!-- DATA -> VIZ: a MATRIX becomes a visualization through the REAL P3 grammar
+           (engine/data -> engine/transform -> engine/encode, via window.__dataViz).
+           dataset picker + projection picker + a small EncodeSpec UI + Generate -> places
+           that many builder-stage objects with position/scale/color from the channel buffers.
+           If window.__dataViz is absent (engine path unreachable / single-file dist) this whole
+           section shows an "engine modules not loaded" notice and is otherwise inert.
+           #dv-sec is re-parented OUT of #vfx-builder into its OWN accordion section here;
+           every #dv-* id + behaviour is preserved (BuilderCore drives it from the same hooks). -->
+      <section class="vfx-sec collapsed" id="vfx-sec-dataviz">
+        <button class="vfx-sec-head" type="button" aria-expanded="false" aria-controls="dv-sec"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Data → Viz</span></button>
+        <div class="vfx-sec-body">
     <div class="bsec" id="dv-sec">
       <div class="brow"><span class="vsub" style="margin:0">Data → Viz <span style="text-transform:none;color:#5a7e92">(P3 grammar)</span></span></div>
       <div id="dv-notice" class="bsel" style="display:none;color:#e0a23c;flex:1 1 100%;margin-top:3px">engine modules not loaded — run the server from the repo root and open /prototype/…</div>
@@ -782,9 +941,33 @@
         </div>
       </div>
     </div>
+        </div>
+      </section>
 
-    <div class="bmsg" id="bld-msg" role="status" aria-live="polite"></div>
-  </aside>
+      <!-- DEV-ONLY Prompt SECTION: the dev-gated module mounts its panel into
+           #vfx-prompt-slot (created/populated only under ?dev). The slot stays in
+           the production HTML but is EMPTY + inert (no dev token); the section
+           wrapper is HIDDEN by default and revealed ONLY by the dev-gated loader
+           block (delimited by the strip markers below → removed from the dist). -->
+      <section class="vfx-sec collapsed" id="vfx-sec-prompt" style="display:none">
+        <button class="vfx-sec-head" type="button" aria-expanded="false" aria-controls="vfx-prompt-slot"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Prompt</span></button>
+        <div class="vfx-sec-body">
+          <div id="vfx-prompt-slot" role="tabpanel" aria-label="Generate prompt (dev only)"></div>
+        </div>
+      </section>
+
+      <!-- EFFECT PREVIEW: sample-object selector (the camera orbits the stage; effects re-target live) -->
+      <section class="vfx-sec collapsed" id="vfx-sec-sample">
+        <button class="vfx-sec-head" type="button" aria-expanded="false" aria-controls="vfx-preview"><span class="caret" aria-hidden="true">▾</span><span class="sttl">Sample object</span></button>
+        <div class="vfx-sec-body">
+          <aside class="vfxlab" id="vfx-preview" aria-label="Preview sample object" aria-hidden="true">
+            <div class="vchips" id="vfx-sample-chips" role="group" aria-label="Preview sample object"></div>
+          </aside>
+        </div>
+      </section>
+
+    </div><!-- /#vfx-editor-body -->
+  </aside><!-- /#vfx-editor -->
 
   <!-- ===== top-left: region + coordinate readout (the world's compass) ===== -->
   <div class="hint" id="hint" role="status" aria-live="polite">
@@ -1023,7 +1206,25 @@
     console.info('[FEAT-data-to-viz] dataviz ESM pipeline not loaded (Data->Viz panel will show a notice; page unaffected):', e && e.message);
   }
 </script>
-
+<!-- (d) RENDER-PATH SWAP bridge (Story P2.5b): expose the apps/magnate RENDER bindings
+     (apps/magnate/render via prototype/magnate-render.mjs) on window.__magnateRender so the
+     classic inline Smart City / Smart Factory / Shopping Mall render path WRITES its
+     data-bound mesh attributes (tower height ∝ net-worth, twinHeatColor(load) shell colour,
+     comms-packet weight ∝ trade-volume) FROM the ENGINE channels when this handle is present.
+     GRACEFUL FALLBACK: if the engine/app path is unreachable (file://, single-file dist,
+     non-root server) this import fails in ISOLATION — window.__magnateRender stays undefined
+     and the inline path renders EXACTLY as before from its own computation (the inline maths
+     also remains the __*Headless probe source-of-truth, so the headless harness — which never
+     loads this module — stays byte-identical). The page never throws. -->
+<script type="module">
+  try {
+    const r = (await import('./magnate-render.mjs')).default;
+    window.__magnateRender = r;   // { towerHeights, twinHeatColors, twinHeatColor, packetWeights, fromSnapshot, ... }
+    console.info('[P2.5b] apps/magnate render-path swap bridge loaded:', r && r.name, r && r.version);
+  } catch (e) {
+    console.info('[P2.5b] render-path swap bridge not loaded (inline render path unaffected; engine-driven render is opt-in):', e && e.message);
+  }
+</script>
 <!-- ============================================================================
      APP CODE — plain (non-module) script so it is headless-evaluable. We do NOT
      gate init on window 'load'; we initialize at the very END of this script and
@@ -1090,6 +1291,13 @@
     height: {}, cur: {}, glow: {}, deskGlow: 0,
     partnerGlow: {}, deskPartnerGlow: 0,   // trade-partner pulse driven by the selected firm's last trades
     retailGlow: 0,                         // RECENT RETAIL SALES pulse for the mall signage (decays each tick; view-only)
+    // RENDER-PATH SWAP (Story P2.5b): engine-DRIVEN tower-height render targets, keyed by firm id, written
+    // from the apps/magnate render bindings (window.__magnateRender) when that ESM is loaded. The SOLID tower
+    // mesh eases toward renderHeight[id] when present; EMPTY (engine absent / headless) -> the mesh falls back
+    // to the inline `height[id]` exactly as before. `height` STAYS the inline source-of-truth the __*Headless
+    // probes read (so the classic-script-only harness is byte-identical) — renderHeight is the visual mirror,
+    // proven byte-identical to `height` by conformance/render-swap-parity.test.mjs.
+    renderHeight: {},
   };
   let lastEv = null;                 // last processed tick's events (for trade-link highlighting)
   let selectedFirmId = null;         // firm currently INSPECTED (drives link highlighting; null = none)
@@ -2867,10 +3075,23 @@
     sfTwinT += dt; const T = sfTwinT;
     // THERMAL — each machine's temperature = deterministic baseline + an activity wobble; tint its emissive
     // shell via twinHeatColor(temp) (cold→hot) and size/colour the floating heat value-marker.
+    // RENDER-PATH SWAP (Story P2.5b): the canonical Smart-Factory `twinHeat` color channel is resolved THROUGH
+    // the engine colormap (engine/encode via twinHeatSpec) in ONE bulk read when the apps/magnate render
+    // bindings are loaded; absent (headless / single-file dist) -> the inline twinHeatColor() fallback runs per
+    // shell exactly as before. Byte-identical (same 'twinheat' ramp), proven by the parity test.
+    const _Rf = magnateRender();
+    const _temps = new Array(sfThermal.length);
     for (let i = 0; i < sfThermal.length; i++){ const t = sfThermal[i];
       const act = 0.12 * (0.5 + 0.5 * Math.sin(T*0.8 + t.phase));   // activity modulation (0..0.12)
       t.temp = Math.max(0, Math.min(1, t.base + act));
-      const c = twinHeatColor(t.temp);
+      _temps[i] = t.temp;
+    }
+    let _engF = null;
+    if (_Rf && typeof _Rf.twinHeatColors === 'function'){
+      try { _engF = _Rf.twinHeatColors(_temps, { subWhite: false }); } catch(_){ _engF = null; }  // degrade -> inline
+    }
+    for (let i = 0; i < sfThermal.length; i++){ const t = sfThermal[i];
+      const c = _engF ? _engF.rgb(i) : twinHeatColor(t.temp);   // engine-driven render OR inline fallback (identical)
       if (t.shellMat && t.shellMat.color){ t.shellMat.color.setRGB(c.r, c.g, c.b); t.shellMat.opacity = 0.12 + t.temp*0.16; }
       if (t.markMat && t.markMat.color){ t.markMat.color.setRGB(c.r, c.g, c.b); }
       if (t.mark && t.mark.scale && t.mark.scale.set) t.mark.scale.set(0.5, 1.2 + t.temp*3.2, 0.5);
@@ -3167,9 +3388,23 @@
     cityTwinT += dt; const T = cityTwinT;
     // ENERGY/THERMAL heatmap — tint each tower's shell by its load via twinHeatColor (busy/high-NW towers hotter),
     // with a gentle activity breath so the city reads as live. Sub-white additive → no white-out.
+    // RENDER-PATH SWAP (Story P2.5b): when the apps/magnate render bindings are loaded, the per-shell COLOUR is
+    // resolved THROUGH the engine colormap (engine/encode via twinHeatSpec, the 'twinheat' frozen jet ramp) in
+    // ONE bulk read keyed to the live loads; absent (headless / single-file dist) -> the inline twinHeatColor()
+    // fallback runs per shell exactly as before. The two are byte-identical (same ramp), proven by the parity
+    // test, so the heatmap is visually unchanged; this only routes the colour mapping through the engine.
+    const _R = magnateRender();
+    const _loads = new Array(cityTwinShells.length);
+    for (let i = 0; i < cityTwinShells.length; i++){
+      _loads[i] = Math.max(0, Math.min(1, cityTowerLoad(cityTwinShells[i].id) + 0.04 * Math.sin(T * 0.7 + i)));
+    }
+    let _eng = null;
+    if (_R && typeof _R.twinHeatColors === 'function'){
+      try { _eng = _R.twinHeatColors(_loads, { subWhite: false }); } catch(_){ _eng = null; }  // degrade -> inline
+    }
     for (let i = 0; i < cityTwinShells.length; i++){ const s = cityTwinShells[i];
-      const load = Math.max(0, Math.min(1, cityTowerLoad(s.id) + 0.04 * Math.sin(T * 0.7 + i)));
-      const c = twinHeatColor(load);
+      const load = _loads[i];
+      const c = _eng ? _eng.rgb(i) : twinHeatColor(load);   // engine-driven render OR inline fallback (identical)
       if (s.shellMat && s.shellMat.color){ s.shellMat.color.setRGB(c.r, c.g, c.b); s.shellMat.opacity = 0.12 + load * 0.16; }
     }
     // SCAN-SWEEP — the bright plane travels across the district (ping-pong), so the twin "scans" into view.
@@ -4564,9 +4799,52 @@
     const span = Math.max(1, hi - lo);
     for (const f of world.firms){
       const t = (nw[f.id] - lo) / span;
+      // INLINE source-of-truth (probe-read; UNCHANGED). The __*Headless probes read targets.height,
+      // so this min-max law stays exactly as captured by the P1.3 frozen tower-height vector.
       targets.height[f.id] = H_MIN + t * (H_MAX - H_MIN);
       if (targets.cur[f.id] === undefined) targets.cur[f.id] = targets.height[f.id];
     }
+    // RENDER-PATH SWAP (Story P2.5b): when the apps/magnate render bindings are loaded, source the SOLID
+    // tower's VISUAL height target from the ENGINE channel (engine/encode via towerHeightSpec) instead of
+    // the inline `height`. Byte-identical by construction (same min-max law, same net-worth inputs) — the
+    // parity test proves it — so the city looks identical; this just routes the render value THROUGH the
+    // engine. GRACEFUL: any absence/failure leaves renderHeight empty and the mesh uses inline `height`.
+    refreshEngineRenderHeights(nw);
+  }
+
+  /* refreshEngineRenderHeights(nw) — compute the engine-driven tower-height render targets from the SAME
+   * net-worth values the inline law used (nw[id]), via window.__magnateRender.towerHeights(). Keyed by firm
+   * id into targets.renderHeight. NO-OP + fully guarded when the render bridge is absent (single-file dist /
+   * file:// / load failure) or under the headless harness (which never loads the ESM): renderHeight stays
+   * empty and the frame loop falls back to the inline `height`. View-only; never touches the economy. */
+  // magnateRender() — the REAL apps/magnate render bridge, or null. The headless harness installs a stub
+  // `window` Proxy whose every property is a callable element, so a bare truthiness/typeof check would falsely
+  // match it; we require the module's own identity string (R.name === 'apps/magnate/render') so ONLY the real
+  // ESM module is ever consulted. In the classic-script-only harness this is ALWAYS null -> the inline path
+  // (probe source-of-truth) drives the render, byte-identically. View-only.
+  function magnateRender(){
+    const R = (typeof window !== 'undefined') ? window.__magnateRender : null;
+    return (R && R.name === 'apps/magnate/render') ? R : null;
+  }
+  function refreshEngineRenderHeights(nw){
+    const R = magnateRender();
+    if (!R || typeof R.towerHeights !== 'function'){
+      // engine absent -> ensure no stale render targets linger (fall back to inline `height`).
+      for (const id in targets.renderHeight) delete targets.renderHeight[id];
+      return;
+    }
+    try {
+      // Build the adapter-shaped ranking from the SAME net-worth frame the inline law used, so the engine
+      // ranks the identical firms with the identical values (rank by netWorth desc; ties by id — matches
+      // the adapter). value = net worth in the height-driving units (nwForHeight), exactly as inline.
+      const ranking = world.firms
+        .map((f) => ({ id: f.id, value: nw[f.id] }))
+        .sort((a, b) => (b.value - a.value) || (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0))
+        .map((r, i) => ({ id: r.id, rank: i + 1, value: r.value }));
+      const t = R.towerHeights(ranking);          // engine/encode -> { byId, ... }
+      const byId = t && t.byId;
+      if (byId){ for (const id in byId) targets.renderHeight[id] = byId[id]; }
+    } catch(_){ /* degrade: leave renderHeight as-is; the inline height still drives the mesh */ }
   }
 
   /* ============================================================
@@ -4718,6 +4996,13 @@
         && !reduceMotion && !replaying()){
       try { VFX.update(dt, ts / 1000); } catch(_){ /* never break the frame loop */ }
     }
+    // IN-SCENE VFX + BUILDER — driven EVERY frame in EVERY section now that effects/objects live in all
+    // sections (re-aim layers to their targets, evaluate formula-driven effect params, drive builder
+    // formula transforms). Motion/replay-gated (INV-2). Guarded + headless-safe (no-op when absent).
+    if (!reduceMotion && !replaying()){
+      try { if (typeof VFXLab !== 'undefined' && VFXLab){ VFXLab.retargetLive(); if (VFXLab.driveParams) VFXLab.driveParams(ts / 1000); } } catch(_){}
+      try { if (typeof Builder !== 'undefined' && Builder) Builder.update(dt, ts / 1000); } catch(_){}
+    }
 
     // PHASE 2 per-slice visibility (recomputed each frame; alloc-free booleans). A focused theme hides a
     // slice's GROUP; here we use that to gate the slice's DECORATIVE motion so a hidden slice's economy/retail
@@ -4730,7 +5015,10 @@
     // ease central tower heights + glow
     for (const f of world.firms){
       const id = f.id, b = buildings[id]; if (!b) continue;
-      const tgt = targets.height[id] || H_MIN;
+      // RENDER-PATH SWAP (Story P2.5b): ease toward the ENGINE-driven render target when the apps/magnate
+      // render bindings are loaded (targets.renderHeight[id], from engine/encode); else fall back to the
+      // inline `height` (probe source-of-truth) — byte-identical, so the visual is unchanged either way.
+      const tgt = (targets.renderHeight[id] !== undefined ? targets.renderHeight[id] : targets.height[id]) || H_MIN;
       targets.cur[id] = lerp(targets.cur[id] || tgt, tgt, 1 - Math.pow(0.02, dt));
       const h = Math.max(0.5, targets.cur[id]);
       // shaft tracks net worth (city harness invariant) and sits ON the fixed podium
@@ -4943,16 +5231,7 @@
       if (ns && ns.spin && activeSection === 'network' && !reduceMotion){
         ns.spin.rotation.y += dt * 0.18;
       }
-      // VFX LAB: keep any live emitter/infographic effect anchored to the (orbiting) sample object. Gated to
-      // the section + motion/replay (preview animation freezes under reduced-motion or while scrubbing).
-      // Guarded + headless-safe (VFXLab is a no-op when VFX/Tweakpane are absent).
-      if (activeSection === 'vfx-lab' && !reduceMotion && !replaying()){
-        try { if (typeof VFXLab !== 'undefined' && VFXLab) VFXLab.retargetLive(); } catch(_){}
-        // OBJECT + VFX BUILDER: drive the per-object formula-time transforms (scale/rotation/color/opacity)
-        // and dynamic effect params. Same section + motion/replay gates; BuilderCore also freezes t under
-        // reduceMotion (belt + braces). elapsed = ts seconds. Guarded + headless-safe (no-op when absent).
-        try { if (typeof Builder !== 'undefined' && Builder) Builder.update(dt, ts / 1000); } catch(_){}
-      }
+      // (VFXLab.retargetLive + Builder.update now run section-independently, just after VFX.update above.)
       // DATA → VIZ ANIMATE (P5.2-visible): drive the placed objects along the [t,n,f]
       // trajectory dynamic. Called when the VFX-Lab is active REGARDLESS of motion state —
       // animateDataViz freezes INTERNALLY to the t=0 resting frame under reduced-motion /
@@ -5690,6 +5969,16 @@
     gl.addEventListener('pointerup', e => {
       if (moved) return;                       // it was a pan/orbit drag, not a click → ignore
       if (typeof THREE === 'undefined' || !cam) return;
+      // VFX Lab "Pick in scene" mode: a click selects the clicked object as the VFX effect target. Works in
+      // EVERY section, raycasting that section's own objects (independent of the 2 economy pickables).
+      try {
+        if (typeof VFXLab !== 'undefined' && VFXLab && VFXLab.pickArmed && VFXLab.pickArmed()){
+          const pr = gl.getBoundingClientRect ? gl.getBoundingClientRect() : { left:0, top:0, width:window.innerWidth, height:window.innerHeight };
+          const pndc = new THREE.Vector2(((e.clientX - pr.left) / pr.width) * 2 - 1, -((e.clientY - pr.top) / pr.height) * 2 + 1);
+          const pray = new THREE.Raycaster(); pray.setFromCamera(pndc, cam);
+          if (VFXLab.pickFromRay(pray)) return;     // consumed the click as a target pick
+        }
+      } catch(_){}
       // PHASE 2: the firm towers + NPC_DESK exchange are the ONLY pickables, and they live in economyGroup
       // (under centralGroup). When that slice isn't on screen — economyGroup hidden (smart-factory /
       // shopping-mall) or the whole world hidden (a data diorama is active) — a click must NOT resolve a
@@ -7539,13 +7828,31 @@
     let soloId = null;          // soloed layer id (null = no solo)
     let nextId = 1;
     let descByName = null;      // name -> VFX.list() descriptor (effect metadata)
+    // ---- in-scene targeting: WHAT new effects apply to (null = the lab pedestal sample, original behavior).
+    //      A target is { id, label, obj?, pos?, group? }; obj is a live THREE.Object3D in the active section.
+    //      Each added layer CAPTURES the target at add-time so effects stay bound to their own object. ----
+    let sceneTarget = null;     // the currently-selected target for the NEXT added effect
+    let pickArmed = false;      // "Pick in scene" mode: a scene click selects the clicked object as target
+    let targetList = [];        // cached enumerable targets for the active section (drives the dropdown)
+    let targetHelper = null;    // THREE.BoxHelper outlining the current target (selection affordance)
 
     const haveVFX = () => (typeof VFX !== 'undefined' && VFX && vfxReady);
     const haveTP  = () => (typeof Tweakpane !== 'undefined' && Tweakpane && typeof Tweakpane.Pane === 'function');
 
     // world-space anchor of the preview sample (for emitter origin + infographic position). The Lab diorama
     // group sits at SCENE_POS['vfx-lab']; the holder is raised to y≈12. Read the live world matrix when we can.
-    function sampleWorld(){
+    function sampleWorld(target){
+      // a picked scene target (object or group) overrides the lab pedestal. Defaults to the current
+      // selection so legacy no-arg callers still work; makeHandle passes each layer's CAPTURED target.
+      if (target === undefined) target = sceneTarget;
+      try {
+        if (target && target.obj && target.obj.getWorldPosition && typeof THREE !== 'undefined' && THREE.Vector3){
+          const v = target.obj.getWorldPosition(new THREE.Vector3());
+          if (v && isFinite(v.x)) return [v.x, v.y, v.z];
+        }
+        if (target && target.pos && target.pos.length === 3) return target.pos.slice();
+      } catch(_){}
+      // fall back to the lab pedestal holder (original behavior).
       const st = sceneState['vfx-lab'];
       const p = SCENE_POS['vfx-lab'] || { x: 0, z: 0 };
       let x = p.x, y = 12, z = p.z;
@@ -7557,15 +7864,124 @@
       } catch(_){}
       return [x, y, z];
     }
-    // the first Mesh inside the sample group (the target for VFX.material / VFX.attach).
-    function sampleMesh(){
-      const st = sceneState['vfx-lab'];
-      const root = st && st.sample;
+    // the first Mesh inside the target (or the lab sample) — the host for VFX.material / VFX.attach.
+    function sampleMesh(target){
+      if (target === undefined) target = sceneTarget;
+      let root = (target && target.obj) ? target.obj : null;
+      if (!root){ const st = sceneState['vfx-lab']; root = st && st.sample; }
       if (!root) return null;
       if (root.isMesh) return root;
       let found = null;
       try { if (root.traverse) root.traverse(o => { if (!found && o && o.isMesh) found = o; }); } catch(_){}
       return found || root;
+    }
+
+    // ---------- in-scene TARGET selection (the "Target" panel) ----------
+    function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+    // human label for a firm id (falls back to the id).
+    function firmLabel(id){
+      if (id === 'NPC_DESK') return 'Exchange (NPC_DESK)';
+      try { const f = world && world.firms && world.firms.find && world.firms.find(x => x.id === id); if (f && f.name) return f.name; } catch(_){}
+      return id;
+    }
+    // enumerate the selectable objects + groups for a section, reading the EXISTING scene registries.
+    // It never adds to the economy `pickables` array (that stays exactly 2 entries); unknown registries
+    // are skipped, not fatal.
+    function sectionTargets(section){
+      const out = [];
+      // members (an array of THREE.Object3D) makes a group fan an effect onto EVERY member; without it a
+      // group target just uses its container (centroid for emitters, first mesh for materials).
+      const add = (id, label, obj, group, members) => {
+        if (obj) out.push({ id, label, obj, group: !!group, members: (members && members.length) ? members : null });
+      };
+      const glabel = (base, n) => base + ' (group · ' + n + ')';
+      try {
+        if (section === 'smart-city' || section === 'factory'){
+          const firmGrps = [];
+          if (typeof buildings === 'object' && buildings){ for (const fid in buildings){ const b = buildings[fid]; if (b && b.grp) firmGrps.push(b.grp); } }
+          if (typeof economyGroup !== 'undefined' && economyGroup && firmGrps.length) add('grp:firms', glabel('▦ All firms', firmGrps.length), economyGroup, true, firmGrps);
+          if (typeof buildings === 'object' && buildings){
+            for (const fid in buildings){ const b = buildings[fid]; if (b && b.grp) add('firm:' + fid, firmLabel(fid), b.grp); }
+          }
+          if (typeof exchange !== 'undefined' && exchange && exchange.grp) add('desk', firmLabel('NPC_DESK'), exchange.grp);
+        } else if (section === 'network'){
+          const st = sceneState.network;
+          const nodeGrps = [];
+          if (st && st.nodes){ for (const id in st.nodes){ const n = st.nodes[id]; if (n && n.grp) nodeGrps.push(n.grp); } }
+          if (st && st.spin && nodeGrps.length) add('grp:net', glabel('▦ Network', nodeGrps.length), st.spin, true, nodeGrps);
+          if (st && st.nodes){ for (const id in st.nodes){ const n = st.nodes[id]; if (n && n.grp) add('net:' + id, 'Node · ' + firmLabel(id), n.grp); } }
+        } else if (section === 'leaderboard'){
+          const st = sceneState.leaderboard;
+          const podGrps = [];
+          if (st && st.podia){ for (const id in st.podia){ const p = st.podia[id]; if (p && p.grp) podGrps.push(p.grp); } }
+          if (podGrps.length){
+            const container = (typeof sceneGroups !== 'undefined' && sceneGroups && sceneGroups.leaderboard) ? sceneGroups.leaderboard : podGrps[0];
+            add('grp:lb', glabel('▦ All podia', podGrps.length), container, true, podGrps);
+          }
+          if (st && st.podia){ for (const id in st.podia){ const p = st.podia[id]; if (p && p.grp) add('lb:' + id, firmLabel(id), p.grp); } }
+        } else if (section === 'digital-twin'){
+          const st = sceneState['digital-twin'];
+          if (st && st.solid) add('twin:solid', 'Turbine', st.solid);
+          if (st && st.root) add('twin:root', '▦ Twin scene (group)', st.root, true);
+        } else if (section === 'smart-factory'){
+          if (typeof sfTwinWire !== 'undefined' && sfTwinWire) add('sf:twin', 'Factory twin wireframe', sfTwinWire);
+        } else if (section === 'shopping-mall'){
+          if (typeof retailGroup !== 'undefined' && retailGroup) add('grp:retail', '▦ Mall (group)', retailGroup, true);
+        }
+      } catch(_){}
+      return out;
+    }
+    // outline the current target with a BoxHelper (selection affordance). Bounded: one helper, disposed on change.
+    function updateTargetHelper(){
+      try {
+        if (targetHelper){
+          if (scene && scene.remove) scene.remove(targetHelper);
+          if (targetHelper.geometry && targetHelper.geometry.dispose) targetHelper.geometry.dispose();
+          targetHelper = null;
+        }
+        if (sceneTarget && sceneTarget.obj && typeof THREE !== 'undefined' && THREE.BoxHelper && typeof scene !== 'undefined' && scene && scene.add){
+          targetHelper = new THREE.BoxHelper(sceneTarget.obj, 0x9be7ff);
+          if (targetHelper.material){ targetHelper.material.transparent = true; targetHelper.material.opacity = 0.85; }
+          scene.add(targetHelper);
+        }
+      } catch(_){}
+    }
+    function targetReadout(){
+      const now = $('vfx-target-now'); const badge = $('vfx-target-badge');
+      const label = sceneTarget ? (sceneTarget.label || 'object') : 'Lab pedestal';
+      if (now) now.innerHTML = 'Applying to: <b>' + esc(label) + '</b>';
+      if (badge) badge.textContent = sceneTarget ? (sceneTarget.group ? 'group' : 'object') : 'stage';
+    }
+    // set the active target (null = lab pedestal) and refresh the affordances.
+    function setTarget(entry){
+      sceneTarget = (entry && (entry.obj || entry.pos)) ? entry : null;
+      targetReadout(); updateTargetHelper();
+    }
+    // (re)build the dropdown for a section; option -1 is always the lab pedestal.
+    function populateTargetSelect(section){
+      const sel = $('vfx-target-sel'); if (!sel) return;
+      targetList = sectionTargets(section);
+      const opts = ['<option value="-1">— Lab pedestal —</option>']
+        .concat(targetList.map((t, i) => '<option value="' + i + '">' + esc(t.label) + '</option>'));
+      sel.innerHTML = opts.join('');
+    }
+    // reflect the current sceneTarget in the dropdown selection.
+    function syncTargetSelect(){
+      const sel = $('vfx-target-sel'); if (!sel) return;
+      let idx = -1;
+      if (sceneTarget){ for (let i = 0; i < targetList.length; i++){ if (targetList[i] === sceneTarget || targetList[i].id === sceneTarget.id){ idx = i; break; } } }
+      sel.value = String(idx);
+    }
+    function onTargetSelChange(){
+      const sel = $('vfx-target-sel'); if (!sel) return;
+      const i = parseInt(sel.value, 10);
+      setTarget(i >= 0 ? targetList[i] : null);
+    }
+    function setPickArmed(on){
+      pickArmed = !!on;
+      const b = $('vfx-target-pick');
+      if (b){ b.setAttribute('aria-pressed', pickArmed ? 'true' : 'false'); if (b.classList) b.classList.toggle('on', pickArmed); }
+      try { if (typeof gl !== 'undefined' && gl && gl.style) gl.style.cursor = pickArmed ? 'crosshair' : ''; } catch(_){}
     }
 
     // refresh the cached effect registry (sorted; defensive deep-copy of params/controls is unnecessary —
@@ -7644,19 +8060,25 @@
       if (!haveVFX()){ msg('VFX library not loaded — preview unavailable.', true); return; }
       const d = descByName && descByName[name]; if (!d){ msg('Unknown effect: ' + name, true); return; }
       const params = cloneParams(d.params);
+      const target = sceneTarget;     // CAPTURE the target so this layer stays bound to its object(s)
+      // a GROUP target with explicit members fans the effect onto every member (POST stays full-screen).
+      const fanOut = !!(target && target.group && target.members && target.members.length && d.family !== 'post');
       let handle = null;
-      try { handle = makeHandle(d, params); } catch(_){ handle = null; }
+      try { handle = fanOut ? makeGroupHandle(d, params, target) : makeHandle(d, params, target); } catch(_){ handle = null; }
       if (!handle){ msg('Could not create "' + name + '" (no composer / headless?).', true); return; }
       const layer = { id: nextId++, name: name, family: d.family, kind: d.kind || '',
-        controls: d.controls || {}, params: params, handle: handle, enabled: true };
+        controls: d.controls || {}, params: params, handle: handle, enabled: true, target: target };
       layers.push(layer);
       selId = layer.id;
       applyEnable();           // honour any active solo
-      renderLayers(); buildParamPane(); msg('Added ' + name + '.');
+      renderLayers(); buildParamPane();
+      const suffix = target ? (' → ' + (target.label || 'target')
+        + (fanOut && handle.count ? ' ×' + handle.count + (handle.truncated ? ' (capped)' : '') : '')) : '';
+      msg('Added ' + name + suffix + '.');
     }
     // build the right VFX handle for an effect descriptor. Returns a uniform wrapper exposing
     // setParams(params) / setEnabled(bool) / dispose() so the management list speaks ONE language.
-    function makeHandle(d, params){
+    function makeHandle(d, params, target){
       const fam = d.family, name = d.name;
       if (fam === 'post'){
         const fx = VFX.post.enable(name, params);
@@ -7669,19 +8091,19 @@
         };
       }
       if (fam === 'emitter'){
-        const origin = sampleWorld();
+        const origin = sampleWorld(target);
         const fx = VFX.spawn(name, withOrigin(params, origin));
         if (!fx) return null;
         return {
           kind: 'emitter', fx: fx,
           setParams: (np) => { try { fx.setParams && fx.setParams(np); } catch(_){} },
           setEnabled: (on) => { try { if (fx.group) fx.group.visible = !!on; } catch(_){} },
-          retarget: () => { try { fx.setParams && fx.setParams({ origin: sampleWorld() }); } catch(_){} },
+          retarget: () => { try { fx.setParams && fx.setParams({ origin: sampleWorld(target) }); } catch(_){} },
           dispose: () => { try { fx.dispose && fx.dispose(); } catch(_){} }
         };
       }
       if (fam === 'material'){
-        const mesh = sampleMesh(); if (!mesh) return null;
+        const mesh = sampleMesh(target); if (!mesh) return null;
         const fx = VFX.material(mesh, name, params);
         if (!fx) return null;
         // capture both materials so enable/disable can swap directly (restore() is one-way, so we keep refs).
@@ -7702,18 +8124,44 @@
       if (fam === 'infographic'){
         const fn = VFX.infographic && VFX.infographic[name];
         if (typeof fn !== 'function') return null;
-        const pos = sampleWorld();
+        const pos = sampleWorld(target);
         const fx = fn(withInfoPos(params, pos));
         if (!fx) return null;
         return {
           kind: 'infographic', fx: fx,
           setParams: (np) => { try { fx.setParams && fx.setParams(np); } catch(_){} },
           setEnabled: (on) => { try { if (fx.group) fx.group.visible = !!on; if (fx.setVisible) fx.setVisible(!!on); } catch(_){} },
-          retarget: () => { try { fx.setParams && fx.setParams({ world: sampleWorld() }); } catch(_){} },
+          retarget: () => { try { fx.setParams && fx.setParams({ world: sampleWorld(target) }); } catch(_){} },
           dispose: () => { try { fx.dispose && fx.dispose(); } catch(_){} }
         };
       }
       return null;
+    }
+    // GROUP fan-out: build ONE sub-handle per member object, wrapped as a single composite handle that
+    // fans setParams / setEnabled / retarget / dispose to all members. Bounded per family (INV-4:
+    // pooled/bounded GPU); truncation is surfaced (no silent cap). POST effects never fan out (full-screen) —
+    // addEffect routes them to makeHandle. Each sub re-aims to its OWN member via its captured {obj}.
+    const GROUP_FAMILY_CAP = { emitter: 12, infographic: 16, material: 32 };
+    function makeGroupHandle(d, params, target){
+      const members = (target && target.members) || [];
+      const cap = GROUP_FAMILY_CAP[d.family] || 16;
+      const used = members.slice(0, cap);
+      const subs = [];
+      for (const m of used){
+        let sub = null;
+        try { sub = makeHandle(d, cloneParams(params), { obj: m, label: target.label }); } catch(_){ sub = null; }
+        if (sub) subs.push(sub);
+      }
+      if (!subs.length) return null;
+      return {
+        kind: 'group:' + d.family,
+        count: subs.length,
+        truncated: used.length < members.length,
+        setParams: (np) => { for (const s of subs){ if (s.setParams) try { s.setParams(np); } catch(_){} } },
+        setEnabled: (on) => { for (const s of subs){ if (s.setEnabled) try { s.setEnabled(on); } catch(_){} } },
+        retarget: () => { for (const s of subs){ if (s.retarget) try { s.retarget(); } catch(_){} } },
+        dispose: () => { for (const s of subs){ if (s.dispose) try { s.dispose(); } catch(_){} } }
+      };
     }
     function withOrigin(params, origin){ const o = cloneParams(params); o.origin = origin.slice(); return o; }
     function withInfoPos(params, pos){
@@ -7824,6 +8272,7 @@
       // title + quarks-import visibility (Particles only)
       if (title) title.textContent = L ? L.name : 'Parameters';
       if (quarks && quarks.classList) quarks.classList.toggle('on', !!L && L.kind === 'particles');
+      refreshDriveUI();   // drive-by-formula UI is independent of Tweakpane — refresh BEFORE any early return
       if (!L){ if (none) none.style.display = 'block'; return; }
       if (none) none.style.display = 'none';
       if (!haveTP()){ if (none){ none.style.display = 'block'; none.textContent = 'Tweakpane not loaded — params unavailable.'; } return; }
@@ -7840,6 +8289,68 @@
       }
       // if no bindings landed, show the hint
       if (none && !Object.keys(paneState).length){ none.style.display = 'block'; none.textContent = 'This effect has no editable parameters.'; }
+    }
+    // ---------- DRIVE A PARAM BY FORMULA (apply VFX via a simple formula — item #3) ----------
+    // bind a numeric effect param to a live BuilderCore formula in t (and i,n for groups); evaluated each
+    // frame by tickDriven(). For a group layer the value fans to every member via the composite handle.
+    function numericParamKeys(L){
+      const out = []; if (!L) return out;
+      const ctrls = L.controls || {};
+      for (const key in ctrls){ if (Object.prototype.hasOwnProperty.call(ctrls, key) && ctrls[key] && ctrls[key].type === 'number') out.push(key); }
+      for (const key in L.params){ if (typeof L.params[key] === 'number' && out.indexOf(key) < 0) out.push(key); }
+      return out;
+    }
+    function refreshDriveUI(){
+      const sel = $('vfx-drive-param'); const active = $('vfx-drive-active');
+      const L = selectedLayer();
+      if (sel){
+        const keys = numericParamKeys(L);
+        const cur = sel.value;
+        sel.innerHTML = keys.length ? keys.map(k => '<option value="' + esc(k) + '">' + esc(k) + '</option>').join('')
+          : '<option value="">(no numeric params)</option>';
+        if (keys.indexOf(cur) >= 0) sel.value = cur;
+      }
+      if (active){
+        const d = L && L.driven; const list = d ? Object.keys(d) : [];
+        active.textContent = list.length ? ('∿ driving: ' + list.map(k => k + ' = ' + d[k].src).join('  ·  ')) : '';
+      }
+    }
+    function bindDrive(){
+      const L = selectedLayer(); if (!L){ msg('Select an effect layer first.', true); return; }
+      const sel = $('vfx-drive-param'); const inp = $('vfx-drive-formula');
+      const key = sel ? sel.value : ''; const src = inp ? inp.value.trim() : '';
+      if (!key){ msg('This effect has no numeric parameter to drive.', true); return; }
+      if (!src){ msg('Enter a formula in t — e.g. 0.5+0.5*sin(t).', true); return; }
+      if (typeof BuilderCore === 'undefined' || !BuilderCore || !BuilderCore.compileFormula){ msg('Formula engine unavailable.', true); return; }
+      const base = (typeof L.params[key] === 'number') ? L.params[key] : 0;
+      L.driven = L.driven || {};
+      L.driven[key] = { src: src, fn: BuilderCore.compileFormula(src, base), base: base };
+      refreshDriveUI();
+      msg('Driving ' + key + ' = ' + src + (L.target ? ' on ' + (L.target.label || 'target') : '') + '.');
+    }
+    function stopDrive(){
+      const L = selectedLayer(); if (!L || !L.driven) return;
+      for (const key in L.driven){
+        const d = L.driven[key];
+        if (d && typeof d.base === 'number'){ L.params[key] = d.base; const p = {}; p[key] = d.base; try { L.handle && L.handle.setParams && L.handle.setParams(p); } catch(_){} }
+      }
+      L.driven = null; refreshDriveUI(); buildParamPane(); msg('Stopped formula drives.');
+    }
+    // per-frame: evaluate every layer's driven params and push to its handle (called from the frame loop).
+    function tickDriven(t){
+      if (!layers.length) return;
+      for (const L of layers){
+        if (!L.driven || !L.handle || !L.handle.setParams) continue;
+        for (const key in L.driven){
+          const d = L.driven[key]; if (!d || !d.fn) continue;
+          let v = d.fn(0, 1, t || 0, d.base);
+          if (typeof v !== 'number' || !isFinite(v)) continue;
+          const c = L.controls && L.controls[key];
+          if (c && typeof c.min === 'number' && typeof c.max === 'number') v = Math.max(c.min, Math.min(c.max, v));
+          L.params[key] = v; const patch = {}; patch[key] = v;
+          try { L.handle.setParams(patch); } catch(_){}
+        }
+      }
     }
     // map ONE control descriptor to a Tweakpane binding; on change, push to the effect handle.
     function addBinding(L, key, c, val){
@@ -8011,6 +8522,35 @@
       m.textContent = text || '';
       if (m.classList) m.classList.toggle('warn', !!warn);
     }
+    // Wire the single-sidebar chrome ONCE: the MASTER collapse toggle (hide/show the
+    // whole #vfx-editor; collapsed → a small reopen tab) + each section's accordion
+    // header (caret toggles its own .collapsed). Independent + headless-guarded.
+    let editorWired = false;
+    function wireEditorChrome(){
+      if (editorWired || typeof document === 'undefined') return;
+      editorWired = true;
+      const root = $('vfx-editor');
+      const master = $('vfx-editor-master');
+      if (root && master && master.addEventListener){
+        master.addEventListener('click', () => {
+          const collapsed = root.classList ? root.classList.toggle('collapsed') : false;
+          master.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+          master.textContent = collapsed ? '▸' : '▾';
+        });
+      }
+      // Per-section accordion: each .vfx-sec-head toggles its parent .vfx-sec.collapsed.
+      const heads = (root && root.querySelectorAll) ? root.querySelectorAll('.vfx-sec-head') : [];
+      for (let i = 0; i < heads.length; i++){
+        const h = heads[i];
+        if (!h || !h.addEventListener) continue;
+        h.addEventListener('click', () => {
+          const sec = h.parentNode;
+          if (!sec || !sec.classList) return;
+          const collapsed = sec.classList.toggle('collapsed');
+          h.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        });
+      }
+    }
 
     // ---------- public surface ----------
     return {
@@ -8029,22 +8569,80 @@
         const r = $('vfx-reset'); if (r) r.onclick = resetSelected;
         const c = $('vfx-copy'); if (c) c.onclick = copyJson;
         const q = $('vfx-quarks-add'); if (q) q.onclick = importQuarks;
+        // in-scene target controls
+        const tsel = $('vfx-target-sel'); if (tsel) tsel.onchange = onTargetSelChange;
+        const tpick = $('vfx-target-pick'); if (tpick) tpick.onclick = () => setPickArmed(!pickArmed);
+        // drive-by-formula controls
+        const db = $('vfx-drive-bind'); if (db) db.onclick = bindDrive;
+        const dstop = $('vfx-drive-stop'); if (dstop) dstop.onclick = stopDrive;
+        populateTargetSelect(typeof activeSection !== 'undefined' ? activeSection : 'vfx-lab');
+        targetReadout();
+        wireEditorChrome();   // master collapse + per-section accordion toggles (once).
       },
-      // SHOW / HIDE the four panels (called from selectSection / syncSectionUI).
+      // SHOW / HIDE the SINGLE sidebar (#vfx-editor). One fixed container holds every
+      // editor surface as a stacked, independently-collapsible section → no overlap.
+      // (The inner panels keep their .on class for backward-compatible style hooks.)
       setVisible(on){
+        if (on) this.build();
+        const root = $('vfx-editor');
+        if (root){
+          if (root.classList) root.classList.toggle('on', !!on);
+          if (root.setAttribute) root.setAttribute('aria-hidden', on ? 'false' : 'true');
+        }
         const ids = ['vfx-palette', 'vfx-layers', 'vfx-params', 'vfx-preview'];
         for (const id of ids){
           const el = $(id); if (!el) continue;
-          if (on) this.build();
           if (el.classList) el.classList.toggle('on', !!on);
           if (el.setAttribute) el.setAttribute('aria-hidden', on ? 'false' : 'true');
         }
-        if (on){ this.build(); syncSampleChips(); }
+        if (on){ syncSampleChips(); }
       },
-      // re-aim live emitter/infographic effects at the (possibly moved) sample — called from the frame loop.
+      // re-aim live emitter/infographic effects at their (possibly moved) targets — called every frame.
       retargetLive(){
+        if (targetHelper && targetHelper.update){ try { targetHelper.update(); } catch(_){} }
         if (!layers.length) return;
         for (const L of layers){ if (L.handle && L.handle.retarget) L.handle.retarget(); }
+      },
+      // evaluate formula-driven effect params (apply VFX via a simple formula) — called every frame.
+      driveParams(t){ tickDriven(t); },
+      // the LIVE selection (target + selected effect layer + formula drives) for the dev prompt-generator.
+      // View-only; lets "↘ From selection" build a Claude-CLI prompt grounded in the actual scene state.
+      currentSelection(){
+        const L = selectedLayer(); const tgt = sceneTarget;
+        return {
+          section: (typeof activeSection !== 'undefined') ? activeSection : null,
+          target: tgt ? { id: tgt.id, label: tgt.label, group: !!tgt.group } : null,
+          effect: L ? { name: L.name, family: L.family, kind: L.kind, params: cloneParams(L.params),
+            driven: L.driven ? Object.keys(L.driven).map(k => ({ param: k, formula: L.driven[k].src })) : [] } : null
+        };
+      },
+      // called on section change: repopulate the target dropdown + pick a sensible default target.
+      onSection(section){
+        if (!built) return;
+        setPickArmed(false);
+        populateTargetSelect(section);
+        if (section === 'vfx-lab'){ setTarget(null); }
+        else { setTarget(targetList.find(t => !t.group) || targetList[0] || null); }
+        syncTargetSelect();
+      },
+      // is "Pick in scene" mode armed? (the canvas click handler consults this).
+      pickArmed(){ return pickArmed; },
+      // raycast the active section's candidate objects; on hit, set it as the target. Returns true if consumed.
+      pickFromRay(ray){
+        try {
+          const cands = sectionTargets(typeof activeSection !== 'undefined' ? activeSection : 'vfx-lab').filter(t => !t.group && t.obj);
+          if (!cands.length) return false;
+          const hits = ray.intersectObjects(cands.map(t => t.obj), true) || [];
+          for (const h of hits){
+            let o = h.object;
+            while (o){
+              const found = cands.find(t => t.obj === o);
+              if (found){ setTarget(found); syncTargetSelect(); setPickArmed(false); msg('Target: ' + found.label); return true; }
+              o = o.parent;
+            }
+          }
+        } catch(_){}
+        return false;
       },
       // ---- tooling surface (used by the optional DOM handlers AND by the __magnateHeadless.vfxLab() probe;
       //      drives the SAME paths the buttons do, so a test can exercise the four panels without clicks). ----
@@ -8071,6 +8669,9 @@
       hasActivePost(){ return layers.some(L => L.family === 'post' && effectivelyOn(L)); }
     };
   })();
+  // Bridge the live VFX selection to the (separate-scope) dev module script — VFXLab is a const in THIS
+  // classic script, not visible to the type="module" dev-import. Read-only, view-only (cf. window.__engine).
+  try { window.__vfxSelection = function(){ try { return (VFXLab && VFXLab.currentSelection) ? VFXLab.currentSelection() : null; } catch(_){ return null; } }; } catch(_){}
 
   /* ============================================================
    *  OBJECT + VFX BUILDER  (additive panel inside the VFX Lab).
@@ -8103,22 +8704,29 @@
     const haveBC  = () => (typeof BuilderCore !== 'undefined' && BuilderCore && typeof BuilderCore.createBuilder === 'function');
     const haveVFXr = () => (typeof VFX !== 'undefined' && VFX && vfxReady);
 
-    // world-space anchor for emitter/infographic effects = the Lab pedestal centre.
-    function builderOrigin(){
-      const p = (typeof SCENE_POS !== 'undefined' && SCENE_POS['vfx-lab']) ? SCENE_POS['vfx-lab'] : { x: 0, z: 0 };
+    // world-space anchor for the ACTIVE section: where formula/prompt placement is centered + the origin
+    // for builder emitter/infographic effects. World sections use their camera-focus point; dioramas use
+    // their SCENE_POS corner (so objects placed in a section appear IN that section, not at a fixed stage).
+    function sectionAnchor(section){
+      section = section || (typeof activeSection !== 'undefined' ? activeSection : 'vfx-lab');
+      if (section === 'smart-factory') return [600, 14, 0];
+      if (section === 'shopping-mall') return [48, 16, (typeof ROW_Z !== 'undefined' && ROW_Z) ? ROW_Z[3] : 0];
+      if (section === 'factory' || section === 'smart-city') return [0, 26, 0];
+      const p = (typeof SCENE_POS !== 'undefined' && SCENE_POS[section]) ? SCENE_POS[section] : { x: 0, z: 0 };
       return [p.x, 14, p.z];
     }
+    function builderOrigin(){ return sectionAnchor(); }
     // lazily create the action-layer core + its own group under the vfx-lab scene root.
     function ensureCore(){
       if (core) return core;
       if (!haveBC()) return null;
-      // attach a dedicated builder group under the Lab scene root (so it moves with the stage).
+      // attach the builder group to the SCENE ROOT (not the Lab stage) so placed objects render in EVERY
+      // section. Objects get ABSOLUTE world positions (formula + the section anchor), so each section's
+      // objects sit in that section's space and persist there.
       try {
         if (typeof THREE !== 'undefined' && THREE && THREE.Group){
-          const st = (typeof sceneState !== 'undefined') ? sceneState['vfx-lab'] : null;
           group = new THREE.Group();
-          if (st && st.g && st.g.add) st.g.add(group);
-          else if (scene && scene.add) scene.add(group);
+          if (typeof scene !== 'undefined' && scene && scene.add) scene.add(group);
         }
       } catch(_){ group = null; }
       core = BuilderCore.createBuilder({
@@ -8128,6 +8736,7 @@
         sampleWorld: builderOrigin,
         reduceMotion: () => !!reduceMotion
       });
+      try { if (core.setPlaceOrigin) core.setPlaceOrigin(sectionAnchor()); } catch(_){}
       return core;
     }
 
@@ -8505,8 +9114,23 @@
       syncCount(); syncSelLabel();
     }
 
+    // Reveal + expand a tool's accordion SECTION inside the single sidebar. The old
+    // mutually-exclusive bottom-tab dock is gone (the accordion replaces the tabbing);
+    // this now just un-collapses the matching section so its hooks are reachable.
+    // Maps: builder→#vfx-sec-builder, dataviz→#vfx-sec-dataviz, prompt→#vfx-sec-prompt.
+    function selectTool(tool){
+      const map = { builder: 'vfx-sec-builder', dataviz: 'vfx-sec-dataviz', prompt: 'vfx-sec-prompt' };
+      const secId = map[tool] || map.builder;
+      const sec = $(secId); if (!sec) return;
+      if (sec.classList) sec.classList.remove('collapsed');
+      const head = sec.querySelector ? sec.querySelector('.vfx-sec-head') : null;
+      if (head && head.setAttribute) head.setAttribute('aria-expanded', 'true');
+    }
+
     return {
-      // SHOW / HIDE the builder panel (called from syncSectionUI alongside VFXLab).
+      // SHOW / HIDE the Builder + Data→Viz surfaces. The single sidebar (#vfx-editor)
+      // owns visibility now; this just builds the DOM + toggles the inner panels' .on
+      // class (backward-compatible hooks). Called from syncSectionUI alongside VFXLab.
       setVisible(on){
         const el = $('vfx-builder');
         if (el){
@@ -8516,6 +9140,11 @@
         }
         if (on){ buildDom(); fillEffectSelect(); fillDataVizSelects(); syncCount(); syncSelLabel(); }
       },
+      // called on section change: re-aim placement at the ACTIVE section so formula/prompt-placed objects
+      // land in that scene (covers both the UI place button and the prompt DSL `place`).
+      onSection(section){ try { const c = core; if (c && c.setPlaceOrigin) c.setPlaceOrigin(sectionAnchor(section)); } catch(_){} },
+      // expose the tool switch (used by the dev Prompt section reveal; harmless otherwise).
+      selectTool(tool){ selectTool(tool); },
       // per-frame: drive the formula-time transforms (gated to the section; BuilderCore freezes under reduceMotion).
       update(dt, elapsed){ if (core) { try { core.update(dt, elapsed); } catch(_){} } },
       // P5.2-visible: drive the Data->Viz ANIMATE trajectory (no-op unless ANIMATE is on).
@@ -9418,6 +10047,9 @@
   function selectSection(section){
     if (SECTIONS.indexOf(section) < 0) return;
     activeSection = section;
+    // VFX Lab is an editor section (no economy pickables on its stage); close any carried-over
+    // firm/desk inspector so the centered inspector can never overlap the left editor sidebar.
+    if (section === 'vfx-lab') closeInspector();
     // PHASE 2: the Digital-Twin hero section is the hologram centerpiece — auto-enable the bloom render path
     // so it glows. We only AUTO-flip the mode (recording twinAuto) so we don't fight a manual toggle: leaving
     // the section while still auto-on restores the prior look. If the composer is unavailable applyTwinMode
@@ -9551,11 +10183,13 @@
       if (cyh.classList) cyh.classList.toggle('on', onCy);
       if (cyh.setAttribute) cyh.setAttribute('aria-hidden', onCy ? 'false' : 'true');
     }
-    // VFX LAB four-panel workbench — shown ONLY while the vfx-lab section is active (built lazily on first
-    // show in a real browser; entirely guarded so the headless harness with no VFX/Tweakpane never throws).
-    try { if (typeof VFXLab !== 'undefined' && VFXLab) VFXLab.setVisible(activeSection === 'vfx-lab'); } catch(_){}
-    // OBJECT + VFX BUILDER panel — shown ONLY in the vfx-lab section (additive; guarded + headless-safe).
-    try { if (typeof Builder !== 'undefined' && Builder) Builder.setVisible(activeSection === 'vfx-lab'); } catch(_){}
+    // VFX LAB workbench — now available in EVERY section. Its Target panel binds added effects to the
+    // current section's objects (click-to-pick / list / group); only the lab pedestal target is lab-specific.
+    // Built lazily on first show in a real browser; entirely guarded so the headless harness never throws.
+    try { if (typeof VFXLab !== 'undefined' && VFXLab){ VFXLab.setVisible(true); if (VFXLab.onSection) VFXLab.onSection(activeSection); } } catch(_){}
+    // OBJECT + VFX BUILDER panel — also available everywhere (place objects by formula/prompt in any scene).
+    // onSection re-aims placement at the active section so new objects land in THIS scene.
+    try { if (typeof Builder !== 'undefined' && Builder){ Builder.setVisible(true); if (Builder.onSection) Builder.onSection(activeSection); } } catch(_){}
   }
   function wireSections(){
     for (const s of SECTIONS){
