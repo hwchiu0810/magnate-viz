@@ -549,6 +549,8 @@
     <button class="secbtn" id="sec-finance"       type="button" data-section="finance"       aria-pressed="false"><span class="ico" aria-hidden="true">💰</span>Finance</button>
     <button class="secbtn" id="sec-network"     type="button" data-section="network"     aria-pressed="false"><span class="ico" aria-hidden="true">🕸</span>Network</button>
     <button class="secbtn" id="sec-leaderboard" type="button" data-section="leaderboard" aria-pressed="false"><span class="ico" aria-hidden="true">🏆</span>Leaderboard</button>
+    <button class="secbtn" id="sec-erp"         type="button" data-section="erp"         aria-pressed="false"><span class="ico" aria-hidden="true">📦</span>ERP</button>
+    <button class="secbtn" id="sec-crm"         type="button" data-section="crm"         aria-pressed="false"><span class="ico" aria-hidden="true">🤝</span>CRM</button>
     <button class="secbtn" id="sec-digital-twin" type="button" data-section="digital-twin" aria-pressed="false"><span class="ico" aria-hidden="true">🛰️</span>Digital Twin</button>
     <button class="secbtn" id="sec-vfx-lab"      type="button" data-section="vfx-lab"      aria-pressed="false"><span class="ico" aria-hidden="true">🎛️</span>VFX Lab</button>
   </nav>
@@ -996,10 +998,10 @@
   </aside>
 
   <!-- ===== right: leaderboard + price ticker ===== -->
-  <aside class="panel" aria-label="Leaderboard and market prices">
-    <h3>Leaderboard · net worth</h3>
-    <table aria-label="Firm leaderboard">
-      <thead><tr><th>#</th><th>Firm</th><th>Makes</th><th class="num">Net worth</th></tr></thead>
+  <aside class="panel" aria-label="Section data and market prices">
+    <h3 id="hud-board-title">Leaderboard · net worth</h3>
+    <table aria-label="Section data matrix">
+      <thead id="hud-board-head"><tr><th>#</th><th>Firm</th><th>Makes</th><th class="num">Net worth</th></tr></thead>
       <tbody id="hud-board"></tbody>
     </table>
     <h3>Market prices · 9 goods</h3>
@@ -1225,6 +1227,60 @@
     console.info('[P2.5b] render-path swap bridge not loaded (inline render path unaffected; engine-driven render is opt-in):', e && e.message);
   }
 </script>
+<!-- DEV-PROMPTGEN-BEGIN — DEV-ONLY, BUILD-STRIPPED. Do not remove these markers.
+     ============================================================================
+     (e) DEV-FLAG-GATED "Generate Prompt for Claude CLI" panel (Story P6.2) — a
+     LOCAL dev/authoring aid for the VFX Lab. It dynamically imports the SEPARATE
+     dev module prototype/dev/promptgen.mjs (NEVER inlined into this file) and only
+     when a dev flag is set: location.search contains 'dev' OR localStorage holds
+     'magnateDevTools'. DEFAULT OFF. The whole thing is wrapped in try/catch so
+     production (flag off / file absent / single-file dist) NEVER imports it and
+     NEVER throws — the production visualization is wholly unaffected. The runtime
+     is the Claude CLI (developer-in-the-loop): NO in-app model / API key / server /
+     live-LLM call. build_standalone.py STRIPS this entire DEV-PROMPTGEN block from
+     the single-file dist, and docs/deploy.md OMITS prototype/dev/ from the deploy. -->
+<script type="module">
+  try {
+    var __magnateDev = false;
+    try {
+      var __qs = (typeof location !== 'undefined' && location.search) ? location.search : '';
+      var __ls = (typeof localStorage !== 'undefined') ? localStorage.getItem('magnateDevTools') : null;
+      __magnateDev = (/[?&]dev(=|&|$)/.test(__qs)) || (__ls != null && __ls !== '' && __ls !== '0' && __ls !== 'false');
+    } catch (_) { __magnateDev = false; }
+    if (__magnateDev) {
+      import('./dev/promptgen.mjs')
+        .then(function (m) {
+          // Mount the dev panel INTO the Prompt SECTION's body host (#vfx-prompt-slot),
+          // a collapsible section of the single sidebar (#vfx-editor). The slot lives
+          // in the production HTML but stays EMPTY + inert; the section wrapper is
+          // hidden by default and REVEALED only here (dev-gated → stripped from the
+          // production dist), so production HTML/dist carry no prompt-gen UI.
+          var slot = document.getElementById('vfx-prompt-slot');
+          // pass a live-selection getter so the panel's "↘ From selection" button grounds the prompt in
+          // the current VFX Lab target + selected effect + formula drives (view-only; dev-gated).
+          // read the live-selection bridge set by the main script (cross-<script> scope).
+          var getSel = function () { try { return (typeof window.__vfxSelection === 'function') ? window.__vfxSelection() : null; } catch (_) { return null; } };
+          if (m && typeof m.mount === 'function') { m.mount({ host: slot || undefined, getSelection: getSel }); }
+          // Reveal + expand the dev-only Prompt section (hidden by default).
+          var sec = document.getElementById('vfx-sec-prompt');
+          if (sec) {
+            sec.style.display = '';
+            if (sec.classList) sec.classList.remove('collapsed');
+            var head = sec.querySelector ? sec.querySelector('.vfx-sec-head') : null;
+            if (head && head.setAttribute) head.setAttribute('aria-expanded', 'true');
+          }
+          console.info('[P6.2] dev prompt-gen panel loaded (dev flag ON; LOCAL authoring aid, docked as a sidebar section, excluded from production build).');
+        })
+        .catch(function (e) {
+          console.info('[P6.2] dev prompt-gen panel not loaded (dev-only; production unaffected):', e && e.message);
+        });
+    }
+  } catch (e) {
+    /* production / flag off / file absent: classic app + visualization wholly unaffected. */
+  }
+</script>
+<!-- DEV-PROMPTGEN-END -->
+
 <!-- ============================================================================
      APP CODE — plain (non-module) script so it is headless-evaluable. We do NOT
      gate init on window 'load'; we initialize at the very END of this script and
@@ -1311,7 +1367,7 @@
    *  Streaming is paused (frame-loop guard) when a non-factory scene
    *  is active; the __worldHeadless streaming contract is untouched.
    * ============================================================ */
-  const SECTIONS = ['market', 'factory', 'smart-city', 'smart-factory', 'shopping-mall', 'finance', 'network', 'leaderboard', 'digital-twin', 'vfx-lab'];
+  const SECTIONS = ['market', 'factory', 'smart-city', 'smart-factory', 'shopping-mall', 'finance', 'network', 'leaderboard', 'erp', 'crm', 'digital-twin', 'vfx-lab'];
   let activeSection = 'factory';     // default = the existing world (factory)
   // ----- WORLD SECTIONS: the four sections that share the ONE streamed origin world (central economy
   // district + streamed production chunks + retail district). They are alternate FRAMED VIEWS of the same
@@ -1333,6 +1389,8 @@
     leaderboard:   { x:     0, z: -1200 },
     'digital-twin':{ x:  1200, z:  1200 },   // PHASE 2 hero diorama — its own corner, far from the streamed world
     'vfx-lab':     { x: -1200, z:  1200 },   // VFX LAB diorama — its own corner; neutral preview stage + sample object
+    erp:           { x:  1200, z: -1200 },   // ERP Order-to-Cash process-flow theater — its own corner
+    crm:           { x: -1200, z: -1200 },   // CRM Sales-Pipeline process-flow theater — its own corner
   };
   const sceneGroups = {};            // section -> THREE.Group (the diorama root)
   const sceneState  = {};            // section -> per-scene plain-JS state (bars, monuments, nodes, podia)
@@ -5231,6 +5289,11 @@
       if (ns && ns.spin && activeSection === 'network' && !reduceMotion){
         ns.spin.rotation.y += dt * 0.18;
       }
+      // ERP / CRM process-flow theaters: recognizable 3D business objects flow + MORPH through the
+      // pipeline stages (conveyor). Free-running like the network spin; frozen under reduced-motion.
+      if ((activeSection === 'erp' || activeSection === 'crm') && !reduceMotion){
+        try { animateFlowScene(activeSection, dt); } catch(_){}
+      }
       // (VFXLab.retargetLive + Builder.update now run section-independently, just after VFX.update above.)
       // DATA → VIZ ANIMATE (P5.2-visible): drive the placed objects along the [t,n,f]
       // trajectory dynamic. Called when the VFX-Lab is active REGARDLESS of motion state —
@@ -5672,6 +5735,118 @@
     inspectOpener = null;
   }
 
+  /* ============================================================
+   *  PER-SECTION DATA MATRIX (the right-panel board). Each section declares a thematic
+   *  { title, cols, rows(ctx) } so the board MATCHES the active scene (grid load in Smart City,
+   *  connectivity in Network, prices in Market, …) instead of always showing firm net worth.
+   *  rows() derive DETERMINISTICALLY from existing data (world.firms / pref / loads / trade graph);
+   *  each is guarded + falls back, so a missing source degrades to fewer rows, never throws.
+   *  ctx = { snap, nwOf, bal, pref }.  firmId on a row keeps the click-to-inspect path.
+   * ============================================================ */
+  function vizSw(hex){ return '<span class="sw" style="background:' + hex + '"></span>'; }
+  function vizHexOf(f){ return '#' + TIER_HEX[tierOf(f)].toString(16).padStart(6, '0'); }
+  function vizTierHex(t){ return '#' + (TIER_HEX[t] || 0).toString(16).padStart(6, '0'); }
+  function vizName(f){ return vizSw(vizHexOf(f)) + (f.id === world.PLAYER ? '★ ' : '') + f.id; }
+  function vizPct(x){ return Math.round(Math.max(0, Math.min(1, x || 0)) * 100) + '%'; }
+  function vizRankedFirms(c){ return world.firms.slice().sort((a, b) => c.nwOf(b) - c.nwOf(a)); }
+  function vizNwSpan(c){ let lo = Infinity, hi = -Infinity; for (const f of world.firms){ const v = c.nwOf(f); if (v < lo) lo = v; if (v > hi) hi = v; } return { lo, hi, span: Math.max(1, hi - lo) }; }
+  function vizStockOf(g, snap){
+    try {
+      if (snap && snap.inv){ let s = (snap.deskInv && snap.deskInv[g]) || 0; for (const id in snap.inv) s += (snap.inv[id][g] || 0); return s; }
+      let s = (world.deskInv && world.deskInv[g]) || 0; for (const f of world.firms) s += (f.inv[g] || 0); return s;
+    } catch (_) { return 0; }
+  }
+  function vizLoadOf(id, c){
+    try { if (typeof cityTowerLoad === 'function'){ const v = cityTowerLoad(id); if (isFinite(v)) return v; } } catch (_) {}
+    // fallback: normalized net worth
+    try { const f = world.firms.find(x => x.id === id); const s = vizNwSpan(c); return f ? (c.nwOf(f) - s.lo) / s.span : 0; } catch (_) { return 0; }
+  }
+  function vizNetStats(c){
+    try {
+      if (typeof MagnateViz === 'undefined' || !MagnateViz || !MagnateViz.networkData) return null;
+      const nd = MagnateViz.networkData(world, c.snap); if (!nd || !nd.edges) return null;
+      const deg = {}, vol = {};
+      for (const e of nd.edges){ deg[e.a] = (deg[e.a] || 0) + 1; deg[e.b] = (deg[e.b] || 0) + 1; vol[e.a] = (vol[e.a] || 0) + (e.weight || 0); vol[e.b] = (vol[e.b] || 0) + (e.weight || 0); }
+      return world.firms.slice().sort((a, b) => (vol[b.id] || 0) - (vol[a.id] || 0)).map(f => ({
+        firmId: f.id, you: f.id === world.PLAYER,
+        cells: [vizName(f), String(deg[f.id] || 0), String(Math.round(vol[f.id] || 0))]
+      }));
+    } catch (_) { return null; }
+  }
+  function vizRetailRows(c){
+    const rows = [];
+    try {
+      const R = world.RETAIL || {};
+      for (const g in R){ const tier = (world.GOODS[g] && world.GOODS[g].tier) || 3;
+        rows.push({ cells: [vizSw(vizTierHex(tier)) + g, 'T' + tier, fmt$(c.pref[g] || 0), String(Math.round((R[g] && R[g].D0) || 0))] }); }
+    } catch (_) {}
+    return rows;
+  }
+  function vizTwinTelemetry(c){
+    const s = vizNwSpan(c);
+    return vizRankedFirms(c).map(f => { const load = (c.nwOf(f) - s.lo) / s.span; return {
+      firmId: f.id, you: f.id === world.PLAYER,
+      cells: [vizName(f), vizPct(load), Math.round(30 + load * 55) + '°'] }; });
+  }
+  // ERP/CRM process-flow board: one row per pipeline stage — live count of objects IN that stage +
+  // aggregate value carried (read from the flow scene's pooled objects; deterministic, view-only).
+  function vizFlowRows(section){
+    const st = (typeof sceneState !== 'undefined') ? sceneState[section] : null;
+    if (!st || !st.cfg) return [];
+    const n = st.cfg.n, names = st.cfg.stageNames, cnt = new Array(n).fill(0), val = new Array(n).fill(0);
+    for (const rec of (st.pool || [])){
+      if (!rec || rec.stage < 0 || rec.stage >= n) continue;
+      cnt[rec.stage]++; val[rec.stage] += (rec.value || 0);
+    }
+    const rows = [];
+    for (let i = 0; i < n; i++){
+      const hex = '#' + (st.cfg.colors[i] >>> 0).toString(16).padStart(6, '0');
+      rows.push({ cells: [vizSw(hex) + names[i], String(cnt[i]), fmt$(val[i])] });
+    }
+    return rows;
+  }
+  const SECTION_HUD = {
+    _default: { title: 'Leaderboard · net worth', cols: [{ label: '#' }, { label: 'Firm' }, { label: 'Makes' }, { label: 'Net worth', num: true }],
+      rows: (c) => vizRankedFirms(c).map((f, i) => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [String(i + 1), vizName(f), f.specialty, fmt$(c.nwOf(f))] })) },
+    factory: { title: 'Factory · production', cols: [{ label: 'Firm' }, { label: 'Makes' }, { label: 'Out/t', num: true }, { label: 'Net worth', num: true }],
+      rows: (c) => vizRankedFirms(c).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), f.specialty, String(f.cap || 0), fmt$(c.nwOf(f))] })) },
+    market: { title: 'Market · prices & stock', cols: [{ label: 'Good' }, { label: 'Tier' }, { label: 'Price', num: true }, { label: 'Stock', num: true }],
+      rows: (c) => world.GKEYS.map(g => { const t = world.GOODS[g].tier; return { cells: [vizSw(vizTierHex(t)) + g, 'T' + t, fmt$(c.pref[g]), String(vizStockOf(g, c.snap))] }; }) },
+    finance: { title: 'Finance · balances', cols: [{ label: 'Firm' }, { label: 'Net worth', num: true }, { label: 'Cash', num: true }],
+      rows: (c) => vizRankedFirms(c).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), fmt$(c.nwOf(f)), fmt$(c.bal[f.id] || 0)] })) },
+    network: { title: 'Network · connectivity', cols: [{ label: 'Firm' }, { label: 'Links', num: true }, { label: 'Co-trade', num: true }],
+      rows: (c) => vizNetStats(c) || vizRankedFirms(c).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), '—', '—'] })) },
+    'smart-city': { title: 'Smart City · grid load', cols: [{ label: 'Tower' }, { label: 'Load', num: true }, { label: 'Net worth', num: true }],
+      rows: (c) => world.firms.slice().sort((a, b) => vizLoadOf(b.id, c) - vizLoadOf(a.id, c)).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), vizPct(vizLoadOf(f.id, c)), fmt$(c.nwOf(f))] })) },
+    'smart-factory': { title: 'Smart Factory · production lines', cols: [{ label: 'Line' }, { label: 'Makes' }, { label: 'Out/t', num: true }],
+      rows: (c) => world.firms.slice().sort((a, b) => (b.cap || 0) - (a.cap || 0)).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), f.specialty, String(f.cap || 0)] })) },
+    'shopping-mall': { title: 'Shopping Mall · retail', cols: [{ label: 'Item' }, { label: 'Tier' }, { label: 'Price', num: true }, { label: 'Demand', num: true }],
+      rows: (c) => vizRetailRows(c) },
+    'digital-twin': { title: 'Digital Twin · telemetry', cols: [{ label: 'Asset' }, { label: 'Load', num: true }, { label: 'Temp', num: true }],
+      rows: (c) => vizTwinTelemetry(c) },
+    'vfx-lab': { title: 'VFX Lab · authoring stage', cols: [{ label: 'Effect stage' }], rows: () => [] },
+    erp: { title: 'ERP · Order-to-Cash flow', cols: [{ label: 'Stage' }, { label: 'In stage', num: true }, { label: 'Value', num: true }],
+      rows: () => vizFlowRows('erp') },
+    crm: { title: 'CRM · Sales pipeline', cols: [{ label: 'Stage' }, { label: 'Deals', num: true }, { label: 'Value', num: true }],
+      rows: () => vizFlowRows('crm') }
+  };
+  SECTION_HUD.leaderboard = SECTION_HUD._default;
+
+  function renderSectionBoard(section, ctx){
+    const spec = SECTION_HUD[section] || SECTION_HUD._default;
+    const titleEl = $('hud-board-title'); if (titleEl) titleEl.textContent = spec.title;
+    const headEl = $('hud-board-head');
+    if (headEl) headEl.innerHTML = '<tr>' + spec.cols.map(c => '<th' + (c.num ? ' class="num"' : '') + '>' + c.label + '</th>').join('') + '</tr>';
+    let rows = []; try { rows = spec.rows(ctx) || []; } catch (_) { rows = []; }
+    let bh = '';
+    for (const r of rows){
+      const attrs = r.firmId ? (' class="lbrow ' + (r.you ? 'you' : '') + '" role="button" tabindex="0" data-firm="' + r.firmId + '" aria-label="Inspect ' + r.firmId + '"') : '';
+      bh += '<tr' + attrs + '>' + r.cells.map((cell, i) => '<td' + (spec.cols[i] && spec.cols[i].num ? ' class="num"' : '') + '>' + cell + '</td>').join('') + '</tr>';
+    }
+    if (!bh) bh = '<tr><td colspan="' + spec.cols.length + '" style="opacity:.6;padding:6px">— no scene data —</td></tr>';
+    const boardEl = $('hud-board'); if (boardEl) boardEl.innerHTML = bh;
+  }
+
   function refreshHUD(){
     // While REPLAYING, every HUD figure comes from the chosen snapshot (read-only); the LIVE
     // branch is unchanged. snap===null → live path.
@@ -5687,21 +5862,11 @@
     cb.className = 'badge ' + (consOk ? 'ok' : 'bad');
     cb.textContent = consOk ? 'Σ conserved' : 'Σ VIOLATED';
 
-    // leaderboard ranked by the active (snapshot or live) net worth
-    const ranked = world.firms.slice().sort((a, b) => nwOf(b) - nwOf(a));
-    let bh = '';
-    ranked.forEach((f, i) => {
-      const hex = '#' + TIER_HEX[tierOf(f)].toString(16).padStart(6,'0');
-      const you = f.id === world.PLAYER;
-      // Each row is a keyboard-accessible button → opens the firm inspector (the a11y pick path).
-      bh += '<tr class="lbrow '+(you?'you':'')+'" role="button" tabindex="0"'
-        + ' data-firm="'+f.id+'" aria-label="Inspect '+f.id+', '+f.specialty+', rank '+(i+1)+'">'
-        + '<td>'+(i+1)+'</td>'
-        + '<td><span class="sw" style="background:'+hex+'"></span>'+(you?'★ ':'')+f.id+'</td>'
-        + '<td>'+f.specialty+'</td>'
-        + '<td class="num">'+fmt$(nwOf(f))+'</td></tr>';
-    });
-    $('hud-board').innerHTML = bh;
+    // SECTION-AWARE data board: the right panel shows a thematic data matrix for the active section
+    // (grid load in Smart City, connectivity in Network, prices in Market, …) instead of always the
+    // firm net-worth leaderboard. Deterministic + guarded; firm rows keep the click-to-inspect path.
+    const sec = (typeof activeSection !== 'undefined') ? activeSection : 'leaderboard';
+    renderSectionBoard(sec, { snap, nwOf, bal, pref });
 
     let th = '';
     for (const g of world.GKEYS){
@@ -7694,6 +7859,146 @@
     });
     st.order = ranked.map(r => r.id);
   }
+
+  /* ============================================================
+   *  📦 ERP / 🤝 CRM PROCESS-FLOW THEATERS (native prototype sections)
+   *  ------------------------------------------------------------
+   *  The course thesis — "the world's operations are high-dimensional
+   *  transformations" — made literal: each business entity is an OBJECT
+   *  that FLOWS through process stages and MORPHS as it advances (the
+   *  process lens). Objects are RECOGNIZABLE composite 3D models, NOT
+   *  boxes: a quote document grows a signature, becomes a taped package,
+   *  rides a delivery truck, prints an invoice, settles into gold coins
+   *  (ERP Order-to-Cash); a lead orb becomes a contact card, a proposal,
+   *  a two-party negotiation, then a won trophy (CRM Sales-Pipeline).
+   *
+   *  VIEW-ONLY (never steps/mutates the economy). Pooled + bounded (INV-4):
+   *  a fixed Group pool recycles as objects recirculate; models share a few
+   *  geometries/materials built once (a model is reassembled only when an
+   *  object changes stage — never per frame). Sub-white emissive (INV-3).
+   *  Headless-safe: built from THREE primitives via the same guarded helpers
+   *  the other dioramas use (buildSceneRoot / dioBox / labelSpriteSafe); the
+   *  flow advance runs only in the render loop (free-running like the network
+   *  spin, frozen under reduced-motion) — never in the headless update path.
+   * ============================================================ */
+  const FLOW_COL = [0x6ad0ff, 0x5fe0c8, 0x8be36a, 0xe3cf6a, 0xe39a6a, 0x7be08a]; // sub-white stage ramp
+  const flowMat = (o) => new THREE.MeshStandardMaterial(o);
+  const FLOW_M = {
+    paper: flowMat({ color: 0xe6ecf4, emissive: new THREE.Color(0x24405e), emissiveIntensity: 0.12, roughness: 0.92, metalness: 0.05 }),
+    card:  flowMat({ color: 0xc8975a, emissive: new THREE.Color(0x3a2912), emissiveIntensity: 0.12, roughness: 0.9 }),
+    ink:   flowMat({ color: 0x2b3a4d, emissive: new THREE.Color(0x0a121c), emissiveIntensity: 0.05, roughness: 0.8 }),
+    metal: flowMat({ color: 0xaab6c4, emissive: new THREE.Color(0x1a2a3a), emissiveIntensity: 0.10, roughness: 0.45, metalness: 0.6 }),
+    tire:  flowMat({ color: 0x141b26, emissive: new THREE.Color(0x05080c), emissiveIntensity: 0.02, roughness: 0.9 }),
+    gold:  flowMat({ color: 0xe9c46a, emissive: new THREE.Color(0xe9a83a), emissiveIntensity: 0.45, roughness: 0.3, metalness: 0.75 }),
+    check: flowMat({ color: 0x7be0a0, emissive: new THREE.Color(0x2fae6a), emissiveIntensity: 0.40, roughness: 0.5 }),
+  };
+  const FLOW_ACCENT = FLOW_COL.map((c) => flowMat({ color: c, emissive: new THREE.Color(c), emissiveIntensity: 0.42, roughness: 0.5, metalness: 0.4 }));
+  const FLOW_G = {
+    sheet: new THREE.BoxGeometry(2.2, 0.1, 2.9), bar: new THREE.BoxGeometry(1.9, 0.13, 0.32),
+    line: new THREE.BoxGeometry(1.7, 0.07, 0.16), box: new THREE.BoxGeometry(2.1, 2.1, 2.1),
+    tape: new THREE.BoxGeometry(2.18, 0.06, 0.42), body: new THREE.BoxGeometry(2.0, 1.2, 1.2),
+    cab: new THREE.BoxGeometry(0.9, 1.0, 1.16), wheel: new THREE.CylinderGeometry(0.4, 0.4, 0.34, 14),
+    coin: new THREE.CylinderGeometry(1.4, 1.4, 0.3, 26), nib: new THREE.BoxGeometry(0.8, 0.12, 0.22),
+    orb: new THREE.SphereGeometry(0.95, 18, 14), head: new THREE.SphereGeometry(0.5, 14, 12),
+    cone: new THREE.ConeGeometry(0.55, 1.3, 14), cup: new THREE.CylinderGeometry(0.95, 0.5, 1.3, 18), basep: new THREE.BoxGeometry(1.2, 0.32, 1.2),
+  };
+  const flowPart = (g, geo, m, pos, rot) => { const e = new THREE.Mesh(geo, m); if (pos) e.position.set(pos[0], pos[1], pos[2]); if (rot) e.rotation.set(rot[0], rot[1], rot[2]); g.add(e); };
+  // ERP Order-to-Cash: document → signed doc → taped package → delivery truck → printed invoice → gold coins
+  const ERP_FLOW_MODELS = [
+    (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0, 0.12, -1.0], [-1.0, 0, 0]); },
+    (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0, 0.12, -1.0], [-1.0, 0, 0]); flowPart(g, FLOW_G.nib, FLOW_M.check, [-0.1, 0.22, 0.4], [-0.5, 0, 0.7]); flowPart(g, FLOW_G.nib, FLOW_M.check, [0.35, 0.3, 0.1], [-0.5, 0, -0.7]); },
+    (g, st) => { flowPart(g, FLOW_G.box, FLOW_M.card, [0, 1.05, 0]); flowPart(g, FLOW_G.tape, FLOW_ACCENT[st], [0, 2.13, 0]); flowPart(g, FLOW_G.tape, FLOW_ACCENT[st], [0, 2.13, 0], [0, Math.PI / 2, 0]); },
+    (g, st) => { flowPart(g, FLOW_G.body, FLOW_M.metal, [0.25, 0.95, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0.25, 1.62, 0]); flowPart(g, FLOW_G.cab, FLOW_M.metal, [-1.15, 0.85, 0]); [-1.0, 0.7].forEach((x) => { flowPart(g, FLOW_G.wheel, FLOW_M.tire, [x, 0.42, 0.62], [Math.PI / 2, 0, 0]); flowPart(g, FLOW_G.wheel, FLOW_M.tire, [x, 0.42, -0.62], [Math.PI / 2, 0, 0]); }); },
+    (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0, 0.12, -1.0], [-1.0, 0, 0]); [-0.2, 0.3, 0.8].forEach((z) => flowPart(g, FLOW_G.line, FLOW_M.ink, [0, 0.1, z], [-1.0, 0, 0])); },
+    (g) => { flowPart(g, FLOW_G.coin, FLOW_M.gold, [0, 1.1, 0], [Math.PI / 2, 0, 0]); flowPart(g, FLOW_G.coin, FLOW_M.gold, [0.4, 0.95, -0.25], [Math.PI / 2, 0, 0]); },
+  ];
+  // CRM Sales-Pipeline: lead orb → contact card → proposal doc → two-party negotiation → won trophy
+  const CRM_FLOW_MODELS = [
+    (g, st) => { flowPart(g, FLOW_G.orb, FLOW_ACCENT[st], [0, 1.0, 0]); },
+    (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.head, FLOW_M.metal, [0, 1.25, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0, 0.12, -1.0], [-1.0, 0, 0]); },
+    (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0, 0.12, -1.0], [-1.0, 0, 0]); [-0.1, 0.5].forEach((z) => flowPart(g, FLOW_G.line, FLOW_M.ink, [0, 0.1, z], [-1.0, 0, 0])); },
+    (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.cone, FLOW_M.metal, [-1.05, 0.75, 0], [0, 0, 0.5]); flowPart(g, FLOW_G.cone, FLOW_ACCENT[st], [1.05, 0.75, 0], [0, 0, -0.5]); },
+    (g) => { flowPart(g, FLOW_G.basep, FLOW_M.gold, [0, 0.22, 0]); flowPart(g, FLOW_G.cup, FLOW_M.gold, [0, 1.15, 0]); },
+  ];
+  const ERP_FLOW_CFG = { title: '📦 ERP · Order-to-Cash flow', stageNames: ['Quote', 'Confirmed', 'Picked', 'Shipped', 'Invoiced', 'Paid'],
+    n: 6, colors: FLOW_COL, models: ERP_FLOW_MODELS, count: 30, objScale: 3.4, valBase: 200, valSpan: 9800 };
+  const CRM_FLOW_CFG = { title: '🤝 CRM · Sales pipeline', stageNames: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Won'],
+    n: 5, colors: FLOW_COL, models: CRM_FLOW_MODELS, count: 26, objScale: 3.4, valBase: 500, valSpan: 80000 };
+  const flowFrac = (x) => x - Math.floor(x);                    // deterministic per-index pseudo-random helper
+
+  // (re)assemble ONE object's recognizable model for a stage (bounded; only on stage change, never per frame).
+  function setFlowModel(rec, stage, cfg){
+    const g = rec.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]);
+    (cfg.models[stage] || cfg.models[0])(g, stage); rec.stage = stage;
+  }
+  // place ONE object at its current pipeline phase rec.p (idempotent; safe under the headless stub).
+  function flowApply(st, rec){
+    const cfg = st.cfg, C = cfg.n, last = C - 1;
+    let p = rec.p; if (!(p >= 0)) p = 0; if (p >= C) p = C - 1e-4;
+    const stage = Math.min(last, Math.floor(p)), frac = p - Math.floor(p);
+    if (rec.stage !== stage) setFlowModel(rec, stage, cfg);
+    const x0 = st.bayX[stage], x1 = st.bayX[Math.min(stage + 1, last)];
+    const x = x0 + (x1 - x0) * frac;
+    let s = 1; const e = 0.55;                                   // grow at the first bay, shrink at the last
+    if (p < e) s = p / e; else if (p > C - e) s = Math.max(0, (C - p) / e);
+    const grp = rec.grp;
+    grp.position.set(x, 5 + Math.sin(p * 2.1 + rec.off) * 0.5, rec.lane);
+    grp.scale.setScalar(Math.max(0.001, s) * cfg.objScale);
+    grp.rotation.y = p * 0.22 + rec.off;
+    grp.visible = true;
+  }
+  // build a process-flow theater: stage bays (platform + colour marker + arrow + label) + a pooled object stream.
+  function buildFlowScene(section, cfg){
+    const g = buildSceneRoot(section);
+    g.add(labelSpriteSafe(cfg.title, '#cfe0ff', 26, 0, 64, 0));
+    const C = cfg.n, BAY = 110 / Math.max(1, C - 1), bayX = [];
+    for (let i = 0; i < C; i++) bayX.push((i - (C - 1) / 2) * BAY);
+    const laneZ = [-12, -4, 4, 12];
+    const spine = dioBox(BAY * (C - 1) + 18, 0.8, 30, 0x0c1828, 0x0a1322); spine.position.set(0, 1.2, 0); g.add(spine);
+    for (let i = 0; i < C; i++){
+      const hex = cfg.colors[i];
+      const plat = dioBox(16, 1.4, 26, brightenHex(hex, 0.02), 0x10203a); plat.position.set(bayX[i], 2.1, 0); g.add(plat);
+      const strip = dioBox(16, 0.3, 26, brightenHex(hex, 0.25), hex); strip.position.set(bayX[i], 2.95, 0); g.add(strip);
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.5, 22),
+        new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.3), emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.4 }));
+      disc.position.set(bayX[i], 3.4, 15.5); g.add(disc);
+      if (i < C - 1){
+        const arrow = new THREE.Mesh(new THREE.ConeGeometry(1.1, 3.2, 16),
+          new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.5 }));
+        arrow.rotation.z = -Math.PI / 2; arrow.position.set(bayX[i] + BAY / 2, 3.6, 0); g.add(arrow);
+      }
+      g.add(labelSpriteSafe(cfg.stageNames[i], '#dbe8fb', 11, bayX[i], 26, 0));
+    }
+    const pool = [];
+    for (let i = 0; i < cfg.count; i++){
+      const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      const u = flowFrac(Math.sin((i + 1) * 12.9898) * 43758.5453);
+      const v = flowFrac(Math.sin((i + 1) * 78.233) * 12543.1234);
+      pool.push({ grp, p: (i / cfg.count) * C, speed: 0.14 + u * 0.20, lane: laneZ[i % laneZ.length],
+        off: v * Math.PI * 2, value: Math.round(cfg.valBase + v * cfg.valSpan), stage: -1 });
+    }
+    sceneState[section] = { g, cfg, bayX, laneZ, pool, laneCounter: 0 };
+    updateFlowScene(section);                                    // place once → a single headless update yields a valid scene
+  }
+  // VIEW-ONLY per-frame refresh (place each object at its current phase; no advance — deterministic + stub-safe).
+  function updateFlowScene(section){
+    const st = sceneState[section]; if (!st || !st.pool) return;
+    for (const rec of st.pool) flowApply(st, rec);
+  }
+  // FREE-RUNNING conveyor advance (render loop only; gated by !reduceMotion). Recirculates objects to a new lane.
+  function animateFlowScene(section, dt){
+    const st = sceneState[section]; if (!st || !st.pool) return;
+    const C = st.cfg.n;
+    for (const rec of st.pool){
+      rec.p += rec.speed * dt;
+      if (rec.p >= C){ rec.p -= C; st.laneCounter = (st.laneCounter + 1) % st.laneZ.length; rec.lane = st.laneZ[st.laneCounter]; }
+      flowApply(st, rec);
+    }
+  }
+  function buildErpScene(){ buildFlowScene('erp', ERP_FLOW_CFG); }
+  function buildCrmScene(){ buildFlowScene('crm', CRM_FLOW_CFG); }
+  function updateErpScene(){ updateFlowScene('erp'); }
+  function updateCrmScene(){ updateFlowScene('crm'); }
 
   /* ============================================================
    *  VFX LAB DIORAMA (skeleton) — a NEUTRAL PREVIEW STAGE + a selectable
@@ -9962,6 +10267,8 @@
     buildFinanceScene();
     buildNetworkScene();
     buildLeaderboardScene();
+    buildErpScene();
+    buildCrmScene();
     buildDigitalTwinScene();
     buildVfxLabScene();
     // dioramas hidden until their section is active (factory is the default visible world)
@@ -9976,6 +10283,8 @@
     try { updateFinanceScene(); } catch(_){}
     try { updateNetworkScene(); } catch(_){}
     try { updateLeaderboardScene(); } catch(_){}
+    try { updateErpScene(); } catch(_){}
+    try { updateCrmScene(); } catch(_){}
     try { updateDigitalTwinScene(); } catch(_){}
     try { updateVfxLabScene(); } catch(_){}
   }
@@ -10190,6 +10499,8 @@
     // OBJECT + VFX BUILDER panel — also available everywhere (place objects by formula/prompt in any scene).
     // onSection re-aims placement at the active section so new objects land in THIS scene.
     try { if (typeof Builder !== 'undefined' && Builder){ Builder.setVisible(true); if (Builder.onSection) Builder.onSection(activeSection); } } catch(_){}
+    // refresh the section-aware data board immediately on section change (not just on the next tick).
+    try { if (typeof refreshHUD === 'function') refreshHUD(); } catch(_){}
   }
   function wireSections(){
     for (const s of SECTIONS){
