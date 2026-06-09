@@ -8507,7 +8507,8 @@
     let sceneTarget = null;     // the currently-selected target for the NEXT added effect
     let pickArmed = false;      // "Pick in scene" mode: a scene click selects the clicked object as target
     let targetList = [];        // cached enumerable targets for the active section (drives the dropdown)
-    let targetHelper = null;    // THREE.BoxHelper outlining the current target (selection affordance)
+    let targetHelper = null;    // THREE.BoxHelper outlining the primary target (kept for back-compat refs)
+    let selectionHelpers = [];  // one BoxHelper PER selected object (so multi-select highlights ALL of them)
 
     const haveVFX = () => (typeof VFX !== 'undefined' && VFX && vfxReady);
     const haveTP  = () => (typeof Tweakpane !== 'undefined' && Tweakpane && typeof Tweakpane.Pane === 'function');
@@ -8616,16 +8617,19 @@
     // outline the current target with a BoxHelper (selection affordance). Bounded: one helper, disposed on change.
     function updateTargetHelper(){
       try {
-        if (targetHelper){
-          if (scene && scene.remove) scene.remove(targetHelper);
-          if (targetHelper.geometry && targetHelper.geometry.dispose) targetHelper.geometry.dispose();
-          targetHelper = null;
+        // clear every existing box helper
+        for (const h of selectionHelpers){ if (scene && scene.remove) scene.remove(h); if (h.geometry && h.geometry.dispose) h.geometry.dispose(); }
+        selectionHelpers = []; targetHelper = null;
+        if (typeof THREE === 'undefined' || !THREE.BoxHelper || typeof scene === 'undefined' || !scene || !scene.add) return;
+        // box EVERY selected object (multi-select) — fall back to the single sceneTarget when nothing is multi-selected
+        const objs = (selection && selection.length) ? selection : ((sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : []);
+        for (const o of objs){
+          if (!o) continue;
+          const h = new THREE.BoxHelper(o, 0x9be7ff);
+          if (h.material){ h.material.transparent = true; h.material.opacity = 0.85; }
+          scene.add(h); selectionHelpers.push(h);
         }
-        if (sceneTarget && sceneTarget.obj && typeof THREE !== 'undefined' && THREE.BoxHelper && typeof scene !== 'undefined' && scene && scene.add){
-          targetHelper = new THREE.BoxHelper(sceneTarget.obj, 0x9be7ff);
-          if (targetHelper.material){ targetHelper.material.transparent = true; targetHelper.material.opacity = 0.85; }
-          scene.add(targetHelper);
-        }
+        targetHelper = selectionHelpers[0] || null;
       } catch(_){}
     }
     function targetReadout(){
@@ -8736,7 +8740,7 @@
           let o = h.object; if (!o) continue;
           // skip the gizmo + its helpers + the selection box-helper
           if (gizmo && (o === gizmo || (o.parent && (o.parent === gizmo || (o.parent.parent && o.parent.parent === gizmo))))) continue;
-          if (targetHelper && o === targetHelper) continue;
+          if (selectionHelpers.indexOf(o) >= 0) continue;   // never pick a selection box-helper
           if (!o.geometry && !(o.isMesh)) { /* allow groups too, but prefer a mesh hit */ }
           // walk up to the placed object: the highest ancestor whose parent is the section root (or the scene)
           let node = o, guard = 0;
@@ -8830,7 +8834,7 @@
         if (ix < 0) selection.push(obj); else if (selection.length > 1) selection.splice(ix, 1);   // toggle off (keep ≥1)
       } else { selection = [obj]; }
       if (selection.length <= 1){ setTarget({ id: 'pick:' + (++pickCounter), label: label || 'object', obj: selection[0] }); }
-      else { sceneTarget = { id: 'multi', label: selection.length + ' objects', obj: null, group: true }; targetReadout(); applyGizmo(); syncPinBtn(); }
+      else { sceneTarget = { id: 'multi', label: selection.length + ' objects', obj: null, group: true }; targetReadout(); updateTargetHelper(); applyGizmo(); syncPinBtn(); }
     }
 
     // attach the gizmo to the current selection (single object, or a pivot proxy for a multi-selection)
@@ -9494,7 +9498,7 @@
       },
       // re-aim live emitter/infographic effects at their (possibly moved) targets — called every frame.
       retargetLive(){
-        if (targetHelper && targetHelper.update){ try { targetHelper.update(); } catch(_){} }
+        for (const h of selectionHelpers){ if (h && h.update){ try { h.update(); } catch(_){} } }
         if (!layers.length) return;
         for (const L of layers){ if (L.handle && L.handle.retarget) L.handle.retarget(); }
       },
