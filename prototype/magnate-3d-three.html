@@ -298,7 +298,7 @@
   .vfx-target-now{font-size:10px;color:#bfe7f8;margin-bottom:2px}
   .vfx-target-now b{color:#9be7ff}
   .vfx-target-btns{display:flex;gap:6px;margin-top:6px}
-  #vfx-target-pick.on{background:#0d3a52;border-color:#3fd6ff;color:#dff6ff;box-shadow:0 0 0 1px #3fd6ff inset}
+  #vfx-target-pick.on,.vfx-abtn.on{background:#0d3a52;border-color:#3fd6ff;color:#dff6ff;box-shadow:0 0 0 1px #3fd6ff inset}
   .vfx-target-hint{font-size:8.5px;color:#5a8197;margin-top:6px;line-height:1.4}
   #vfx-target-badge{font-variant-numeric:tabular-nums}
   /* DRIVE-BY-FORMULA (animate an effect param live) */
@@ -525,6 +525,7 @@
     <button class="btn" id="btn-reseed" aria-label="Reseed the economy with a new random seed">🎲 Reseed</button>
     <button class="btn" id="btn-cam" aria-label="Toggle camera between map and roam mode" aria-pressed="false">🛰️ Map cam</button>
     <button class="btn" id="btn-view" aria-label="Reset the camera view to downtown">🎯 Reset view</button>
+    <button class="btn" id="btn-spin" type="button" aria-pressed="true" aria-label="Toggle the diorama stage auto-rotation (R)">⟳ Spin</button>
     <button class="btn" id="btn-twin" type="button" aria-label="Toggle Digital Twin render mode (neon hologram)" aria-pressed="false">🪐 Twin</button>
   </header>
 
@@ -568,6 +569,7 @@
       <button class="tchip" type="button" data-dyn="datacenter"   aria-pressed="false">Data-Center Heat</button>
       <button class="tchip" type="button" data-dyn="datacomm"     aria-pressed="false">Data Comms</button>
       <button class="tchip" type="button" data-dyn="logistics"    aria-pressed="false">Logistics</button>
+      <button class="tchip" type="button" data-dyn="salespipeline" aria-pressed="false">Sales Pipeline</button>
     </div>
 
     <!-- MULTI-PHYSICS (the original turbine telemetry) -->
@@ -653,6 +655,27 @@
       <canvas class="twave" id="lg-wave" role="img" aria-label="Shipment dispatch waveform"></canvas>
       <div class="tmeta"><span>Inventory <b id="lg-inv">—</b></span><span>Backlog <b id="lg-routes">—</b></span></div>
     </div>
+
+    <!-- SALES PIPELINE (CRM as a digital-twin dynamic): a holographic funnel — deals flow Lead→Qualified→
+         Proposal→Negotiation→Won, with the recognizable CRM object on a pole at each stage. WIN RATE / pipeline
+         COVERAGE gauges, PIPELINE value / OPEN deals / VELOCITY, a per-stage funnel spectrum + a deal-flow trace.
+         Values are illustrative + LIGHTLY tied to the displayed economy frame (view-only). Crisp DOM, outside the bloom. -->
+    <div class="tdyn" id="twin-dyn-salespipeline">
+      <div class="tgauges">
+        <div class="tgauge"><canvas id="sp-g-win" role="img" aria-label="Win rate gauge"></canvas><div class="tglabel">Win rate</div></div>
+        <div class="tgauge"><canvas id="sp-g-cov" role="img" aria-label="Pipeline coverage gauge"></canvas><div class="tglabel">Coverage</div></div>
+      </div>
+      <div class="tgrid">
+        <div><span class="gk">Pipeline</span><span class="gv" id="sp-pipe">—</span></div>
+        <div><span class="gk">Open deals</span><span class="gv" id="sp-open">—</span></div>
+        <div><span class="gk">Velocity</span><span class="gv" id="sp-vel">—</span></div>
+      </div>
+      <div class="tspec-cap">Per-stage deals · funnel</div>
+      <canvas class="tspec" id="sp-spec" role="img" aria-label="Per-stage pipeline funnel spectrum"></canvas>
+      <div class="twave-cap">Deal-flow trace</div>
+      <canvas class="twave" id="sp-wave" role="img" aria-label="Deal flow waveform"></canvas>
+      <div class="tmeta"><span>Win rate <b id="sp-win">—</b></span><span>Avg cycle <b id="sp-cyc">—</b></span></div>
+    </div>
   </aside>
 
   <!-- ===== SMART-FACTORY telemetry HUD (PHASE 2): factory KPIs (throughput / per-stage temperature spectrum /
@@ -729,9 +752,26 @@
             <label for="vfx-target-sel">Apply effects to</label>
             <select id="vfx-target-sel" aria-label="Choose the object or group that effects apply to"></select>
             <div class="vfx-target-btns">
-              <button class="vfx-abtn" id="vfx-target-pick" type="button" aria-pressed="false" aria-label="Toggle click-to-pick: then click an object in the scene to target it">◎ Pick in scene</button>
+              <button class="vfx-abtn" id="vfx-target-pick" type="button" aria-pressed="false" aria-label="Toggle click-to-pick from this section's objects">◎ Pick in scene</button>
+              <button class="vfx-abtn" id="vfx-pickany" type="button" aria-pressed="false" aria-label="Toggle pick-any: then click ANY object anywhere in the scene to select it">⌖ Pick any</button>
             </div>
-            <div class="vfx-target-hint">Pick an object (click it after arming, or choose above), then add effects from the Palette. Each added effect stays bound to the object it was applied to. POST effects are always full-screen.</div>
+            <div class="vfx-target-btns">
+              <button class="vfx-abtn" id="vfx-move-toggle" type="button" aria-pressed="false" aria-label="Toggle the move gizmo: drag the X/Y/Z handles to move, rotate or scale the selected object">✥ Move (X/Y/Z)</button>
+              <button class="vfx-abtn" id="vfx-pin-toggle" type="button" aria-pressed="false" aria-label="Pin the selected object: freeze its position so a manual move sticks on animated objects">📌 Pin</button>
+            </div>
+            <div class="vfx-target-btns" id="vfx-move-modes" style="display:none">
+              <button class="vfx-abtn on" type="button" data-gmode="translate" aria-pressed="true">Move</button>
+              <button class="vfx-abtn" type="button" data-gmode="rotate" aria-pressed="false">Rotate</button>
+              <button class="vfx-abtn" type="button" data-gmode="scale" aria-pressed="false">Scale</button>
+            </div>
+            <div class="vfx-target-now" style="margin-top:6px">Scene layout (saved adjustments)</div>
+            <div class="vfx-target-btns">
+              <button class="vfx-abtn" id="vfx-layout-save" type="button" aria-label="Save the current object adjustments to this browser (restores on reload)">💾 Save</button>
+              <button class="vfx-abtn" id="vfx-layout-export" type="button" aria-label="Copy the layout JSON to the clipboard for sharing or committing">⤓ Export</button>
+              <button class="vfx-abtn" id="vfx-layout-import" type="button" aria-label="Paste a layout JSON to load object adjustments">⤒ Import</button>
+              <button class="vfx-abtn" id="vfx-layout-reset" type="button" aria-label="Reset all saved object adjustments back to defaults">↺ Reset</button>
+            </div>
+            <div class="vfx-target-hint">Pick an object (click it after arming, or choose above), then add effects from the Palette. Each added effect stays bound to the object it was applied to. <b>Move (X/Y/Z)</b> shows a drag gizmo on the selected object (Move / Rotate / Scale). POST effects are always full-screen.</div>
           </aside>
         </div>
       </section>
@@ -1107,6 +1147,10 @@
      AFTER three.min.js and BEFORE the inline app script. If the CDN is blocked/offline this tag is a
      no-op and THREE.OrbitControls stays undefined → the app falls back to the hand-rolled controls. -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<!-- Canonical THREE.TransformControls (r128 global build): the X/Y/Z translate/rotate/scale gizmo for the
+     VFX-Lab "Move" tool. Optional + guarded — absent/offline ⇒ THREE.TransformControls stays undefined ⇒ the
+     Move toggle simply no-ops (the rest of the app is unaffected). Inlined by build_standalone like the others. -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
 <!-- GLTFLoader (r128 global build): optional CC0 glTF model upgrades for the Smart Factory hall.
      The page works fully without it (procedural fallback); models load from ./assets/factory/*.glb. -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -1397,6 +1441,7 @@
   // camera-orbit rig for diorama sections (separate from map/roam; factory keeps its own cams)
   const stageCam = { yaw: 0, targetYaw: 0, pivot: { x:0, y:0, z:0 }, dist: 120, height: 70, turn: 0 };
   let sectionAnimT = 1;              // 0..1 rotation transition progress (1 = settled)
+  let stageSpin = true;              // diorama-stage idle auto-rotation (toggle via the ⟳ Spin button / R key)
   let sectionFromYaw = 0, sectionToYaw = 0;
 
   /* ============================================================
@@ -4580,6 +4625,9 @@
   // same scope for snapshot/HUD recompute; two same-named function declarations would collide (the later one
   // wins under hoisting), so the GL draw must have its own unique name to actually reach the canvas/composer.
   function renderFrameGL(){
+    // PIN: re-assert any pinned objects' transforms AFTER all sim updates, just before the draw, so a manual
+    // move "sticks" on animated objects (conveyor tokens, spinning nodes, scaled bars). View-only. (Part 3)
+    try { if (typeof VFXLab !== 'undefined' && VFXLab && VFXLab.enforcePin) VFXLab.enforcePin(); } catch(_){}
     // route through the host EffectComposer when EITHER the Digital-Twin overlay is on, OR the VFX Lab is
     // active with at least one enabled Post-family pass (the POST family layers onto this SAME composer, so it
     // must be the active render path for the screen FX to show). The composer keeps the host ACES/exposure +
@@ -5281,7 +5329,7 @@
         sectionAnimT = Math.min(1, sectionAnimT + dt * 1.6);
         const e = 1 - Math.pow(1 - sectionAnimT, 3);
         if (!useOrbit) stageCam.yaw = sectionFromYaw + (sectionToYaw - sectionFromYaw) * e + (1 - e) * Math.PI * 0.9;
-      } else if (!reduceMotion){
+      } else if (!reduceMotion && stageSpin){
         if (!useOrbit) stageCam.yaw += dt * 0.12;   // idle turntable (data magnitudes stay real)
       }
       // animate the network's slow turn (decorative spin of the graph group)
@@ -5289,10 +5337,11 @@
       if (ns && ns.spin && activeSection === 'network' && !reduceMotion){
         ns.spin.rotation.y += dt * 0.18;
       }
-      // ERP / CRM process-flow theaters: recognizable 3D business objects flow + MORPH through the
-      // pipeline stages (conveyor). Free-running like the network spin; frozen under reduced-motion.
-      if ((activeSection === 'erp' || activeSection === 'crm') && !reduceMotion){
-        try { animateFlowScene(activeSection, dt); } catch(_){}
+      // ERP = Smart Conveyor (objects ride the belt + morph at scanner stations); CRM = circular 3D Sankey
+      // (tokens circulate the ring, pole-top objects spin, particles stream the ribbons). Frozen under reduced-motion.
+      if (!reduceMotion){
+        if (activeSection === 'erp'){ try { animateErpConveyor('erp', dt); } catch(_){} }
+        else if (activeSection === 'crm'){ try { animateRingSankey('crm', dt); } catch(_){} }
       }
       // (VFXLab.retargetLive + Builder.update now run section-independently, just after VFX.update above.)
       // DATA → VIZ ANIMATE (P5.2-visible): drive the placed objects along the [t,n,f]
@@ -5347,7 +5396,7 @@
         // OrbitControls owns the orbit: target = scene center (set in aimStageAt). The rotate-to
         // flourish + idle turntable both ride controls.autoRotate, gated by !reduceMotion &&
         // !replaying() (so it freezes under reduced-motion or while scrubbing a replay).
-        controls.autoRotate = !reduceMotion && !replaying();
+        controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
         if (controls.update) controls.update();
       } else {
         const cy = Math.cos(stageCam.yaw), sy = Math.sin(stageCam.yaw);
@@ -5792,16 +5841,11 @@
   // aggregate value carried (read from the flow scene's pooled objects; deterministic, view-only).
   function vizFlowRows(section){
     const st = (typeof sceneState !== 'undefined') ? sceneState[section] : null;
-    if (!st || !st.cfg) return [];
-    const n = st.cfg.n, names = st.cfg.stageNames, cnt = new Array(n).fill(0), val = new Array(n).fill(0);
-    for (const rec of (st.pool || [])){
-      if (!rec || rec.stage < 0 || rec.stage >= n) continue;
-      cnt[rec.stage]++; val[rec.stage] += (rec.value || 0);
-    }
-    const rows = [];
+    if (!st || !st.cfg || !st.count) return [];
+    const n = st.cfg.n, names = st.cfg.stageNames, rows = [];
     for (let i = 0; i < n; i++){
       const hex = '#' + (st.cfg.colors[i] >>> 0).toString(16).padStart(6, '0');
-      rows.push({ cells: [vizSw(hex) + names[i], String(cnt[i]), fmt$(val[i])] });
+      rows.push({ cells: [vizSw(hex) + names[i], String(st.count[i] || 0), fmt$(st.val[i] || 0)] });
     }
     return rows;
   }
@@ -5825,7 +5869,7 @@
     'digital-twin': { title: 'Digital Twin · telemetry', cols: [{ label: 'Asset' }, { label: 'Load', num: true }, { label: 'Temp', num: true }],
       rows: (c) => vizTwinTelemetry(c) },
     'vfx-lab': { title: 'VFX Lab · authoring stage', cols: [{ label: 'Effect stage' }], rows: () => [] },
-    erp: { title: 'ERP · Order-to-Cash flow', cols: [{ label: 'Stage' }, { label: 'In stage', num: true }, { label: 'Value', num: true }],
+    erp: { title: 'ERP · Smart Conveyor (O2C)', cols: [{ label: 'Station' }, { label: 'On belt', num: true }, { label: 'Value', num: true }],
       rows: () => vizFlowRows('erp') },
     crm: { title: 'CRM · Sales pipeline', cols: [{ label: 'Stage' }, { label: 'Deals', num: true }, { label: 'Value', num: true }],
       rows: () => vizFlowRows('crm') }
@@ -5923,6 +5967,16 @@
   /* ============================================================
    *  CONTROLS WIRING
    * ============================================================ */
+  // Toggle the diorama-stage idle auto-rotation (the turntable spin on the orbit-stage sections:
+  // market/finance/network/leaderboard/erp/crm/digital-twin/vfx-lab). VIEW-ONLY — the render loop reads
+  // `stageSpin` each frame (OrbitControls.autoRotate + the no-orbit yaw fallback are both gated by it), so
+  // turning it off freezes the camera in place; you can still drag to orbit manually. Default ON.
+  function setStageSpin(on){
+    stageSpin = !!on;
+    const b = $('btn-spin');
+    if (b){ b.setAttribute('aria-pressed', stageSpin ? 'true' : 'false'); b.textContent = stageSpin ? '⟳ Spin' : '⏸ Spin off'; }
+    if (useOrbit && controls && !WORLD_SECTIONS.includes(activeSection)){ controls.autoRotate = stageSpin && !reduceMotion && !replaying(); }
+  }
   function setCamMode(m){
     camMode = m;
     const btn = $('btn-cam');
@@ -6046,6 +6100,7 @@
     };
     $('btn-cam').onclick = () => setCamMode(camMode === 'map' ? 'roam' : 'map');
     $('btn-view').onclick = resetView;
+    { const sb = $('btn-spin'); if (sb) sb.onclick = () => setStageSpin(!stageSpin); }
     // DIGITAL-TWIN render-mode toggle (view-only neon hologram over the active scene). A manual toggle clears
     // twinAuto so the digital-twin section's auto-restore won't later override the user's explicit choice.
     const twinBtn = $('btn-twin');
@@ -6060,6 +6115,8 @@
       // KeyT: pause/resume the DAY/NIGHT auto-cycle (optional, unobtrusive). Pausing freezes the
       // current sky; pausing has no effect under reduced-motion (the clock is already held at midday).
       if (e.code === 'KeyT'){ e.preventDefault(); todPaused = !todPaused; return; }
+      // KeyR: toggle the diorama-stage auto-rotation (the turntable spin on market/finance/erp/crm/vfx-lab/etc.)
+      if (e.code === 'KeyR'){ e.preventDefault(); setStageSpin(!stageSpin); return; }
       if (camMode === 'map' && e.code === 'Space'){ e.preventDefault(); setPlaying(!playing); }
       else if (e.key === 's' || e.key === 'S' || e.key === '.'){ e.preventDefault(); setPlaying(false); advance(); }
     });
@@ -6141,7 +6198,7 @@
           const pr = gl.getBoundingClientRect ? gl.getBoundingClientRect() : { left:0, top:0, width:window.innerWidth, height:window.innerHeight };
           const pndc = new THREE.Vector2(((e.clientX - pr.left) / pr.width) * 2 - 1, -((e.clientY - pr.top) / pr.height) * 2 + 1);
           const pray = new THREE.Raycaster(); pray.setFromCamera(pndc, cam);
-          if (VFXLab.pickFromRay(pray)) return;     // consumed the click as a target pick
+          if (VFXLab.pickFromRay(pray, !!e.shiftKey)) return;     // shift = add to multi-selection
         }
       } catch(_){}
       // PHASE 2: the firm towers + NPC_DESK exchange are the ONLY pickables, and they live in economyGroup
@@ -6301,6 +6358,7 @@
     if (twinDynamic === 'datacomm'){ try { drawDataCommHud(); } catch(_){} return; }       // PHASE 2
     if (twinDynamic === 'logistics'){ try { drawLogisticsHud(); } catch(_){} return; }     // PHASE 2
     if (twinDynamic === 'datacenter'){ try { drawDataCenterHud(); } catch(_){} return; }   // PHASE 3
+    if (twinDynamic === 'salespipeline'){ try { drawSalesPipelineHud(); } catch(_){} return; }   // CRM
     if (twinDynamic !== 'multiphysics') return;
     const moving = !reduceMotion && !replaying();
     if (moving) _twinHudPhase += 0.05;
@@ -6662,6 +6720,95 @@
           const ph = _lgHudPhase * 0.7 + i * 0.4;
           const y = H/2 - Math.sin(ph) * (H * 0.26) * (0.45 + m.flowI * 0.7)
                         - Math.sin(ph * 1.9) * (H * 0.08) * m.peak;
+          if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      }
+    } catch(_){}
+  }
+
+  /* ============================================================
+   *  SALES-PIPELINE DYNAMIC (CRM) — palette + metrics + crisp DOM HUD (drawSalesPipelineHud).
+   *  CRM modelled like a digital-twin: a holographic FUNNEL where DEALS flow Lead→Qualified→Proposal→
+   *  Negotiation→Won. salesPipelineMetrics() is the SINGLE SOURCE OF TRUTH for the in-world flow-unit loads
+   *  AND the HUD: a conversion funnel (occupancy decreases stage→stage) lightly tied to the displayed
+   *  economy frame (a leaderboard-spread "demand" proxy) — VIEW-ONLY, never steps/mutates anything.
+   * ============================================================ */
+  const CRM_TWIN_STAGES = 5;          // Lead · Qualified · Proposal · Negotiation · Won
+  let _spHudPhase = 0;
+  // CRM "deal heat" ramp: cold lead (cool blue) → teal → lime → warm gold (won). Saturated + sub-white so
+  // additive deal units glow without white-out; distinct from Power (amber/red) and Data Comms (cyan/green).
+  function crmColor(t){
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const stops = [
+      [0.00, 0.30, 0.56, 0.86], [0.45, 0.34, 0.82, 0.74],
+      [0.75, 0.56, 0.88, 0.42], [1.00, 0.92, 0.78, 0.30],
+    ];
+    for (let i = 0; i < stops.length - 1; i++){
+      const a = stops[i], b = stops[i+1];
+      if (t >= a[0] && t <= b[0]){ const f = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+        return { r: a[1] + (b[1]-a[1])*f, g: a[2] + (b[2]-a[2])*f, b: a[3] + (b[3]-a[3])*f }; }
+    }
+    return { r: 0.92, g: 0.78, b: 0.30 };
+  }
+  function salesPipelineMetrics(){
+    // a lightly economy-tied "demand" drives pipeline intensity (view-only proxy; same idea as logisticsMetrics)
+    let demand = 0.5;
+    try {
+      const lb = rankedFrame();
+      if (lb && lb.length){ const top = lb[0].netWorth, med = lb[Math.floor(lb.length/2)].netWorth || 1;
+        demand = Math.max(0.1, Math.min(1, med ? top / (med * 2.4) : 0.5)); }
+    } catch(_){}
+    const ph = _spHudPhase;
+    const conv = [1.0, 0.62, 0.40, 0.24, 0.14];          // typical share of deals reaching each stage (funnel)
+    const loads = new Array(CRM_TWIN_STAGES);
+    for (let i = 0; i < CRM_TWIN_STAGES; i++){
+      const ripple = 0.05 * Math.sin(ph * 0.7 + i * 1.3);
+      loads[i] = Math.max(0.05, Math.min(1, conv[i] * (0.6 + demand * 0.6) + ripple));
+    }
+    const openDeals = Math.round(20 + demand * 130);
+    const stageCounts = loads.map((u) => Math.round(u * openDeals * 0.5) + 1);
+    const pipelineValue = Math.round((30 + demand * 240) * 1000) * 100;   // $ in pipeline (illustrative)
+    const winRate = +(12 + demand * 22).toFixed(1);       // %
+    const velocity = Math.round(78 - demand * 34);        // avg days to close (faster under high demand)
+    const coverage = +(1.5 + demand * 2.6).toFixed(1);    // pipeline coverage × quota
+    return { loads, openDeals, stageCounts, pipelineValue, winRate, velocity, coverage, demand };
+  }
+  function drawSalesPipelineHud(){
+    const moving = !reduceMotion && !replaying();
+    if (moving) _spHudPhase += 0.05;
+    const m = salesPipelineMetrics();
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+    set('sp-pipe', fmt$(m.pipelineValue));
+    set('sp-open', String(m.openDeals));
+    set('sp-vel', m.velocity + 'd');
+    set('sp-win', m.winRate.toFixed(1) + '%');
+    set('sp-cyc', m.velocity + 'd');
+    try { const g = $('sp-g-win'); if (g) twinGauge(g, m.winRate / 100, m.winRate.toFixed(0) + '%', '#7be08a'); } catch(_){}
+    try { const g = $('sp-g-cov'); if (g) twinGauge(g, Math.min(1, m.coverage / 5), m.coverage.toFixed(1) + 'x', '#6fe9ff'); } catch(_){}
+    // per-stage funnel spectrum — bars coloured along the CRM deal-heat ramp (Lead→Won)
+    try {
+      const cv = $('sp-spec'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.fillRect){
+        const { W, H } = sizeTwinCanvas(cv); g.clearRect(0, 0, W, H);
+        const n = m.loads.length, bw = W / n, pad = bw * 0.22;
+        for (let i = 0; i < n; i++){
+          const u = m.loads[i], bh = Math.max(2, u * (H - 6)), c = crmColor(i / (n - 1));
+          g.fillStyle = 'rgb(' + Math.round(c.r*255) + ',' + Math.round(c.g*255) + ',' + Math.round(c.b*255) + ')';
+          g.fillRect(i * bw + pad/2, H - bh, bw - pad, bh);
+        }
+      }
+    } catch(_){}
+    // deal-flow trace — amplitude ∝ demand, with a Won-stage modulation
+    try {
+      const cv = $('sp-wave'), g = cv && cv.getContext && cv.getContext('2d');
+      if (g && g.beginPath){
+        const { W, H } = sizeTwinCanvas(cv);
+        g.clearRect(0, 0, W, H); g.lineWidth = Math.max(1.4, H * 0.035); g.strokeStyle = '#7be08a';
+        g.beginPath();
+        for (let i = 0; i <= 64; i++){
+          const x = (i / 64) * W, ph = _spHudPhase * 0.7 + i * 0.4;
+          const y = H/2 - Math.sin(ph) * (H * 0.26) * (0.5 + m.demand * 0.6) - Math.sin(ph * 1.9) * (H * 0.08) * m.loads[4];
           if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
         }
         g.stroke();
@@ -7861,25 +8008,28 @@
   }
 
   /* ============================================================
-   *  📦 ERP / 🤝 CRM PROCESS-FLOW THEATERS (native prototype sections)
+   *  📦 ERP / 🤝 CRM CIRCULAR 3D SANKEY THEATERS (native prototype sections)
    *  ------------------------------------------------------------
    *  The course thesis — "the world's operations are high-dimensional
-   *  transformations" — made literal: each business entity is an OBJECT
-   *  that FLOWS through process stages and MORPHS as it advances (the
-   *  process lens). Objects are RECOGNIZABLE composite 3D models, NOT
-   *  boxes: a quote document grows a signature, becomes a taped package,
-   *  rides a delivery truck, prints an invoice, settles into gold coins
-   *  (ERP Order-to-Cash); a lead orb becomes a contact card, a proposal,
-   *  a two-party negotiation, then a won trophy (CRM Sales-Pipeline).
+   *  transformations" — made legible as a RADIAL Sankey (cf. the circular
+   *  ERP org diagram): the process stages are NODES on a ring, each a POLE
+   *  topped with the stage's RECOGNIZABLE 3D object (NOT a box) — ERP: quote
+   *  doc · signed doc · taped package · delivery truck · printed invoice ·
+   *  gold coins; CRM: lead orb · contact card · proposal · two-party
+   *  negotiation · won trophy. Proportional volumetric RIBBONS (the same
+   *  makeRibbon machinery as Market/Finance) connect consecutive stages
+   *  around the ring (closing the loop = recirculation/new business); ribbon
+   *  WIDTH = real per-stage throughput, so where work piles up (the funnel /
+   *  bottleneck) is visible. Flow PARTICLES stream src→tgt along each ribbon.
+   *  A central hub pillar evokes the ERP/CRM core.
    *
    *  VIEW-ONLY (never steps/mutates the economy). Pooled + bounded (INV-4):
-   *  a fixed Group pool recycles as objects recirculate; models share a few
-   *  geometries/materials built once (a model is reassembled only when an
-   *  object changes stage — never per frame). Sub-white emissive (INV-3).
+   *  fixed ribbon + particle pools; pole-top models built ONCE (never per
+   *  frame); the flow sim is just numbers. Sub-white emissive (INV-3).
    *  Headless-safe: built from THREE primitives via the same guarded helpers
-   *  the other dioramas use (buildSceneRoot / dioBox / labelSpriteSafe); the
-   *  flow advance runs only in the render loop (free-running like the network
-   *  spin, frozen under reduced-motion) — never in the headless update path.
+   *  the other dioramas use (buildSceneRoot / makeRibbon / labelSpriteSafe);
+   *  the ring advance runs only in the render loop (free-running like the
+   *  network spin, frozen under reduced-motion) — never in the headless path.
    * ============================================================ */
   const FLOW_COL = [0x6ad0ff, 0x5fe0c8, 0x8be36a, 0xe3cf6a, 0xe39a6a, 0x7be08a]; // sub-white stage ramp
   const flowMat = (o) => new THREE.MeshStandardMaterial(o);
@@ -7910,7 +8060,7 @@
     (g, st) => { flowPart(g, FLOW_G.box, FLOW_M.card, [0, 1.05, 0]); flowPart(g, FLOW_G.tape, FLOW_ACCENT[st], [0, 2.13, 0]); flowPart(g, FLOW_G.tape, FLOW_ACCENT[st], [0, 2.13, 0], [0, Math.PI / 2, 0]); },
     (g, st) => { flowPart(g, FLOW_G.body, FLOW_M.metal, [0.25, 0.95, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0.25, 1.62, 0]); flowPart(g, FLOW_G.cab, FLOW_M.metal, [-1.15, 0.85, 0]); [-1.0, 0.7].forEach((x) => { flowPart(g, FLOW_G.wheel, FLOW_M.tire, [x, 0.42, 0.62], [Math.PI / 2, 0, 0]); flowPart(g, FLOW_G.wheel, FLOW_M.tire, [x, 0.42, -0.62], [Math.PI / 2, 0, 0]); }); },
     (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[st], [0, 0.12, -1.0], [-1.0, 0, 0]); [-0.2, 0.3, 0.8].forEach((z) => flowPart(g, FLOW_G.line, FLOW_M.ink, [0, 0.1, z], [-1.0, 0, 0])); },
-    (g) => { flowPart(g, FLOW_G.coin, FLOW_M.gold, [0, 1.1, 0], [Math.PI / 2, 0, 0]); flowPart(g, FLOW_G.coin, FLOW_M.gold, [0.4, 0.95, -0.25], [Math.PI / 2, 0, 0]); },
+    (g) => { [0, 1, 2].forEach((i) => flowPart(g, FLOW_G.coin, FLOW_M.gold, [i * 0.06, 0.16 + i * 0.34, -i * 0.06])); },
   ];
   // CRM Sales-Pipeline: lead orb → contact card → proposal doc → two-party negotiation → won trophy
   const CRM_FLOW_MODELS = [
@@ -7920,85 +8070,296 @@
     (g, st) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.cone, FLOW_M.metal, [-1.05, 0.75, 0], [0, 0, 0.5]); flowPart(g, FLOW_G.cone, FLOW_ACCENT[st], [1.05, 0.75, 0], [0, 0, -0.5]); },
     (g) => { flowPart(g, FLOW_G.basep, FLOW_M.gold, [0, 0.22, 0]); flowPart(g, FLOW_G.cup, FLOW_M.gold, [0, 1.15, 0]); },
   ];
-  const ERP_FLOW_CFG = { title: '📦 ERP · Order-to-Cash flow', stageNames: ['Quote', 'Confirmed', 'Picked', 'Shipped', 'Invoiced', 'Paid'],
-    n: 6, colors: FLOW_COL, models: ERP_FLOW_MODELS, count: 30, objScale: 3.4, valBase: 200, valSpan: 9800 };
-  const CRM_FLOW_CFG = { title: '🤝 CRM · Sales pipeline', stageNames: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Won'],
-    n: 5, colors: FLOW_COL, models: CRM_FLOW_MODELS, count: 26, objScale: 3.4, valBase: 500, valSpan: 80000 };
+  // n stages on a ring; `dwell` = relative time each stage holds work (slow stages accumulate → a real
+  // bottleneck read); `count` = flow tokens circulating; objScale = pole-top recognizable-object size.
+  const ERP_FLOW_CFG = { title: '📦 ERP · Order-to-Cash (circular Sankey)', stageNames: ['Quote', 'Confirmed', 'Picked', 'Shipped', 'Invoiced', 'Paid'],
+    n: 6, colors: FLOW_COL, models: ERP_FLOW_MODELS, count: 72, objScale: 2.6, valBase: 200, valSpan: 9800, dwell: [1.0, 1.4, 1.2, 1.9, 1.1, 0.8], hub: 'ERP CORE' };
+  const CRM_FLOW_CFG = { title: '🤝 CRM · Sales pipeline (circular Sankey)', stageNames: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Won'],
+    n: 5, colors: FLOW_COL, models: CRM_FLOW_MODELS, count: 60, objScale: 2.6, valBase: 500, valSpan: 80000, dwell: [1.0, 1.5, 1.7, 2.1, 0.7], hub: 'PIPELINE' };
   const flowFrac = (x) => x - Math.floor(x);                    // deterministic per-index pseudo-random helper
 
-  // (re)assemble ONE object's recognizable model for a stage (bounded; only on stage change, never per frame).
-  function setFlowModel(rec, stage, cfg){
-    const g = rec.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]);
-    (cfg.models[stage] || cfg.models[0])(g, stage); rec.stage = stage;
+  const FLOW_ADD = (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2);
+  // (re)assemble ONE recognizable composite model into a group (bounded; built once per node).
+  function setFlowModel(grp, stage, cfg){
+    for (let i = grp.children.length - 1; i >= 0; i--) grp.remove(grp.children[i]);
+    (cfg.models[stage] || cfg.models[0])(grp, stage);
   }
-  // place ONE object at its current pipeline phase rec.p (idempotent; safe under the headless stub).
-  function flowApply(st, rec){
-    const cfg = st.cfg, C = cfg.n, last = C - 1;
-    let p = rec.p; if (!(p >= 0)) p = 0; if (p >= C) p = C - 1e-4;
-    const stage = Math.min(last, Math.floor(p)), frac = p - Math.floor(p);
-    if (rec.stage !== stage) setFlowModel(rec, stage, cfg);
-    const x0 = st.bayX[stage], x1 = st.bayX[Math.min(stage + 1, last)];
-    const x = x0 + (x1 - x0) * frac;
-    let s = 1; const e = 0.55;                                   // grow at the first bay, shrink at the last
-    if (p < e) s = p / e; else if (p > C - e) s = Math.max(0, (C - p) / e);
-    const grp = rec.grp;
-    grp.position.set(x, 5 + Math.sin(p * 2.1 + rec.off) * 0.5, rec.lane);
-    grp.scale.setScalar(Math.max(0.001, s) * cfg.objScale);
-    grp.rotation.y = p * 0.22 + rec.off;
-    grp.visible = true;
-  }
-  // build a process-flow theater: stage bays (platform + colour marker + arrow + label) + a pooled object stream.
-  function buildFlowScene(section, cfg){
+  // ---- CIRCULAR 3D SANKEY: n stage NODES on a ring, each a POLE topped with the stage's recognizable
+  //      object; proportional volumetric RIBBONS (reusing makeRibbon — the same Sankey machinery as
+  //      Market/Finance) connect consecutive stages AROUND the ring (closing the loop = recirculation);
+  //      live flow PARTICLES stream src→tgt along each ribbon. A central hub pillar evokes the ERP/CRM
+  //      core (the reference circular org diagram). Ribbon width = REAL throughput (stage occupancy);
+  //      slow stages accumulate (dwell) so the bottleneck/funnel is legible. VIEW-ONLY, pooled (INV-4). ----
+  const RING_R = 42, RING_BASE_Y = 3, RING_POLE = 17, RING_RIB_Y = 10, RING_WMAX = 9;
+  function buildRingSankey(section, cfg){
     const g = buildSceneRoot(section);
     g.add(labelSpriteSafe(cfg.title, '#cfe0ff', 26, 0, 64, 0));
-    const C = cfg.n, BAY = 110 / Math.max(1, C - 1), bayX = [];
-    for (let i = 0; i < C; i++) bayX.push((i - (C - 1) / 2) * BAY);
-    const laneZ = [-12, -4, 4, 12];
-    const spine = dioBox(BAY * (C - 1) + 18, 0.8, 30, 0x0c1828, 0x0a1322); spine.position.set(0, 1.2, 0); g.add(spine);
-    for (let i = 0; i < C; i++){
-      const hex = cfg.colors[i];
-      const plat = dioBox(16, 1.4, 26, brightenHex(hex, 0.02), 0x10203a); plat.position.set(bayX[i], 2.1, 0); g.add(plat);
-      const strip = dioBox(16, 0.3, 26, brightenHex(hex, 0.25), hex); strip.position.set(bayX[i], 2.95, 0); g.add(strip);
-      const disc = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.5, 22),
-        new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.3), emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.4 }));
-      disc.position.set(bayX[i], 3.4, 15.5); g.add(disc);
-      if (i < C - 1){
-        const arrow = new THREE.Mesh(new THREE.ConeGeometry(1.1, 3.2, 16),
-          new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.5 }));
-        arrow.rotation.z = -Math.PI / 2; arrow.position.set(bayX[i] + BAY / 2, 3.6, 0); g.add(arrow);
-      }
-      g.add(labelSpriteSafe(cfg.stageNames[i], '#dbe8fb', 11, bayX[i], 26, 0));
+    const n = cfg.n, nodes = [];
+    // central hub (the org core): additive pillar + orb (decorative, no emissive)
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, RING_POLE, 12),
+      new THREE.MeshBasicMaterial({ color: 0x6ea8ff, transparent: true, opacity: 0.16, depthWrite: false, blending: FLOW_ADD }));
+    hub.position.y = RING_BASE_Y + RING_POLE / 2; g.add(hub);
+    const hubOrb = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.20, depthWrite: false, blending: FLOW_ADD }));
+    hubOrb.position.y = RING_BASE_Y + RING_POLE + 3; g.add(hubOrb);
+    g.add(labelSpriteSafe(cfg.hub || 'CORE', '#8fb6ff', 12, 0, RING_BASE_Y + RING_POLE + 8, 0));
+    for (let i = 0; i < n; i++){
+      const a = -Math.PI / 2 + (i / n) * Math.PI * 2;            // start at top, go clockwise around the ring
+      const x = Math.cos(a) * RING_R, z = Math.sin(a) * RING_R, hex = cfg.colors[i];
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(5.0, 5.6, 1.0, 28),
+        new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.1), emissive: new THREE.Color(hex), emissiveIntensity: 0.45, roughness: 0.5, metalness: 0.3 }));
+      disc.position.set(x, RING_BASE_Y, z); g.add(disc);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, RING_POLE, 16),
+        new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.2), emissive: new THREE.Color(hex), emissiveIntensity: 0.30, roughness: 0.4, metalness: 0.5 }));
+      pole.position.set(x, RING_BASE_Y + RING_POLE / 2, z); g.add(pole);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.0, 0.6, 18),
+        new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.35), emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.5 }));
+      cap.position.set(x, RING_BASE_Y + RING_POLE + 0.3, z); g.add(cap);
+      // the recognizable object sits ON the pole (built once)
+      const obj = new THREE.Group(); setFlowModel(obj, i, cfg); obj.scale.setScalar(cfg.objScale);
+      obj.position.set(x, RING_BASE_Y + RING_POLE + 2.6, z); g.add(obj);
+      g.add(labelSpriteSafe(cfg.stageNames[i], '#dbe8fb', 13, x, RING_BASE_Y + RING_POLE + 9, z));
+      const valLbl = labelSpriteSafe('', '#eaf0fb', 11, x, RING_BASE_Y + RING_POLE + 6, z); g.add(valLbl);
+      nodes.push({ x, z, hex, obj, valLbl, lastTxt: '' });
     }
-    const pool = [];
+    // proportional ribbon DESCRIPTORS i→(i+1) around the ring (closing the loop). The actual makeRibbon
+    // meshes are created LAZILY in updateRingSankey: makeRibbon's 2d-canvas shimmer texture is unavailable
+    // under the headless stub, so building there (inside the try/catch'd update path) keeps the gate green
+    // while a real browser builds them fine — exactly how Market/Finance defer their ribbons.
+    const ribbons = [];
+    for (let i = 0; i < n; i++) ribbons.push({ mesh: null, s: i, t: (i + 1) % n, width: 0.3 });
+    // bounded flow-particle pool along the ribbons
+    const DOTS_PER = 4, dotPool = [];
+    for (let i = 0; i < n * DOTS_PER; i++){
+      const d = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD }));
+      d.visible = false; g.add(d); dotPool.push(d);
+    }
+    // lightweight flow sim: `count` tokens circulate; per-stage dwell makes slow stages accumulate.
+    const flow = [];
     for (let i = 0; i < cfg.count; i++){
-      const grp = new THREE.Group(); grp.visible = false; g.add(grp);
-      const u = flowFrac(Math.sin((i + 1) * 12.9898) * 43758.5453);
       const v = flowFrac(Math.sin((i + 1) * 78.233) * 12543.1234);
-      pool.push({ grp, p: (i / cfg.count) * C, speed: 0.14 + u * 0.20, lane: laneZ[i % laneZ.length],
-        off: v * Math.PI * 2, value: Math.round(cfg.valBase + v * cfg.valSpan), stage: -1 });
+      flow.push({ p: (i / cfg.count) * n, value: Math.round(cfg.valBase + v * cfg.valSpan) });
     }
-    sceneState[section] = { g, cfg, bayX, laneZ, pool, laneCounter: 0 };
-    updateFlowScene(section);                                    // place once → a single headless update yields a valid scene
+    sceneState[section] = { g, cfg, nodes, ribbons, ribbonsBuilt: false, dotPool, DOTS_PER, flow,
+      count: new Array(n).fill(0), val: new Array(n).fill(0), edgePhase: 0 };
+    updateRingSankey(section);                                   // one pass → a single headless update yields a valid scene
   }
-  // VIEW-ONLY per-frame refresh (place each object at its current phase; no advance — deterministic + stub-safe).
-  function updateFlowScene(section){
-    const st = sceneState[section]; if (!st || !st.pool) return;
-    for (const rec of st.pool) flowApply(st, rec);
-  }
-  // FREE-RUNNING conveyor advance (render loop only; gated by !reduceMotion). Recirculates objects to a new lane.
-  function animateFlowScene(section, dt){
-    const st = sceneState[section]; if (!st || !st.pool) return;
-    const C = st.cfg.n;
-    for (const rec of st.pool){
-      rec.p += rec.speed * dt;
-      if (rec.p >= C){ rec.p -= C; st.laneCounter = (st.laneCounter + 1) % st.laneZ.length; rec.lane = st.laneZ[st.laneCounter]; }
-      flowApply(st, rec);
+  // VIEW-ONLY refresh: recompute per-stage occupancy/value from the tokens, set proportional ribbon widths
+  // + node value labels (idempotent; stub-safe; no per-frame alloc beyond changed labels).
+  function updateRingSankey(section){
+    const st = sceneState[section]; if (!st || !st.ribbons) return;
+    const cfg = st.cfg, n = cfg.n;
+    st.count.fill(0); st.val.fill(0);
+    for (const f of st.flow){ const s = Math.min(n - 1, Math.floor(f.p)); st.count[s]++; st.val[s] += f.value; }
+    let hi = 1; for (let i = 0; i < n; i++) hi = Math.max(hi, st.count[i]);
+    const k = RING_WMAX / hi;
+    // lazily create the ribbon meshes ONCE (skipped under the headless stub, where makeRibbon's 2d-canvas
+    // shimmer texture throws — guarded so the gate stays green; a real browser builds them on first update).
+    if (!st.ribbonsBuilt){
+      st.ribbonsBuilt = true;
+      try { for (const rb of st.ribbons){ rb.mesh = makeRibbon(cfg.colors[rb.s], cfg.colors[rb.t]); st.g.add(rb.mesh); } }
+      catch (_){ for (const rb of st.ribbons) rb.mesh = null; }
+    }
+    for (const rb of st.ribbons){
+      const a = st.nodes[rb.s], b = st.nodes[rb.t];
+      rb.width = Math.max(0.3, st.count[rb.s] * k);
+      if (rb.mesh && rb.mesh.userData && rb.mesh.userData.update)
+        rb.mesh.userData.update(a.x, RING_RIB_Y, a.z, b.x, RING_RIB_Y, b.z, rb.width, cfg.colors[rb.s], cfg.colors[rb.t]);
+    }
+    for (let i = 0; i < n; i++){
+      const nd = st.nodes[i], txt = st.count[i] + ' · ' + fmt$(st.val[i]);
+      if (nd.valLbl && txt !== nd.lastTxt){ setSpriteText(nd.valLbl, txt); nd.lastTxt = txt; }
     }
   }
-  function buildErpScene(){ buildFlowScene('erp', ERP_FLOW_CFG); }
-  function buildCrmScene(){ buildFlowScene('crm', CRM_FLOW_CFG); }
-  function updateErpScene(){ updateFlowScene('erp'); }
-  function updateCrmScene(){ updateFlowScene('crm'); }
+  // FREE-RUNNING (render loop only; frozen under reduced-motion): advance tokens around the ring, spin the
+  // pole-top objects, stream flow particles along each ribbon (count/speed ∝ width). Widths refresh via
+  // updateRingSankey on the same frame's updateSectionScenes pass.
+  function animateRingSankey(section, dt){
+    const st = sceneState[section]; if (!st || !st.flow) return;
+    const cfg = st.cfg, n = cfg.n, dwell = cfg.dwell, base = 0.5;
+    for (const f of st.flow){
+      const s = Math.min(n - 1, Math.floor(f.p));
+      f.p += (base / (dwell ? dwell[s] : 1)) * dt;
+      if (f.p >= n) f.p -= n;
+    }
+    for (const nd of st.nodes){ if (nd.obj) nd.obj.rotation.y += dt * 0.5; }
+    st.edgePhase = (st.edgePhase || 0) + dt;
+    let slot = 0;
+    for (const rb of st.ribbons){
+      const a = st.nodes[rb.s], b = st.nodes[rb.t], norm = Math.min(1, (rb.width || 0) / RING_WMAX);
+      const speed = 0.22 * (0.5 + norm), r = 0.32 + norm * 0.5;
+      for (let k = 0; k < st.DOTS_PER; k++){
+        const d = st.dotPool[slot++]; if (!d) break;
+        const frac = ((st.edgePhase * speed) + k / st.DOTS_PER) % 1;
+        d.visible = true;
+        d.position.set(a.x + (b.x - a.x) * frac, RING_RIB_Y + Math.sin(frac * Math.PI) * 1.5, a.z + (b.z - a.z) * frac);
+        d.scale.setScalar(r);
+      }
+    }
+    while (slot < st.dotPool.length){ st.dotPool[slot++].visible = false; }
+  }
+  /* ============================================================
+   *  📦 ERP SMART CONVEYOR OFFICE — buildErpConveyor()
+   *  Order-to-Cash as an automated OPERATIONS FLOOR (open office): a CONVERGING-then-DIVERGING conveyor
+   *  NETWORK (hourglass topology) on a lit office floor. Multiple INTAKE docks feed belts that gradually
+   *  CONVERGE (merge nodes COMBINE objects: 2-in→1-out) into the central ERP CORE; the core then DISPATCHES
+   *  outward through progressively BRANCHING sites (split nodes DIVIDE objects: 1-in→N-out) to the output
+   *  docks. The recognizable O2C objects (doc → signed → package → truck → invoice → coins) MORPH stage-to-
+   *  stage as they pass each functional site (the operation = a transformation). A bounded token sim drives
+   *  the merge/split flow; per-stage occupancy feeds the right data board (vizFlowRows). VIEW-ONLY, pooled
+   *  (INV-4), sub-white emissive (INV-3), headless-safe (THREE primitives + setFlowModel; no canvas textures).
+   * ============================================================ */
+  const ERP_BELT_TOP = 3.0, ERP_TOK_N = 56;
+  function buildErpConveyor(section, cfg){
+    const g = buildSceneRoot(section);
+    g.add(labelSpriteSafe('📦 ERP · Operations Office — converge → ERP core → dispatch', '#cfe0ff', 24, 0, 64, 0));
+    // ---- OPEN OFFICE: light floor over the dark stage + brighter light + faint carpet-tile grid + desks ----
+    const floor = dioBox(212, 0.5, 150, 0x33405a, 0x161d2a); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xe6eeff, 0x202a3c, 0.75));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.55, 700, 2); pl.position.set(0, 130, 50); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try {
+      const grid = new THREE.GridHelper(210, 42, 0x46557a, 0x2c3850); grid.position.y = 0.42;
+      const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : [];
+      ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.22; m.depthWrite = false; } });
+      g.add(grid);
+    } catch(_){} }
+    const mkDesk = (x, z, ry) => {
+      const d = new THREE.Group(); d.position.set(x, 0, z); d.rotation.y = ry;
+      const top = dioBox(7, 0.4, 3.6, 0x6a5640, 0x1c150c); top.position.y = 2.4; d.add(top);
+      for (const lx of [-3, 3]){ const leg = dioBox(0.4, 2.4, 0.4, 0x4a3b28, 0x140d06); leg.position.set(lx, 1.2, 0); d.add(leg); }
+      const mon = dioBox(2.6, 1.7, 0.25, 0x0e1c28, 0x123a52); mon.position.set(0, 3.9, -1.2); d.add(mon);
+      const seat = dioBox(1.9, 0.3, 1.9, 0x2a3142, 0x0a0f18); seat.position.set(0, 1.7, 2.4); d.add(seat);
+      const back = dioBox(1.9, 1.9, 0.3, 0x2a3142, 0x0a0f18); back.position.set(0, 2.6, 3.2); d.add(back);
+      g.add(d);
+    };
+    [[-86,-58,0.25],[-44,-60,-0.15],[16,-61,0.1],[72,-56,-0.35],[-66,58,2.95],[6,61,3.05],[68,56,3.4]].forEach((p) => mkDesk(p[0], p[1], p[2]));
+    // ---- HOURGLASS TOPOLOGY: 4 intake → 2 → 1 → ERP CORE → 2 → 4 output (converge then diverge) ----
+    const N = {}, S = [];
+    const node = (id, x, z, kind, stage, label) => (N[id] = { id, x, z, kind, stage, label, inSegs: [], outSegs: [], arrivals: 0, emit: 0, led: null });
+    [-30,-10,10,30].forEach((z, i) => node('S'+i, -72, z, 'source', 0, 'Intake'));
+    node('M0', -44, -20, 'merge', 1, 'Consolidate'); node('M1', -44, 20, 'merge', 1, 'Consolidate');
+    node('P', -20, 0, 'merge', 2, 'Validate');
+    node('HUB', 4, 0, 'hub', 3, 'ERP CORE');
+    node('D0', 30, -20, 'split', 4, 'Allocate'); node('D1', 30, 20, 'split', 4, 'Allocate');
+    [-30,-10,10,30].forEach((z, i) => node('B'+i, 60, z, 'sink', 5, 'Dispatch'));
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z };
+      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax);
+      const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
+    seg('S0','M0'); seg('S1','M0'); seg('S2','M1'); seg('S3','M1');
+    seg('M0','P'); seg('M1','P'); seg('P','HUB');
+    seg('HUB','D0'); seg('HUB','D1');
+    seg('D0','B0'); seg('D0','B1'); seg('D1','B2'); seg('D1','B3');
+    // ---- belts (one per segment, oriented A→B) + per-segment scrolling chevrons (flow direction) ----
+    const chev = [];
+    S.forEach((s, si) => {
+      const belt = dioBox(s.len, 0.5, 5.2, 0x202d40, 0x0c1622);
+      belt.position.set((s.ax + s.bx) / 2, ERP_BELT_TOP, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
+      for (let c = 0; c < 3; c++){
+        const cg = new THREE.Group(); cg.rotation.y = -s.ang;
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.95, 1.7, 4),
+          new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD }));
+        cone.rotation.z = -Math.PI / 2; cg.add(cone);
+        const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, ERP_BELT_TOP + 0.45, s.az + (s.bz - s.az) * t0);
+        g.add(cg); chev.push({ grp: cg, seg: si, t: t0 });
+      }
+    });
+    // ---- functional sites: pads + labels; ERP CORE is a glowing central column/ring/orb ----
+    let hubRing = null;
+    for (const id in N){
+      const nd = N[id], hex = cfg.colors[Math.min(nd.stage, cfg.colors.length - 1)], isHub = nd.kind === 'hub';
+      // each functional site's meshes live in their OWN group (nd.grp) → selectable/movable as a unit (Part 1)
+      const ng = new THREE.Group(); ng.name = isHub ? '🏛 ERP CORE' : nd.label;
+      const padR = isHub ? 9 : 4.6;
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(padR, padR + 0.6, 1.0, isHub ? 40 : 24),
+        new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.08), emissive: new THREE.Color(hex), emissiveIntensity: 0.32, roughness: 0.5, metalness: 0.35 }));
+      pad.position.set(nd.x, ERP_BELT_TOP - 0.25, nd.z); ng.add(pad);
+      if (isHub){
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 15, 22),
+          new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.2), emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.55 }));
+        col.position.set(nd.x, ERP_BELT_TOP + 7.5, nd.z); ng.add(col);
+        hubRing = new THREE.Mesh(new THREE.TorusGeometry(6.4, 0.55, 8, 36),
+          new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.45), transparent: true, opacity: 0.7, depthWrite: false, blending: FLOW_ADD }));
+        hubRing.rotation.x = Math.PI / 2; hubRing.position.set(nd.x, ERP_BELT_TOP + 11, nd.z); ng.add(hubRing);
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12),
+          new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
+        orb.position.set(nd.x, ERP_BELT_TOP + 16, nd.z); ng.add(orb);
+        ng.add(labelSpriteSafe('🏛 ERP CORE', '#bfeaff', 16, nd.x, ERP_BELT_TOP + 21, nd.z));
+      } else {
+        const led = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.45) }));
+        led.position.set(nd.x, ERP_BELT_TOP + 3.2, nd.z); ng.add(led); nd.led = led;
+        ng.add(labelSpriteSafe(nd.label, '#dbe8fb', 11, nd.x, ERP_BELT_TOP + 5.6, nd.z));
+      }
+      g.add(ng); nd.grp = ng;
+    }
+    // ---- bounded token pool (recognizable composite models; combined at merges, divided at splits) ----
+    const tokens = [];
+    for (let i = 0; i < ERP_TOK_N; i++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      // yo = a tiny UNIQUE per-slot height offset → no two active tokens are ever coplanar, so two that
+      // momentarily overlap at a node/dock can never z-fight (that was the "flashing overlap" flicker).
+      tokens.push({ grp, active: false, seg: -1, t: 0, stage: -1, value: 0, yo: (i % 6) * 0.03 }); }
+    sceneState[section] = { g, cfg, N, S, chev, tokens, hubRing, beltTop: ERP_BELT_TOP,
+      emitInterval: 1.25, tokenSpeed: 17, tokScale: 1.9, count: new Array(cfg.n).fill(0), val: new Array(cfg.n).fill(0), beltPhase: 0 };
+    updateErpConveyor(section);
+  }
+  // morph a token's recognizable model on stage change (bounded; only on change)
+  function erpSetStage(st, tk, stage){ if (tk.stage !== stage){ setFlowModel(tk.grp, stage, st.cfg); tk.stage = stage; } }
+  // place a token on its current segment at param t (idempotent; stub-safe)
+  function erpPlaceTok(st, tk){ const s = st.S[tk.seg];
+    tk.grp.position.set(s.ax + (s.bx - s.ax) * tk.t, st.beltTop + 0.4 + (tk.yo || 0), s.az + (s.bz - s.az) * tk.t);
+    tk.grp.scale.setScalar(st.tokScale); tk.grp.visible = true; }
+  // emit one token onto segment segIdx at the given stage/value (reuses a free pooled token; bounded)
+  function erpSpawn(st, segIdx, stage, value){
+    let tk = null; for (const t of st.tokens){ if (!t.active){ tk = t; break; } } if (!tk) return;
+    tk.active = true; tk.seg = segIdx; tk.t = 0; tk.value = value; tk.delivering = false; tk.deliverT = 0;
+    erpSetStage(st, tk, stage); erpPlaceTok(st, tk);
+  }
+  // a token reaches its segment's end-node: merge COMBINES (2→1), hub/split DIVIDES (1→N), sink DELIVERS.
+  function erpArrive(st, tk){
+    const node = st.N[st.S[tk.seg].b];
+    if (node.kind === 'sink'){
+      // graceful DELIVERY at the dispatch dock: morph to the FINAL stage (Paid → coins), then settle + fade
+      // over ~1s (handled in animate) instead of popping out of existence. Stays active until the settle ends.
+      tk.t = 1; erpSetStage(st, tk, node.stage); tk.delivering = true; tk.deliverT = 0; erpPlaceTok(st, tk);
+      return;
+    }
+    tk.active = false; tk.grp.visible = false;
+    if (node.kind === 'merge'){ node.arrivals++; if (node.arrivals >= 2){ node.arrivals -= 2; if (node.outSegs.length) erpSpawn(st, node.outSegs[0], node.stage, tk.value * 2); } }
+    else if (node.kind === 'hub' || node.kind === 'split'){ const k = Math.max(1, node.outSegs.length);
+      for (const os of node.outSegs) erpSpawn(st, os, node.stage, Math.max(1, Math.round(tk.value / k))); }
+  }
+  // VIEW-ONLY refresh: place active tokens + recompute per-stage occupancy/value (idempotent; stub-safe).
+  function updateErpConveyor(section){
+    const st = sceneState[section]; if (!st || !st.tokens) return;
+    const n = st.cfg.n; st.count.fill(0); st.val.fill(0);
+    for (const tk of st.tokens){ if (!tk.active) continue; if (!tk.delivering) erpPlaceTok(st, tk);
+      if (tk.stage >= 0 && tk.stage < n){ st.count[tk.stage]++; st.val[tk.stage] += tk.value; } }
+  }
+  // FREE-RUNNING (render loop only; frozen under reduced-motion): intake emits, tokens advance + merge/split,
+  // chevrons scroll along each belt, the ERP-core ring spins.
+  function animateErpConveyor(section, dt){
+    const st = sceneState[section]; if (!st || !st.tokens) return;
+    st.beltPhase += dt;
+    for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
+      nd.emit += dt; if (nd.emit >= st.emitInterval){ nd.emit = 0;
+        const v = Math.round(st.cfg.valBase + flowFrac(Math.sin(st.beltPhase * 3.1 + nd.x * 0.7) * 43758.5) * st.cfg.valSpan);
+        erpSpawn(st, nd.outSegs[0], 0, v); } }
+    for (const tk of st.tokens){ if (!tk.active) continue;
+      if (tk.delivering){ tk.deliverT += dt; const k = Math.min(1, tk.deliverT / 0.85); const s = st.S[tk.seg];
+        // LIFT OFF the dock + shrink OUT (never sink into the pad — that caused coin/pad z-fighting flicker)
+        tk.grp.position.set(s.bx, st.beltTop + 0.4 + (tk.yo || 0) + k * 1.4, s.bz); tk.grp.scale.setScalar(st.tokScale * (1 - k));
+        if (tk.deliverT >= 0.85){ tk.active = false; tk.delivering = false; tk.grp.visible = false; }
+        continue; }
+      const s = st.S[tk.seg]; tk.t += (st.tokenSpeed * dt) / s.len;
+      if (tk.t >= 1) erpArrive(st, tk); else erpPlaceTok(st, tk); }
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (st.tokenSpeed * 0.5 * dt) / s.len; if (c.t > 1) c.t -= 1;
+      c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    if (st.hubRing) st.hubRing.rotation.z += dt * 0.8;
+  }
+  function buildErpScene(){ buildErpConveyor('erp', ERP_FLOW_CFG); }
+  function buildCrmScene(){ buildRingSankey('crm', CRM_FLOW_CFG); }
+  function updateErpScene(){ updateErpConveyor('erp'); }
+  function updateCrmScene(){ updateRingSankey('crm'); }
 
   /* ============================================================
    *  VFX LAB DIORAMA (skeleton) — a NEUTRAL PREVIEW STAGE + a selectable
@@ -8232,6 +8593,15 @@
           if (typeof sfTwinWire !== 'undefined' && sfTwinWire) add('sf:twin', 'Factory twin wireframe', sfTwinWire);
         } else if (section === 'shopping-mall'){
           if (typeof retailGroup !== 'undefined' && retailGroup) add('grp:retail', '▦ Mall (group)', retailGroup, true);
+        } else if (section === 'market' || section === 'finance'){
+          const st = sceneState[section];
+          if (st && st.pillars){ for (const id in st.pillars){ const p = st.pillars[id]; if (p && p.grp) add('pil:' + id, String(id), p.grp); } }
+        } else if (section === 'erp'){
+          const st = sceneState.erp;
+          if (st && st.N){ for (const id in st.N){ const nd = st.N[id]; if (nd && nd.grp) add('erp:' + id, nd.grp.name || nd.label || id, nd.grp); } }
+        } else if (section === 'crm'){
+          const st = sceneState.crm;
+          if (st && st.nodes){ st.nodes.forEach((nd, i) => { if (nd && nd.obj) add('crm:' + i, (st.cfg && st.cfg.stageNames && st.cfg.stageNames[i]) || ('Stage ' + (i + 1)), nd.obj); }); }
         }
       } catch(_){}
       return out;
@@ -8260,7 +8630,9 @@
     // set the active target (null = lab pedestal) and refresh the affordances.
     function setTarget(entry){
       sceneTarget = (entry && (entry.obj || entry.pos)) ? entry : null;
+      selection = (sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : [];   // a normal pick = single selection
       targetReadout(); updateTargetHelper();
+      try { applyGizmo(); syncPinBtn(); } catch(_){}     // keep the move gizmo bound to the new selection
     }
     // (re)build the dropdown for a section; option -1 is always the lab pedestal.
     function populateTargetSelect(section){
@@ -8287,6 +8659,206 @@
       const b = $('vfx-target-pick');
       if (b){ b.setAttribute('aria-pressed', pickArmed ? 'true' : 'false'); if (b.classList) b.classList.toggle('on', pickArmed); }
       try { if (typeof gl !== 'undefined' && gl && gl.style) gl.style.cursor = pickArmed ? 'crosshair' : ''; } catch(_){}
+    }
+
+    // ---------- MOVE GIZMO (THREE.TransformControls) — drag X/Y/Z handles to move/rotate/scale the
+    //            VFX-Lab-selected object. Lazily created on first enable (so the headless stub never
+    //            constructs it); guarded throughout. Disables OrbitControls while a handle is dragged. ----
+    let gizmo = null, gizmoOn = false, gizmoMode = 'translate';
+    let freePickArmed = false;          // "Pick any" mode: a scene click selects WHATEVER mesh is under the cursor
+    const pinned = new Map();           // obj -> { pos, quat, scale } : pinned objects whose transform is re-asserted
+    let pickCounter = 0;                //   each frame AFTER the sims, so a manual move STICKS on animated objects
+    let selection = [];                 // MULTI-SELECT: the set of selected objects (Shift+click adds to it)
+    let multiProxy = null, multiStart = null;   // a pivot Group the gizmo drives when >1 selected; its drag delta
+                                                 //   is applied rigidly to every selected object (translate/rotate/scale)
+    function ensureGizmo(){
+      if (gizmo || typeof THREE === 'undefined' || typeof THREE.TransformControls !== 'function') return gizmo;
+      try {
+        const dom = (typeof renderer !== 'undefined' && renderer && renderer.domElement) ? renderer.domElement : gl;
+        gizmo = new THREE.TransformControls(cam, dom);
+        if (gizmo.setSize) gizmo.setSize(0.85);
+        if (gizmo.setMode) gizmo.setMode(gizmoMode);
+        // while dragging a handle, freeze the camera so orbit doesn't fight the drag
+        if (gizmo.addEventListener){
+          gizmo.addEventListener('dragging-changed', function (e){ try {
+            if (useOrbit && controls) controls.enabled = !e.value;
+            if (gizmo.object === multiProxy){ if (e.value) captureMultiStart(); else recenterMultiProxy(); }
+          } catch(_){} });
+          // AUTO-PIN on drag: snapshot the dragged object(s)' transform so the sim can't snap them back next frame.
+          // For a multi-selection the gizmo drives the pivot proxy → fan the delta out to every selected object.
+          gizmo.addEventListener('objectChange', function (){ try {
+            if (gizmo.object === multiProxy){ applyMultiDelta(); }
+            else { const o = gizmo.object; if (o){ snapshotPin(o); recordLayout(o); } }
+            syncPinBtn();
+          } catch(_){} });
+        }
+        if (typeof scene !== 'undefined' && scene && scene.add) scene.add(gizmo);
+      } catch(_){ gizmo = null; }
+      return gizmo;
+    }
+    // ---- PIN: re-assert a moved object's transform every frame (after the sims) so the move sticks (Part 3) ----
+    function snapshotPin(obj){ if (!obj) return; try { pinned.set(obj, { pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone() }); } catch(_){} }
+    function gizmoObj(){ return (gizmo && gizmo.object) || (sceneTarget && sceneTarget.obj) || null; }
+    function pinTargets(){ return (selection.length > 1) ? selection.slice() : (gizmoObj() ? [gizmoObj()] : []); }
+    function setPinned(on){
+      const objs = pinTargets(); if (!objs.length) return;
+      objs.forEach((o) => { if (on){ snapshotPin(o); recordLayout(o); } else pinned.delete(o); });
+      syncPinBtn();
+    }
+    function syncPinBtn(){
+      const b = $('vfx-pin-toggle'); if (!b) return;
+      const objs = pinTargets();
+      const on = objs.length > 0 && objs.every((o) => pinned.has(o));
+      if (b.setAttribute) b.setAttribute('aria-pressed', on ? 'true' : 'false'); if (b.classList) b.classList.toggle('on', on);
+    }
+    // called every frame just before the GL draw (renderFrameGL) — overrides sim-driven transforms for pins.
+    function enforcePin(){ if (!pinned.size) return; pinned.forEach((t, o) => { try { o.position.copy(t.pos); o.quaternion.copy(t.quat); o.scale.copy(t.scale); } catch(_){} }); }
+    // ---- FREE PICK: raycast the WHOLE active scene, select the placed object under the cursor (Part 2) ----
+    function setFreePick(on){
+      freePickArmed = !!on;
+      const b = $('vfx-pickany'); if (b){ b.setAttribute('aria-pressed', freePickArmed ? 'true' : 'false'); if (b.classList) b.classList.toggle('on', freePickArmed); }
+      if (freePickArmed) setPickArmed(false);     // the two pick modes are mutually exclusive
+      try { if (typeof gl !== 'undefined' && gl && gl.style) gl.style.cursor = freePickArmed ? 'crosshair' : ''; } catch(_){}
+    }
+    function freePickFromRay(ray, additive){
+      try {
+        if (typeof scene === 'undefined' || !scene) return false;
+        const root = (typeof sceneGroups !== 'undefined' && sceneGroups && sceneGroups[activeSection]) ? sceneGroups[activeSection] : scene;
+        const hits = ray.intersectObjects(scene.children, true) || [];
+        for (const h of hits){
+          let o = h.object; if (!o) continue;
+          // skip the gizmo + its helpers + the selection box-helper
+          if (gizmo && (o === gizmo || (o.parent && (o.parent === gizmo || (o.parent.parent && o.parent.parent === gizmo))))) continue;
+          if (targetHelper && o === targetHelper) continue;
+          if (!o.geometry && !(o.isMesh)) { /* allow groups too, but prefer a mesh hit */ }
+          // walk up to the placed object: the highest ancestor whose parent is the section root (or the scene)
+          let node = o, guard = 0;
+          while (node.parent && node.parent !== root && node.parent !== scene && guard++ < 40) node = node.parent;
+          if (!node || node === gizmo) continue;
+          const label = node.name || (h.object.name) || ((typeof activeSection !== 'undefined' ? activeSection : 'scene') + ' object');
+          pickInto(node, label, additive);
+          if (!additive) setFreePick(false);     // shift keeps picking more; plain click selects one + disarms
+          msg((additive ? 'Added: ' : 'Selected: ') + label + (additive ? '  (' + selection.length + ' selected)' : ''));
+          return true;
+        }
+      } catch(_){}
+      return false;
+    }
+    // ---- SCENE LAYOUT CONFIG (Part: config management) — persist gizmo adjustments as per-section object
+    //      transforms, keyed by a STABLE scene-graph path (child indices from the section root). Saved to
+    //      localStorage (auto-restored on reload) + Export/Import JSON (shareable / committable for deploy). ----
+    const LAYOUT_KEY = 'magnate.layout.v1';
+    let layout = {};                    // { section: { pathKey: { p:[3], q:[4], s:[3] } } }
+    const origMap = new Map();          // obj -> pristine transform (captured at first gizmo attach this session)
+    function sectionRootOf(section){
+      if (typeof sceneGroups !== 'undefined' && sceneGroups && sceneGroups[section]) return sceneGroups[section];
+      if (typeof economyGroup !== 'undefined' && economyGroup) return economyGroup;   // world sections: stable firm container
+      return (typeof scene !== 'undefined') ? scene : null;
+    }
+    function objPathKey(obj){
+      const root = sectionRootOf(activeSection); if (!root || !obj) return null;
+      const idx = []; let o = obj, guard = 0;
+      while (o && o !== root && o.parent && guard++ < 80){ const i = o.parent.children.indexOf(o); if (i < 0) return null; idx.unshift(i); o = o.parent; }
+      return (o === root) ? idx.join('.') : null;
+    }
+    function objAtPathKey(section, key){
+      let o = sectionRootOf(section); if (!o) return null; if (key === '') return o;
+      for (const p of key.split('.')){ const i = parseInt(p, 10); if (!o || !o.children || !o.children[i]) return null; o = o.children[i]; }
+      return o;
+    }
+    function captureOrig(obj){ if (obj && !origMap.has(obj)){ try { origMap.set(obj, { p: obj.position.toArray(), q: obj.quaternion.toArray(), s: obj.scale.toArray() }); } catch(_){} } }
+    function recordLayout(obj){ const key = objPathKey(obj); if (key === null) return;
+      (layout[activeSection] || (layout[activeSection] = {}))[key] = { p: obj.position.toArray(), q: obj.quaternion.toArray(), s: obj.scale.toArray() }; }
+    function countLayout(){ let n = 0; for (const s in layout) n += Object.keys(layout[s]).length; return n; }
+    function loadLayoutFromStore(){ try { const s = localStorage.getItem(LAYOUT_KEY); if (s) layout = JSON.parse(s) || {}; } catch(_){ layout = {}; } }
+    function saveLayout(){ try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); msg('Layout saved — ' + countLayout() + ' object' + (countLayout() === 1 ? '' : 's') + ' (restores on reload).'); } catch(_){ msg('Save failed (localStorage blocked).', true); } }
+    function applyLayout(section){ const m = layout[section]; if (!m) return 0; let n = 0;
+      for (const key in m){ const e = m[key], obj = objAtPathKey(section, key); if (!obj) continue;
+        try { if (e.p) obj.position.fromArray(e.p); if (e.q) obj.quaternion.fromArray(e.q); if (e.s) obj.scale.fromArray(e.s); captureOrig(obj); snapshotPin(obj); n++; } catch(_){} }
+      return n; }
+    function exportLayout(){ const json = JSON.stringify(layout, null, 2);
+      try { if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(json); } catch(_){}
+      try { console.log('[magnate scene layout]\n' + json); } catch(_){}
+      msg('Layout JSON copied to clipboard + logged to console (' + countLayout() + ' objects).'); return json; }
+    function importLayout(){ let txt = null; try { txt = window.prompt('Paste scene-layout JSON:'); } catch(_){}
+      if (!txt) return; try { layout = JSON.parse(txt) || {}; saveLayout(); const n = applyLayout(activeSection) || 0; msg('Layout imported (' + countLayout() + ' objects; ' + n + ' applied to this section).'); } catch(_){ msg('Import failed — invalid JSON.', true); } }
+    function resetLayout(){
+      origMap.forEach((t, o) => { try { o.position.fromArray(t.p); o.quaternion.fromArray(t.q); o.scale.fromArray(t.s); } catch(_){} });
+      pinned.clear(); layout = {}; try { localStorage.removeItem(LAYOUT_KEY); } catch(_){}
+      syncPinBtn(); msg('Layout reset + cleared. Reload to restore positions that came from a saved layout.');
+    }
+
+    // ---- MULTI-SELECT helpers: a pivot proxy at the selection centroid; its drag delta is applied rigidly
+    //      (translate/rotate/scale) to every selected object via matrix math (Part: multi-select) ----
+    function recenterMultiProxy(){
+      if (!multiProxy || selection.length < 2) return;
+      const c = new THREE.Vector3(), t = new THREE.Vector3();
+      for (const o of selection){ o.getWorldPosition(t); c.add(t); }
+      c.multiplyScalar(1 / selection.length);
+      multiProxy.position.copy(c); multiProxy.quaternion.set(0, 0, 0, 1); multiProxy.scale.set(1, 1, 1); multiProxy.updateMatrixWorld(true);
+    }
+    function captureMultiStart(){
+      if (!multiProxy) return; multiProxy.updateMatrixWorld(true);
+      multiStart = { proxyInv: multiProxy.matrixWorld.clone().invert(),
+        items: selection.map((o) => { o.updateMatrixWorld(true); return { obj: o, world: o.matrixWorld.clone(), parent: o.parent }; }) };
+    }
+    function applyMultiDelta(){
+      if (!multiStart || !multiProxy) return; multiProxy.updateMatrixWorld(true);
+      const delta = new THREE.Matrix4().multiplyMatrices(multiProxy.matrixWorld, multiStart.proxyInv);
+      const pInv = new THREE.Matrix4(), nw = new THREE.Matrix4(), local = new THREE.Matrix4();
+      for (const it of multiStart.items){
+        nw.multiplyMatrices(delta, it.world);
+        if (it.parent){ it.parent.updateMatrixWorld(true); pInv.copy(it.parent.matrixWorld).invert(); local.multiplyMatrices(pInv, nw); }
+        else local.copy(nw);
+        local.decompose(it.obj.position, it.obj.quaternion, it.obj.scale);
+        recordLayout(it.obj); snapshotPin(it.obj);
+      }
+    }
+    // route a pick into the selection: Shift = add (multi), plain = replace (single)
+    function pickInto(obj, label, additive){
+      if (!obj) return;
+      if (additive){
+        if (!selection.length && sceneTarget && sceneTarget.obj) selection.push(sceneTarget.obj);
+        const ix = selection.indexOf(obj);
+        if (ix < 0) selection.push(obj); else if (selection.length > 1) selection.splice(ix, 1);   // toggle off (keep ≥1)
+      } else { selection = [obj]; }
+      if (selection.length <= 1){ setTarget({ id: 'pick:' + (++pickCounter), label: label || 'object', obj: selection[0] }); }
+      else { sceneTarget = { id: 'multi', label: selection.length + ' objects', obj: null, group: true }; targetReadout(); applyGizmo(); syncPinBtn(); }
+    }
+
+    // attach the gizmo to the current selection (single object, or a pivot proxy for a multi-selection)
+    function applyGizmo(){
+      if (!gizmoOn){ if (gizmo){ try { gizmo.detach(); } catch(_){} } return; }
+      const gz = ensureGizmo(); if (!gz) return;
+      if (selection.length > 1){
+        if (!multiProxy){ multiProxy = new THREE.Group(); multiProxy.name = '__multiPivot'; if (typeof scene !== 'undefined' && scene && scene.add) scene.add(multiProxy); }
+        recenterMultiProxy(); selection.forEach(captureOrig);
+        const now = $('vfx-target-now'); if (now) now.innerHTML = 'Moving: <b>' + selection.length + ' objects</b>';
+        const badge = $('vfx-target-badge'); if (badge) badge.textContent = 'multi · ' + selection.length;
+        try { gz.attach(multiProxy); } catch(_){}
+        return;
+      }
+      let obj = (selection[0]) || (sceneTarget && sceneTarget.obj);
+      // in the VFX Lab the default target is the pedestal (no .obj) — fall back to the lab SAMPLE object so the
+      // gizmo always has something to move there (it only ever spins, never re-positions, so a move sticks).
+      if (!obj && typeof activeSection !== 'undefined' && activeSection === 'vfx-lab'){
+        try { const ls = (typeof sceneState !== 'undefined') && sceneState['vfx-lab']; if (ls && ls.sample) obj = ls.sample; } catch(_){}
+      }
+      if (obj) captureOrig(obj);     // remember the pristine pose so Reset can restore it
+      try { if (obj) gz.attach(obj); else gz.detach(); } catch(_){}
+    }
+    function setGizmoOn(on){
+      gizmoOn = !!on;
+      const b = $('vfx-move-toggle'); if (b){ b.setAttribute('aria-pressed', gizmoOn ? 'true' : 'false'); if (b.classList) b.classList.toggle('on', gizmoOn); }
+      const modes = $('vfx-move-modes'); if (modes && modes.style) modes.style.display = gizmoOn ? '' : 'none';
+      applyGizmo(); syncPinBtn();
+    }
+    function setGizmoMode(m){
+      gizmoMode = m; if (gizmo && gizmo.setMode){ try { gizmo.setMode(m); } catch(_){} }
+      const host = $('vfx-move-modes');
+      if (host && host.querySelectorAll){ host.querySelectorAll('[data-gmode]').forEach((btn) => {
+        const on = btn.getAttribute('data-gmode') === m;
+        if (btn.classList) btn.classList.toggle('on', on); if (btn.setAttribute) btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
     }
 
     // refresh the cached effect registry (sorted; defensive deep-copy of params/controls is unnecessary —
@@ -8877,6 +9449,17 @@
         // in-scene target controls
         const tsel = $('vfx-target-sel'); if (tsel) tsel.onchange = onTargetSelChange;
         const tpick = $('vfx-target-pick'); if (tpick) tpick.onclick = () => setPickArmed(!pickArmed);
+        // move-gizmo controls (X/Y/Z drag handles on the selected object)
+        const tmove = $('vfx-move-toggle'); if (tmove) tmove.onclick = () => setGizmoOn(!gizmoOn);
+        const tmodes = $('vfx-move-modes'); if (tmodes && tmodes.querySelectorAll) tmodes.querySelectorAll('[data-gmode]').forEach((btn) => { btn.onclick = () => setGizmoMode(btn.getAttribute('data-gmode')); });
+        const tany = $('vfx-pickany'); if (tany) tany.onclick = () => setFreePick(!freePickArmed);
+        const tpin = $('vfx-pin-toggle'); if (tpin) tpin.onclick = () => { const o = pinTargets(); setPinned(!(o.length && o.every((x) => pinned.has(x)))); };
+        // scene-layout config (save / export / import / reset) — persist gizmo adjustments
+        try { loadLayoutFromStore(); } catch(_){}
+        const lsave = $('vfx-layout-save'); if (lsave) lsave.onclick = saveLayout;
+        const lexp = $('vfx-layout-export'); if (lexp) lexp.onclick = exportLayout;
+        const limp = $('vfx-layout-import'); if (limp) limp.onclick = importLayout;
+        const lrst = $('vfx-layout-reset'); if (lrst) lrst.onclick = resetLayout;
         // drive-by-formula controls
         const db = $('vfx-drive-bind'); if (db) db.onclick = bindDrive;
         const dstop = $('vfx-drive-stop'); if (dstop) dstop.onclick = stopDrive;
@@ -8929,11 +9512,15 @@
         if (section === 'vfx-lab'){ setTarget(null); }
         else { setTarget(targetList.find(t => !t.group) || targetList[0] || null); }
         syncTargetSelect();
+        try { applyLayout(section); } catch(_){}     // restore any saved gizmo adjustments for this section
       },
-      // is "Pick in scene" mode armed? (the canvas click handler consults this).
-      pickArmed(){ return pickArmed; },
+      // is EITHER pick mode armed? (the canvas click handler consults this before raycasting).
+      pickArmed(){ return pickArmed || freePickArmed; },
+      // re-assert pinned objects' transforms (called every frame from renderFrameGL, after the sims).
+      enforcePin(){ enforcePin(); },
       // raycast the active section's candidate objects; on hit, set it as the target. Returns true if consumed.
-      pickFromRay(ray){
+      pickFromRay(ray, additive){
+        if (freePickArmed) return freePickFromRay(ray, additive);     // "Pick any" → whole-scene raycast (Part 2)
         try {
           const cands = sectionTargets(typeof activeSection !== 'undefined' ? activeSection : 'vfx-lab').filter(t => !t.group && t.obj);
           if (!cands.length) return false;
@@ -8942,7 +9529,12 @@
             let o = h.object;
             while (o){
               const found = cands.find(t => t.obj === o);
-              if (found){ setTarget(found); syncTargetSelect(); setPickArmed(false); msg('Target: ' + found.label); return true; }
+              if (found){
+                pickInto(found.obj, found.label, additive);
+                if (!additive){ syncTargetSelect(); setPickArmed(false); }   // shift keeps picking; plain click selects one + disarms
+                msg((additive ? 'Added: ' : 'Target: ') + found.label + (additive ? '  (' + selection.length + ' selected)' : ''));
+                return true;
+              }
               o = o.parent;
             }
           }
@@ -9836,6 +10428,56 @@
   }
 
   /* ============================================================
+   *  SALES-PIPELINE DYNAMIC (CRM) — buildSalesPipelineDynamic()
+   *  CRM modelled in the digital-twin idiom: a holographic FUNNEL. The 5 pipeline stages are nodes along a
+   *  line; DEALS (flow-graph units, crmColor-tinted) stream Lead→Qualified→Proposal→Negotiation→Won; at each
+   *  stage a POLE carries the RECOGNIZABLE CRM object (reusing CRM_FLOW_MODELS — lead orb · contact card ·
+   *  proposal · negotiation · trophy) inside an additive hologram shell, and a funnel RING that NARROWS toward
+   *  Won (conversion read). Decorative + VIEW-ONLY (no firmId, never picked). Headless-safe (guarded helpers).
+   * ============================================================ */
+  function buildSalesPipelineDynamic(){
+    const grp = new THREE.Group(); grp.position.y = 14;
+    grp.add(labelSpriteSafe('🤝 SALES PIPELINE · lead → won', '#8af5ff', 24, 0, 54, 0));
+    const add = THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2;
+    const stages = CRM_FLOW_CFG.stageNames, n = stages.length, SPAN = 104;
+    const nodes = [];
+    for (let i = 0; i < n; i++){
+      const x = -SPAN / 2 + (i / (n - 1)) * SPAN;
+      nodes.push({ id: stages[i], x, y: 8, z: 0, kind: i === 0 ? 'source' : 'sub' });
+    }
+    const edges = []; for (let i = 0; i < n - 1; i++) edges.push({ a: i, b: i + 1 });
+    // shared flow-graph: DEALS flow Lead→…→Won, coloured by per-stage load via the CRM deal-heat ramp
+    const fg = buildFlowGraph(nodes, edges, { colormap: crmColor, density: 5, speed: 0.22,
+      unitSize: 3.4, nodeHue: 0x6fe9ff, sag: 4, lineColor: 0x2f88b8 });
+    grp.add(fg.grp);
+    // at each stage: glowing pedestal + pole + the recognizable CRM object (enlarged + additive glow shell so it
+    // reads through the bloom) + a funnel GATE ring that clearly NARROWS toward Won (a literal conversion read).
+    for (let i = 0; i < n; i++){
+      const x = nodes[i].x, hex = FLOW_COL[i];
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 6.2, 1.0, 28),
+        new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.45, depthWrite: false, blending: add }));
+      disc.position.set(x, 0.6, 0); grp.add(disc);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 9, 14),
+        new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.6, depthWrite: false, blending: add }));
+      pole.position.set(x, 5, 0); grp.add(pole);
+      const obj = new THREE.Group(); setFlowModel(obj, i, CRM_FLOW_CFG); obj.scale.setScalar(3.6);
+      obj.position.set(x, 12, 0); grp.add(obj);
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(4.6, 16, 12),
+        new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.16, depthWrite: false, blending: add }));
+      shell.position.set(x, 12.5, 0); grp.add(shell);
+      // funnel GATE ring — radius narrows 9.5→~1.9 across the 5 stages (obvious funnel); bright + thick
+      if (typeof THREE.TorusGeometry === 'function'){
+        const rr = Math.max(2.0, 9.5 * (1 - i / n));
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.55, 8, 28),
+          new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.8, depthWrite: false, blending: add }));
+        ring.rotation.x = Math.PI / 2; ring.position.set(x, 18, 0); grp.add(ring);
+      }
+      grp.add(labelSpriteSafe(stages[i], '#dff6ff', 14, x, 22, 0));
+    }
+    return { grp, fg, t: 0 };
+  }
+
+  /* ============================================================
    *  DATA-CENTER HEAT-FLOW DYNAMIC (PHASE 3) — buildDataCenterDynamic()
    *  A server room rendered holographically: two ROWS of SERVER RACKS in a hot/cold-aisle layout (solid
    *  emissive boxes thermally TINTED by twinHeatColor(temp) — hotspots read red — each with a wireframe
@@ -10099,6 +10741,7 @@
       datacenter:   { group: null, built: false },
       datacomm:     { group: null, built: false },   // PHASE 2: data-communication topology
       logistics:    { group: null, built: false },   // PHASE 2: component-logistics network
+      salespipeline:{ group: null, built: false },   // CRM: sales-pipeline funnel (deals lead→won)
     };
     sceneState['digital-twin'] = {
       root, dynamicsHost, dynamics, solid, twin, scan, scanRing, halo,
@@ -10117,6 +10760,7 @@
     if (name === 'datacomm')   return buildDataCommDynamic();     // PHASE 2: network topology + data packets
     if (name === 'logistics')  return buildLogisticsDynamic();    // PHASE 2: logistics network + shipments
     if (name === 'datacenter') return buildDataCenterDynamic();   // PHASE 3: server-room heat-flow (hot/cold aisle)
+    if (name === 'salespipeline') return buildSalesPipelineDynamic();   // CRM: sales-pipeline funnel
     // (unknown dynamic) — minimal flow-graph fallback so a stray name never throws.
     const ringN = 7;
     const nodes = [{ id: 'HUB', x: 0, y: 12, z: 0, kind: 'source' }];
@@ -10151,12 +10795,12 @@
       if (c.setAttribute) c.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     // HUD bodies — only the active dynamic's body shows
-    const names = ['multiphysics', 'power', 'datacenter', 'datacomm', 'logistics'];
+    const names = ['multiphysics', 'power', 'datacenter', 'datacomm', 'logistics', 'salespipeline'];
     for (const n of names){ const b = $('twin-dyn-' + n); if (b && b.classList) b.classList.toggle('on', n === twinDynamic); }
     // title text
     const titles = { multiphysics: 'Digital Twin · Turbine Telemetry', power: 'Digital Twin · Power Grid',
       datacenter: 'Digital Twin · Data-Center Heat', datacomm: 'Digital Twin · Data Communication',
-      logistics: 'Digital Twin · Component Logistics' };
+      logistics: 'Digital Twin · Component Logistics', salespipeline: 'Digital Twin · Sales Pipeline (CRM)' };
     const tt = $('twin-title'); if (tt) tt.textContent = titles[twinDynamic] || titles.multiphysics;
   }
   function wireTwinChips(){
@@ -10226,6 +10870,7 @@
         if (twinDynamic === 'power'){ const m = powerGridMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
         else if (twinDynamic === 'datacomm'){ const m = dataCommMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
         else if (twinDynamic === 'logistics'){ const m = logisticsMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
+        else if (twinDynamic === 'salespipeline'){ const m = salesPipelineMetrics(); loadFn = (e) => m.loads[e % m.loads.length]; }
         else { const dt = dyn.t || 0; loadFn = (e) => 0.5 + 0.45 * Math.sin(dt * 0.7 + e * 1.3); }
         dyn.fg.animate(0.016, moving, loadFn);
         if (dyn.grp && moving) dyn.grp.rotation.y = (dyn.t || 0) * 0.05;
@@ -10301,7 +10946,7 @@
     // rotate-to flourish runs as controls.autoRotate (frame loop disables it under reduced-motion).
     if (useOrbit && controls){
       orbitTo(stageCam.pivot.x, stageCam.pivot.y, stageCam.pivot.z, stageCam.dist, ORBIT_DEFAULT.polar, sectionToYaw);
-      controls.autoRotate = !reduceMotion && !replaying();
+      controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
     }
   }
 
