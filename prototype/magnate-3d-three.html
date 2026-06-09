@@ -1550,6 +1550,8 @@
   const sfAGVs      = [];   // AGVs rigidly tracking the painted floor GUIDE-LINE { mesh, path, L, dir, speed, u, baseY }
   const sfAMRs      = [];   // free-roaming AMRs hopping a flexible waypoint set { mesh, wps, i, t, segLen, speed, dwell, dwellT, baseY }
   const sfArms      = [];   // robot-arm groups to oscillate { grp, seg1, seg2, baseZ1, baseZ2, phase } (guarded if swapped)
+  const sfMachines  = [];   // OEE/availability: { indMat, arm, reg, period, downFrac, offset, down } — cycles run/DOWN
+  let   sfAvailability = 1; //   fraction of machines currently RUNNING (drives the OEE gauge + the red breakdown LEDs)
   const sfWorkers   = [];   // workers walking the aisles { grp, path, L, dir, speed, u, phase, stride, baseY, legA, legB, armA, armB }
   const sfForklifts = [];   // forklifts driving a deterministic aisle path  { mesh, path, L, dir, speed, u, baseY }
   // ===== SMART-FACTORY DIGITAL-TWIN OVERLAYS (PHASE 1) — three pillars: STRUCTURE (a glowing-cyan wireframe
@@ -2692,9 +2694,19 @@
       part(A.box, A.plinthMat, mw+0.8, 0.6, md+0.8, 0, 0.3, 0);
       const housing = part(A.box, A.machineMat[reg], mw, mh, md, 0, mh/2+0.3, 0); housing.castShadow = true;
       part(A.box, A.accentMat[reg], mw*0.6, mh*0.3, 0.12, 0, mh*0.62+0.3, -md*0.5 - 0.07);
-      part(A.box, A.indicatorMat, mw*0.3, mh*0.14, 0.1, 0, 0.3 + mh*0.34, -md*0.5 - 0.08);
+      const indMat = (A.indicatorMat && A.indicatorMat.clone) ? A.indicatorMat.clone() : A.indicatorMat;   // OWN material so we can recolour by availability state
+      part(A.box, indMat, mw*0.3, mh*0.14, 0.1, 0, 0.3 + mh*0.34, -md*0.5 - 0.08);
       const vH = mh*0.45 + 0.6;
       part(A.cyl, A.ventMat, 0.5, vH, 0.5, mw*0.28, 0.3 + mh + vH*0.5, -md*0.28);
+      // ANDON availability beacon on TOP (clearly visible from the top-down hall camera): green = running,
+      // red = DOWN. Its own materials so we can recolour per machine in animateSmartFactory.
+      const beaconMat = new THREE.MeshBasicMaterial({ color: 0x4be08a });
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.75, 12, 10), beaconMat);
+      beacon.position.set(0, 0.3 + mh + 2.2, 0); mg.add(beacon);
+      const haloMat = new THREE.MeshBasicMaterial({ color: 0x4be08a, transparent: true, opacity: 0.26, depthWrite: false,
+        blending: (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2) });
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 10), haloMat);
+      halo.position.copy(beacon.position); mg.add(halo);
       TG.add(mg);
       // TWIN capture: the per-station group (for a wireframe twin of the housing) + a deterministic THERMAL
       // baseline. Furnace/extraction registers (reg2/reg3) read HOTTEST; the activity term (set per frame from
@@ -2717,6 +2729,11 @@
       sfArms.push({ grp: ag, seg1: a.seg1, seg2: a.seg2, baseZ1: a.seg1.rotation.z, baseZ2: a.seg2.rotation.z,
                     phase: hrand()*6.283, rpm: Math.round(1200 + hrand()*2400), vib: 0.015 + hrand()*0.02 });
       swapFactoryVisual(ag, 'robotarm', mh + 1.0);            // procedural arm until robotarm.glb is dropped in
+      // OEE/AVAILABILITY: this machine cycles run→DOWN on a deterministic seeded clock (period + downtime
+      // fraction). A DOWN machine flashes its indicator RED + freezes its arm (animateSmartFactory). Seeded =
+      // reproducible (no wall-clock / RNG), so determinism holds.
+      sfMachines.push({ indMat: indMat, beaconMat: beaconMat, haloMat: haloMat, arm: sfArms[sfArms.length - 1], reg,
+        period: 11 + hrand()*22, downFrac: 0.06 + hrand()*0.13, offset: hrand(), down: false });
     };
     // stations along the OUTER long edges of each loop
     for (let i = 0; i < 4; i++){ const t = (i+0.5)/4; station(CX-46 + t*44, CZ-40, 1); }   // north of loop A
@@ -3566,10 +3583,30 @@
     for (let i = 0; i < sfAGVs.length; i++){ const r = sfAGVs[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
     // FORKLIFTS: driven, follow the fixed aisle circuit (same arc-length follower → faces travel, even-spaced)
     for (let i = 0; i < sfForklifts.length; i++){ const r = sfForklifts[i]; r.u += r.speed*dt; placeOnPath(r, r.mesh); }
+    // ===== MACHINE AVAILABILITY (OEE): each machine cycles run→DOWN on a deterministic seeded clock. A DOWN
+    // machine flashes its indicator RED (run = green) and freezes its robot arm. Availability = % running. =====
+    { let running = 0; const total = sfMachines.length || 1;
+      for (const m of sfMachines){
+        const ph = ((T / m.period) + m.offset) % 1;
+        const down = ph < m.downFrac;
+        if (down !== m.down){
+          m.down = down; const hex = down ? 0xff4a4a : 0x4be08a;
+          if (m.indMat){ if (m.indMat.color && m.indMat.color.setHex) m.indMat.color.setHex(hex);
+            if (m.indMat.emissive && m.indMat.emissive.setHex){ m.indMat.emissive.setHex(hex); m.indMat.emissiveIntensity = down ? 0.75 : 0.4; } }
+          if (m.beaconMat && m.beaconMat.color && m.beaconMat.color.setHex) m.beaconMat.color.setHex(hex);
+          if (m.haloMat){ if (m.haloMat.color && m.haloMat.color.setHex) m.haloMat.color.setHex(hex); m.haloMat.opacity = down ? 0.5 : 0.26; }
+        }
+        if (m.arm) m.arm.down = down;
+        if (down && m.haloMat){ m.haloMat.opacity = 0.35 + 0.4 * Math.abs(Math.sin(T * 4)); }   // blinking red alarm
+        if (!down) running++;
+      }
+      sfAvailability = running / total;
+    }
     // ROBOT ARMS: gentle bounded oscillation about each segment's captured base angle. If a 'robotarm'.glb
     // swapped the procedural arm (seg1/seg2 hidden), oscillate the GROUP's swapped model root instead so the
     // arm still reads as alive — and never touch the hidden segs (guard so nothing throws after a swap).
     for (let i = 0; i < sfArms.length; i++){ const a = sfArms[i];
+      if (a.down) continue;   // machine is DOWN → freeze its arm (visible stoppage = lost availability)
       // VIBRATION (twin-mode only): a tiny high-frequency jitter on top of the base sweep ∝ the arm's rpm,
       // so the twin reads the machine's mechanical character. Zero off-twin (the procedural arm is unchanged).
       const vib = sfTwinOn ? Math.sin(T * (8 + (a.rpm||1800)/300) + a.phase) * (a.vib||0) : 0;
@@ -5869,7 +5906,7 @@
     'digital-twin': { title: 'Digital Twin · telemetry', cols: [{ label: 'Asset' }, { label: 'Load', num: true }, { label: 'Temp', num: true }],
       rows: (c) => vizTwinTelemetry(c) },
     'vfx-lab': { title: 'VFX Lab · authoring stage', cols: [{ label: 'Effect stage' }], rows: () => [] },
-    erp: { title: 'ERP · Smart Conveyor (O2C)', cols: [{ label: 'Station' }, { label: 'On belt', num: true }, { label: 'Value', num: true }],
+    erp: { title: 'ERP · O2C (Theory of Constraints)', cols: [{ label: 'Stage' }, { label: 'WIP', num: true }, { label: 'Value', num: true }],
       rows: () => vizFlowRows('erp') },
     crm: { title: 'CRM · Sales pipeline', cols: [{ label: 'Stage' }, { label: 'Deals', num: true }, { label: 'Value', num: true }],
       rows: () => vizFlowRows('crm') }
@@ -6969,7 +7006,12 @@
       avgVib = sv / sfArms.length; rpm = Math.round(sr / sfArms.length); }
     const fleet = sfAGVs.length + sfAMRs.length;               // PHASE 1 logistics fleet size
     const util  = Math.max(0.05, Math.min(1, 0.35 + 0.45 * flowI + 0.04 * fleet * 0.05));
-    const oee   = Math.max(0.05, Math.min(1, 0.45 * load + 0.35 * avgTemp + 0.20 * flowI));
+    // TRUE OEE = Availability × Performance × Quality. Availability is the LIVE fraction of machines running
+    // (the red breakdown LEDs you see on the floor); Performance tracks throughput; Quality ~ fixed.
+    const availability = (typeof sfAvailability === 'number') ? sfAvailability : 1;
+    const perf = Math.max(0.4, Math.min(1, 0.72 + 0.28 * flowI));
+    const quality = 0.97;
+    const oee = Math.max(0.02, availability * perf * quality);
 
     // ---- GAUGES (reuse twinGauge): OEE + AGV/AMR utilisation ----
     try {
@@ -8215,7 +8257,11 @@
    *  the merge/split flow; per-stage occupancy feeds the right data board (vizFlowRows). VIEW-ONLY, pooled
    *  (INV-4), sub-white emissive (INV-3), headless-safe (THREE primitives + setFlowModel; no canvas textures).
    * ============================================================ */
-  const ERP_BELT_TOP = 3.0, ERP_TOK_N = 56;
+  const ERP_BELT_TOP = 3.0, ERP_TOK_N = 64;
+  // THEORY OF CONSTRAINTS: the ERP CORE is the bottleneck — it serves one unit every ERP_CORE_SERVICE seconds
+  // (slower than the converging arrival rate), so WIP piles into a visible buffer (cap ERP_CORE_CAP) before it
+  // while the downstream dispatch stations STARVE. Throughput is capped by the constraint (drum-buffer-rope).
+  const ERP_CORE_SERVICE = 1.5, ERP_CORE_CAP = 22;
   function buildErpConveyor(section, cfg){
     const g = buildSceneRoot(section);
     g.add(labelSpriteSafe('📦 ERP · Operations Office — converge → ERP core → dispatch', '#cfe0ff', 24, 0, 64, 0));
@@ -8272,11 +8318,12 @@
     // ---- functional sites: pads + labels; ERP CORE is a glowing central column/ring/orb ----
     let hubRing = null;
     for (const id in N){
-      const nd = N[id], hex = cfg.colors[Math.min(nd.stage, cfg.colors.length - 1)], isHub = nd.kind === 'hub';
+      const nd = N[id], isHub = nd.kind === 'hub';
+      const hex = isHub ? 0xff8a3a : cfg.colors[Math.min(nd.stage, cfg.colors.length - 1)];   // CONSTRAINT = amber-red
       // each functional site's meshes live in their OWN group whose ORIGIN is AT the node (nd.x,0,nd.z), with
       // child meshes at LOCAL offsets → the group is selectable/movable as a unit AND the gizmo/box appears ON
       // the node (not at the diorama centre). (Part 1 + multi-select pivot correctness.)
-      const ng = new THREE.Group(); ng.name = isHub ? '🏛 ERP CORE' : nd.label; ng.position.set(nd.x, 0, nd.z);
+      const ng = new THREE.Group(); ng.name = isHub ? '⚠ ERP CORE · CONSTRAINT' : nd.label; ng.position.set(nd.x, 0, nd.z);
       const padR = isHub ? 9 : 4.6;
       const pad = new THREE.Mesh(new THREE.CylinderGeometry(padR, padR + 0.6, 1.0, isHub ? 40 : 24),
         new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.08), emissive: new THREE.Color(hex), emissiveIntensity: 0.32, roughness: 0.5, metalness: 0.35 }));
@@ -8291,7 +8338,7 @@
         const orb = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12),
           new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
         orb.position.set(0, ERP_BELT_TOP + 16, 0); ng.add(orb);
-        ng.add(labelSpriteSafe('🏛 ERP CORE', '#bfeaff', 16, 0, ERP_BELT_TOP + 21, 0));
+        ng.add(labelSpriteSafe('⚠ ERP CORE · CONSTRAINT', '#ffd0a0', 15, 0, ERP_BELT_TOP + 21, 0));
       } else {
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.45) }));
         led.position.set(0, ERP_BELT_TOP + 3.2, 0); ng.add(led); nd.led = led;
@@ -8306,7 +8353,8 @@
       // momentarily overlap at a node/dock can never z-fight (that was the "flashing overlap" flicker).
       tokens.push({ grp, active: false, seg: -1, t: 0, stage: -1, value: 0, yo: (i % 6) * 0.03 }); }
     sceneState[section] = { g, cfg, N, S, chev, tokens, hubRing, beltTop: ERP_BELT_TOP,
-      emitInterval: 1.25, tokenSpeed: 17, tokScale: 1.9, count: new Array(cfg.n).fill(0), val: new Array(cfg.n).fill(0), beltPhase: 0 };
+      emitInterval: 1.25, tokenSpeed: 17, tokScale: 1.9, count: new Array(cfg.n).fill(0), val: new Array(cfg.n).fill(0), beltPhase: 0,
+      coreQ: [], coreServiceT: 0, served: 0, thru: 0, thruT: 0, thruN: 0 };   // TOC: WIP buffer + service clock + throughput meter
     updateErpConveyor(section);
   }
   // morph a token's recognizable model on stage change (bounded; only on change)
@@ -8318,40 +8366,67 @@
   // emit one token onto segment segIdx at the given stage/value (reuses a free pooled token; bounded)
   function erpSpawn(st, segIdx, stage, value){
     let tk = null; for (const t of st.tokens){ if (!t.active){ tk = t; break; } } if (!tk) return;
-    tk.active = true; tk.seg = segIdx; tk.t = 0; tk.value = value; tk.delivering = false; tk.deliverT = 0;
+    tk.active = true; tk.seg = segIdx; tk.t = 0; tk.value = value; tk.delivering = false; tk.deliverT = 0; tk.queued = false;
     erpSetStage(st, tk, stage); erpPlaceTok(st, tk);
   }
-  // a token reaches its segment's end-node: merge COMBINES (2→1), hub/split DIVIDES (1→N), sink DELIVERS.
+  // a token reaches its segment's end-node: merge COMBINES (2→1), the CORE QUEUES it (constraint), sink DELIVERS.
   function erpArrive(st, tk){
     const node = st.N[st.S[tk.seg].b];
     if (node.kind === 'sink'){
-      // graceful DELIVERY at the dispatch dock: morph to the FINAL stage (Paid → coins), then settle + fade
-      // over ~1s (handled in animate) instead of popping out of existence. Stays active until the settle ends.
+      // graceful DELIVERY at the dispatch dock: morph to the FINAL stage (Paid → coins), then settle + fade.
       tk.t = 1; erpSetStage(st, tk, node.stage); tk.delivering = true; tk.deliverT = 0; erpPlaceTok(st, tk);
+      return;
+    }
+    if (node.kind === 'hub'){
+      // THE CONSTRAINT: the unit enters the core's WIP buffer (stays active + visible, parked in the pile by
+      // erpPileLayout). animate processes one every ERP_CORE_SERVICE s, then dispatches it to the split nodes.
+      tk.queued = true; erpSetStage(st, tk, node.stage); st.coreQ.push(tk);
       return;
     }
     tk.active = false; tk.grp.visible = false;
     if (node.kind === 'merge'){ node.arrivals++; if (node.arrivals >= 2){ node.arrivals -= 2; if (node.outSegs.length) erpSpawn(st, node.outSegs[0], node.stage, tk.value * 2); } }
-    else if (node.kind === 'hub' || node.kind === 'split'){ const k = Math.max(1, node.outSegs.length);
+    else if (node.kind === 'split'){ const k = Math.max(1, node.outSegs.length);
       for (const os of node.outSegs) erpSpawn(st, os, node.stage, Math.max(1, Math.round(tk.value / k))); }
+  }
+  // lay the core's WIP buffer as a grid pile growing UPSTREAM (−x) of the constraint — the visible "inventory
+  // backing up before the bottleneck" (the heart of the TOC read). View-only; bounded by ERP_CORE_CAP.
+  function erpPileLayout(st){
+    const hub = st.N && st.N.HUB; if (!hub) return; const q = st.coreQ, W = 4, sp = 3.0;
+    for (let i = 0; i < q.length; i++){ const tk = q[i], col = i % W, row = (i / W) | 0;
+      tk.grp.position.set(hub.x - 12 - row * sp, st.beltTop + 0.4 + (tk.yo || 0), hub.z - (W - 1) * sp / 2 + col * sp);
+      tk.grp.scale.setScalar(st.tokScale); tk.grp.visible = true; }
   }
   // VIEW-ONLY refresh: place active tokens + recompute per-stage occupancy/value (idempotent; stub-safe).
   function updateErpConveyor(section){
     const st = sceneState[section]; if (!st || !st.tokens) return;
     const n = st.cfg.n; st.count.fill(0); st.val.fill(0);
-    for (const tk of st.tokens){ if (!tk.active) continue; if (!tk.delivering) erpPlaceTok(st, tk);
+    for (const tk of st.tokens){ if (!tk.active) continue; if (!tk.delivering && !tk.queued) erpPlaceTok(st, tk);
       if (tk.stage >= 0 && tk.stage < n){ st.count[tk.stage]++; st.val[tk.stage] += tk.value; } }
+    erpPileLayout(st);
   }
   // FREE-RUNNING (render loop only; frozen under reduced-motion): intake emits, tokens advance + merge/split,
   // chevrons scroll along each belt, the ERP-core ring spins.
   function animateErpConveyor(section, dt){
     const st = sceneState[section]; if (!st || !st.tokens) return;
     st.beltPhase += dt;
+    // intake emits — THROTTLED by the constraint: when the core WIP buffer is full, intake holds (backpressure).
+    const coreFull = st.coreQ.length >= ERP_CORE_CAP;
     for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
-      nd.emit += dt; if (nd.emit >= st.emitInterval){ nd.emit = 0;
+      nd.emit += dt; if (!coreFull && nd.emit >= st.emitInterval){ nd.emit = 0;
         const v = Math.round(st.cfg.valBase + flowFrac(Math.sin(st.beltPhase * 3.1 + nd.x * 0.7) * 43758.5) * st.cfg.valSpan);
         erpSpawn(st, nd.outSegs[0], 0, v); } }
-    for (const tk of st.tokens){ if (!tk.active) continue;
+    // THE CONSTRAINT: the core serves ONE unit every ERP_CORE_SERVICE s → dispatch to the split nodes. Arrivals
+    // exceed this rate, so the WIP buffer fills and the downstream dispatch stations starve (throughput is capped).
+    st.coreServiceT -= dt;
+    if (st.coreServiceT <= 0 && st.coreQ.length){
+      const tk = st.coreQ.shift(); tk.active = false; tk.queued = false; tk.grp.visible = false;
+      const hub = st.N.HUB, k = Math.max(1, hub.outSegs.length);
+      for (const os of hub.outSegs) erpSpawn(st, os, hub.stage, Math.max(1, Math.round((tk.value || 0) / k)));
+      st.coreServiceT = ERP_CORE_SERVICE; st.served++; st.thruN++;
+    }
+    erpPileLayout(st);
+    st.thruT += dt; if (st.thruT >= 1){ st.thru = st.thruN; st.thruN = 0; st.thruT -= 1; }
+    for (const tk of st.tokens){ if (!tk.active || tk.queued) continue;
       if (tk.delivering){ tk.deliverT += dt; const k = Math.min(1, tk.deliverT / 0.85); const s = st.S[tk.seg];
         // LIFT OFF the dock + shrink OUT (never sink into the pad — that caused coin/pad z-fighting flicker)
         tk.grp.position.set(s.bx, st.beltTop + 0.4 + (tk.yo || 0) + k * 1.4, s.bz); tk.grp.scale.setScalar(st.tokScale * (1 - k));
@@ -8361,7 +8436,9 @@
       if (tk.t >= 1) erpArrive(st, tk); else erpPlaceTok(st, tk); }
     for (const c of st.chev){ const s = st.S[c.seg]; c.t += (st.tokenSpeed * 0.5 * dt) / s.len; if (c.t > 1) c.t -= 1;
       c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
-    if (st.hubRing) st.hubRing.rotation.z += dt * 0.8;
+    if (st.hubRing){ st.hubRing.rotation.z += dt * 0.8;
+      // pulse the constraint ring harder as its WIP buffer fills (visual urgency)
+      if (st.hubRing.material){ const load = Math.min(1, st.coreQ.length / ERP_CORE_CAP); st.hubRing.material.opacity = 0.45 + 0.45 * (0.5 + 0.5 * Math.sin(st.beltPhase * (2 + load * 3))); } }
   }
   function buildErpScene(){ buildErpConveyor('erp', ERP_FLOW_CFG); }
   function buildCrmScene(){ buildRingSankey('crm', CRM_FLOW_CFG); }
@@ -11348,6 +11425,10 @@
         flowRate:  sfFlowRate,                        // PHASE 2: current packet-flow intensity [0,1] (sim-driven, read-only)
       };
     },
+    // OEE/AVAILABILITY introspection (view-only): sweep the deterministic breakdown clock and report the
+    // min/max fraction of machines RUNNING, so a harness can confirm machines actually go DOWN (min < 1).
+    availability(){ let mn = 1, mx = 0; for (let i = 0; i < 2400; i++){ animateSmartFactory(0.016); if (sfAvailability < mn) mn = sfAvailability; if (sfAvailability > mx) mx = sfAvailability; }
+      return { machines: sfMachines.length, min: Math.round(mn * 100) / 100, max: Math.round(mx * 100) / 100, last: Math.round(sfAvailability * 100) / 100 }; },
     // Drive `frames` twin-overlay animation steps (physics fields + scan + arm vibration) WITHOUT the renderer,
     // so a harness can confirm the per-frame twin animation runs clean (no throw) when the twin is shown. Toggles
     // the factory twin ON for the duration, then RESTORES the prior state (reversible). VIEW-ONLY: it touches only
