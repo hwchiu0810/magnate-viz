@@ -188,6 +188,22 @@
     background:#04111ce6;border:1px solid #16466a;border-radius:12px;padding:10px 12px;
     backdrop-filter:blur(6px);box-shadow:0 0 0 1px rgba(80,230,255,.12),0 10px 32px rgba(0,0,0,.5);
     color:#bfeaff;font-variant-numeric:tabular-nums}
+  /* SIMULATION PARAMETER PANEL — top-centre control strip; shown only for sim sections (.on) */
+  .simpanel{position:absolute;top:52px;left:50%;transform:translateX(-50%);z-index:7;display:none;min-width:360px;max-width:560px;
+    background:#04111ce6;border:1px solid #2a5a44;border-radius:12px;padding:9px 13px;backdrop-filter:blur(6px);
+    box-shadow:0 0 0 1px rgba(80,230,160,.14),0 10px 30px rgba(0,0,0,.5);color:#dff1e8;font-variant-numeric:tabular-nums}
+  .simpanel.on{display:block}
+  .simhead{display:flex;align-items:center;gap:8px;font:600 12px/1.3 'Segoe UI',sans-serif;margin-bottom:7px;color:#bfeada}
+  .simdot{width:8px;height:8px;border-radius:50%;background:#3fe07a;box-shadow:0 0 8px #3fe07a}
+  .simread{margin-left:auto;color:#9fe9c4;font-weight:500;font-size:11px}
+  .simbody{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+  .simctl{display:flex;flex-direction:column;gap:2px;min-width:150px}
+  .simctl label{font-size:9.5px;color:#7fb6a0;display:flex;justify-content:space-between;gap:8px}
+  .simctl label b{color:#dff6ea;font-weight:600}
+  .simctl input[type=range]{width:100%;accent-color:#3fe07a;cursor:pointer}
+  .simbtn{background:#0d3a2a;border:1px solid #2a6a4a;color:#cfeede;border-radius:8px;padding:4px 11px;font-size:11px;cursor:pointer;align-self:flex-end}
+  .simbtn:hover{background:#125239;color:#eafff4}
+  .simbtn:focus-visible{outline:2px solid #3fe07a;outline-offset:2px}
   .twinhud.on{display:block}
   .twinhud h3{margin:0 0 8px;font-size:10px;color:#5fc8f0;text-transform:uppercase;letter-spacing:1px;
     display:flex;align-items:center;gap:6px}
@@ -715,6 +731,13 @@
     <canvas class="twave" id="city-power" role="img" aria-label="Grid power load waveform"></canvas>
     <div class="tmeta"><span>Power <b id="city-mw">—</b></span><span>Throughput <b id="city-gbps">—</b></span></div>
     <div class="tmeta"><span>Mobility <b id="city-mob">—</b></span><span>Active links <b id="city-links">—</b></span></div>
+  </aside>
+
+  <!-- ===== SIMULATION PARAMETER PANEL — interactive levers for the active section's simulation (ERP TOC now;
+       extensible). Shown only when the active section HAS a sim. Crisp DOM, top-centre, outside the canvas. ===== -->
+  <aside class="simpanel" id="sim-panel" aria-label="Simulation parameters" aria-hidden="true">
+    <div class="simhead"><span class="simdot" aria-hidden="true"></span><span id="sim-title">Simulation</span><span class="simread" id="sim-read"></span></div>
+    <div id="sim-body" class="simbody"></div>
   </aside>
 
   <!-- ===== VFX LAB EDITOR — ONE collapsible, scrollable SIDEBAR (option B).
@@ -8538,7 +8561,8 @@
     st.thruT += dt; if (st.thruT >= 1){ st.thruEMA = st.thruEMA * 0.6 + st.thruN * 0.4; st.thruN = 0; st.thruT -= 1;
       let wip = 0; for (const stn of st.stations) wip += stn.queue.length;
       if (st.dashThru) setSpriteText(st.dashThru, 'THROUGHPUT  ' + (Math.round(st.thruEMA * 60)) + '/min');
-      if (st.dashWip) setSpriteText(st.dashWip, 'WIP ' + wip + '   ·   CONSTRAINT: ' + st.cfg.stageNames[C.constraintIdx]); } }
+      if (st.dashWip) setSpriteText(st.dashWip, 'WIP ' + wip + '   ·   CONSTRAINT: ' + st.cfg.stageNames[C.constraintIdx]);
+      try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
   function buildErpScene(){ buildErpToc('erp', ERP_FLOW_CFG); }
   function buildCrmScene(){ buildRingSankey('crm', CRM_FLOW_CFG); }
   function updateErpScene(){ updateErpToc('erp'); }
@@ -11335,6 +11359,50 @@
     try { if (typeof Builder !== 'undefined' && Builder){ Builder.setVisible(true); if (Builder.onSection) Builder.onSection(activeSection); } } catch(_){}
     // refresh the section-aware data board immediately on section change (not just on the next tick).
     try { if (typeof refreshHUD === 'function') refreshHUD(); } catch(_){}
+    // show/build the SIMULATION PARAMETER PANEL for sim sections (ERP now).
+    try { syncSimPanel(); } catch(_){}
+  }
+  /* ============================================================
+   *  SIMULATION PARAMETER PANEL — interactive levers for the active section's sim. ERP (Theory of
+   *  Constraints): Arrival rate + Bottleneck capacity sliders (the two TOC levers) + a live Throughput/WIP
+   *  readout + Reset. Raising the bottleneck capacity above the arrival rate DRAINS the WIP and lifts
+   *  throughput ("elevate the constraint"). VIEW-ONLY wrt the economy; headless-safe (all DOM guarded).
+   * ============================================================ */
+  function setSimArrV(v){ const e = $('sim-arr-v'); if (e) e.textContent = v + '/min'; }
+  function setSimCapV(v){ const e = $('sim-cap-v'); if (e) e.textContent = v + '/min'; }
+  function updateSimReadout(){
+    const r = $('sim-read'); if (!r) return;
+    const st = (typeof sceneState !== 'undefined') ? sceneState.erp : null;
+    if (activeSection === 'erp' && st && st.stations){ let wip = 0; for (const s of st.stations) wip += s.queue.length;
+      r.textContent = 'Throughput ' + Math.round((st.thruEMA || 0) * 60) + '/min  ·  WIP ' + wip; }
+  }
+  function buildSimPanel(sec){
+    const title = $('sim-title'), body = $('sim-body'); if (!body) return;
+    if (sec === 'erp'){
+      if (title) title.textContent = 'ERP · Order-to-Cash (Theory of Constraints)';
+      body.innerHTML =
+        '<div class="simctl"><label>Arrival rate <b id="sim-arr-v"></b></label><input type="range" id="sim-arr" min="12" max="80" step="2" aria-label="Order arrival rate per minute"></div>' +
+        '<div class="simctl"><label>⚠ Bottleneck capacity <b id="sim-cap-v"></b></label><input type="range" id="sim-cap" min="18" max="110" step="2" aria-label="Constraint station capacity per minute"></div>' +
+        '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
+      const st = sceneState.erp, arr = $('sim-arr'), cap = $('sim-cap');
+      const arrMin = st ? Math.round(60 / st.C.spawn) : 57;
+      const capMin = (st && st.stations[st.C.constraintIdx]) ? Math.round(st.stations[st.C.constraintIdx].rate * 60) : 25;
+      if (arr){ arr.value = arrMin; arr.oninput = () => { const v = +arr.value || 1; if (st) st.C.spawn = 60 / v; setSimArrV(v); }; }
+      if (cap){ cap.value = capMin; cap.oninput = () => { const v = +cap.value || 1; if (st && st.stations[st.C.constraintIdx]) st.stations[st.C.constraintIdx].rate = v / 60; setSimCapV(v); }; }
+      setSimArrV(arrMin); setSimCapV(capMin);
+      const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.C.spawn = 1.05; if (st.stations[st.C.constraintIdx]) st.stations[st.C.constraintIdx].rate = ERP_TOC.rateSlow;
+        if (arr){ arr.value = Math.round(60 / st.C.spawn); setSimArrV(+arr.value); } if (cap){ cap.value = Math.round(st.stations[st.C.constraintIdx].rate * 60); setSimCapV(+cap.value); } };
+    }
+  }
+  function syncSimPanel(){
+    const panel = $('sim-panel'); if (!panel) return;
+    const sec = (typeof activeSection !== 'undefined') ? activeSection : '';
+    const isSim = (sec === 'erp');
+    if (panel.classList) panel.classList.toggle('on', isSim);
+    if (panel.setAttribute) panel.setAttribute('aria-hidden', isSim ? 'false' : 'true');
+    if (!isSim) return;
+    if (panel.getAttribute && panel.getAttribute('data-built') !== sec){ buildSimPanel(sec); if (panel.setAttribute) panel.setAttribute('data-built', sec); }
+    updateSimReadout();
   }
   function wireSections(){
     for (const s of SECTIONS){
