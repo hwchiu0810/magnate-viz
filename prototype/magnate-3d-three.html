@@ -1445,7 +1445,7 @@
   //   shopping-mall -> retail district (mall + storefronts + shoppers) ONLY
   // The render-loop streamed-world + roam/orbit path runs for ALL FOUR (see WORLD_SECTIONS.includes
   // guards below); the market/finance/network/leaderboard DATA dioramas keep their own orbit-stage path.
-  const WORLD_SECTIONS = ['factory', 'smart-city', 'smart-factory', 'shopping-mall'];
+  const WORLD_SECTIONS = ['factory', 'smart-city', 'shopping-mall'];   // smart-factory is now its own OEE diorama (from-scratch rebuild)
   let worldTheme = 'factory';        // active world theme (one of WORLD_SECTIONS); drives applyThemeVisibility
   // Each diorama lives at its own world position (well outside the factory arena so it never
   // collides with streamed chunks). The camera orbits a pivot above each.
@@ -1458,6 +1458,7 @@
     'vfx-lab':     { x: -1200, z:  1200 },   // VFX LAB diorama — its own corner; neutral preview stage + sample object
     erp:           { x:  1200, z: -1200 },   // ERP Order-to-Cash process-flow theater — its own corner
     crm:           { x: -1200, z: -1200 },   // CRM Sales-Pipeline process-flow theater — its own corner
+    'smart-factory':{ x: 2400, z:    0 },    // Smart Factory OEE production-line diorama (from-scratch rebuild)
   };
   const sceneGroups = {};            // section -> THREE.Group (the diorama root)
   const sceneState  = {};            // section -> per-scene plain-JS state (bars, monuments, nodes, podia)
@@ -5402,6 +5403,7 @@
       if (!reduceMotion){
         if (activeSection === 'erp'){ try { animateErpToc('erp', dt); } catch(_){} }
         else if (activeSection === 'crm'){ try { animateRingSankey('crm', dt); } catch(_){} }
+        else if (activeSection === 'smart-factory'){ try { animateSmartFactoryScene('smart-factory', dt); } catch(_){} }
       }
       // (VFXLab.retargetLive + Builder.update now run section-independently, just after VFX.update above.)
       // DATA → VIZ ANIMATE (P5.2-visible): drive the placed objects along the [t,n,f]
@@ -5922,8 +5924,9 @@
       rows: (c) => vizNetStats(c) || vizRankedFirms(c).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), '—', '—'] })) },
     'smart-city': { title: 'Smart City · grid load', cols: [{ label: 'Tower' }, { label: 'Load', num: true }, { label: 'Net worth', num: true }],
       rows: (c) => world.firms.slice().sort((a, b) => vizLoadOf(b.id, c) - vizLoadOf(a.id, c)).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), vizPct(vizLoadOf(f.id, c)), fmt$(c.nwOf(f))] })) },
-    'smart-factory': { title: 'Smart Factory · production lines', cols: [{ label: 'Line' }, { label: 'Makes' }, { label: 'Out/t', num: true }],
-      rows: (c) => world.firms.slice().sort((a, b) => (b.cap || 0) - (a.cap || 0)).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), f.specialty, String(f.cap || 0)] })) },
+    'smart-factory': { title: 'Smart Factory · OEE / Availability', cols: [{ label: 'Machine' }, { label: 'State' }, { label: 'Buffer', num: true }],
+      rows: () => { const st = (typeof sceneState !== 'undefined') ? sceneState['smart-factory'] : null;
+        if (!st || !st.machines) return []; return st.machines.map((m, i) => ({ cells: [(i + 1) + '. ' + m.name, m.state || '—', String((st.buffers[i] || []).length)] })); } },
     'shopping-mall': { title: 'Shopping Mall · retail', cols: [{ label: 'Item' }, { label: 'Tier' }, { label: 'Price', num: true }, { label: 'Demand', num: true }],
       rows: (c) => vizRetailRows(c) },
     'digital-twin': { title: 'Digital Twin · telemetry', cols: [{ label: 'Asset' }, { label: 'Load', num: true }, { label: 'Temp', num: true }],
@@ -8569,6 +8572,104 @@
   function updateCrmScene(){ updateRingSankey('crm'); }
 
   /* ============================================================
+   *  🏭 SMART FACTORY · AVAILABILITY / OEE PRODUCTION LINE — buildSmartFactoryScene()  [FROM-SCRATCH BUILD]
+   *  A self-contained diorama (decoupled from the streamed-world hall): n MACHINE CELLS in a row (plinth ·
+   *  enclosure+window · spinning spindle · ANDON stack-light), BUFFER queues between them, a conveyor, and
+   *  workpieces that flow cell→cell. Machines BREAK DOWN + recover on a deterministic clock; a DOWN machine
+   *  flashes its andon RED + freezes its spindle, downstream STARVES, upstream BUFFER fills (blocked). Buffers
+   *  decouple machines (so buffer size buffers breakdowns — the OEE lesson). Live OEE = Availability ×
+   *  Performance × Quality dashboard. VIEW-ONLY, pooled, headless-safe.
+   * ============================================================ */
+  const SF_OEE = { n: 5, spacing: 27, bufCap: 4, rate: 1.1, spawn: 0.95, objN: 60, objScale: 1.5,
+    mtbf: 16, names: ['Mill', 'Lathe', 'Weld', 'Assemble', 'Pack'] };
+  function oeePartTargetX(st, p){ if (p.holding) return st.machineX[p.mi];
+    const buf = st.buffers[p.mi], slot = Math.max(0, buf.indexOf(p)); return st.machineX[p.mi] - 5.5 - slot * 2.4; }
+  function oeePlace(st, p, dt){
+    if (p.exit > 0){ p.vx += 22 * dt; const s = Math.max(0, 1 - p.exit); p.grp.position.set(p.vx, st.beltTop + 0.5, p.lane);
+      p.grp.scale.setScalar(st.C.objScale * s); p.exit += dt * 1.6; if (p.exit >= 1){ p.active = false; p.grp.visible = false; } return; }
+    const tx = oeePartTargetX(st, p), k = dt > 0 ? Math.min(1, dt * 4) : 1; p.vx += (tx - p.vx) * k;
+    p.grp.position.set(p.vx, st.beltTop + 0.5, p.lane); p.grp.scale.setScalar(st.C.objScale); p.grp.visible = true; }
+  function oeeSpawn(st){ let p = null; for (const x of st.parts){ if (!x.active){ p = x; break; } } if (!p) return;
+    p.active = true; p.mi = 0; p.holding = false; p.exit = 0; p.vx = st.machineX[0] - 32; p.lane = ((st.spawned % 3) - 1) * 1.3;
+    st.buffers[0].push(p); st.spawned++; }
+  function buildSmartFactoryScene(section){
+    const g = buildSceneRoot(section);
+    g.add(labelSpriteSafe('🏭 Smart Factory · Availability / OEE', '#cfe0ff', 24, 0, 64, 0));
+    const floor = dioBox(190, 0.5, 110, 0x2a3344, 0x12181f); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.85));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.5, 600, 2); pl.position.set(0, 120, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(190, 38, 0x46557a, 0x2c3850); grid.position.y = 0.4;
+      const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.2; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
+    const C = SF_OEE, n = C.n, beltTop = 3.0, X0 = -((n - 1) / 2) * C.spacing, DESK_Z = -8;
+    const machineX = []; for (let i = 0; i < n; i++) machineX.push(X0 + i * C.spacing);
+    const beltLen = (n - 1) * C.spacing + C.spacing * 1.9;
+    const belt = dioBox(beltLen, 0.6, 6, 0x202d40, 0x0c1622); belt.position.set(0, beltTop, 0); g.add(belt);
+    for (const zz of [3.1, -3.1]){ const rail = dioBox(beltLen, 0.9, 0.7, 0x2a3a52, 0x16243a); rail.position.set(0, beltTop + 0.6, zz); g.add(rail); }
+    const NR = 20; for (let r = 0; r < NR; r++){ const m = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 5.8, 12),
+      new THREE.MeshStandardMaterial({ color: 0x3a4a60, emissive: new THREE.Color(0x10202f), emissiveIntensity: 0.13, roughness: 0.5, metalness: 0.6 }));
+      m.rotation.x = Math.PI / 2; m.position.set(-beltLen / 2 + (r + 0.5) * (beltLen / NR), beltTop - 0.5, 0); g.add(m); }
+    const chev = []; const NC = 14; for (let c = 0; c < NC; c++){ const a = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4),
+      new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
+      a.rotation.z = -Math.PI / 2; a.position.set(-beltLen / 2 + c * (beltLen / NC), beltTop + 0.4, 0); g.add(a); chev.push(a); }
+    const fr = (v) => v - Math.floor(v);
+    const machines = [];
+    for (let i = 0; i < n; i++){
+      const x = machineX[i], hex = FLOW_COL[i % FLOW_COL.length];
+      const cg = new THREE.Group(); cg.position.set(x, 0, DESK_Z); g.add(cg);
+      const plinth = dioBox(10, 1.0, 7, 0x1a2230, 0x0a121c); plinth.position.set(0, 0.5, 0); cg.add(plinth);
+      const enc = dioBox(8.6, 7.2, 6, 0x26303e, 0x0e1620); enc.position.set(0, 4.6, 0); cg.add(enc);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(5, 3.6, 0.12), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.2), transparent: true, opacity: 0.32 })); win.position.set(0, 4.8, -3.02); cg.add(win);
+      const spindle = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 3.2, 12),
+        new THREE.MeshStandardMaterial({ color: 0x9fb0c8, emissive: new THREE.Color(hex), emissiveIntensity: 0.22, roughness: 0.4, metalness: 0.6 })); spindle.position.set(0, 4.4, 0.5); cg.add(spindle);
+      const pole = dioBox(0.3, 4, 0.3, 0x2a3340, 0x0a0f18); pole.position.set(3.7, 10.0, 0); cg.add(pole);
+      const segGeo = new THREE.CylinderGeometry(0.72, 0.72, 1.0, 14);
+      const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(3.7, yy, 0); cg.add(m); return mt; };
+      const lampR = mkSeg(12.1, 0x20242c), lampA = mkSeg(11.0, 0x20242c), lampG = mkSeg(9.9, 0x3fe07a);
+      cg.add(labelSpriteSafe((i + 1) + '. ' + C.names[i], '#dbe8fb', 12, 0, 14, 0));
+      machines.push({ x, i, name: C.names[i], spindle, lampR, lampA, lampG, state: '',
+        period: C.mtbf + fr(Math.sin((i + 1) * 7.7) * 1000) * 14, downFrac: 0.07 + fr(Math.sin((i + 1) * 3.3) * 500) * 0.11,
+        offset: fr(Math.sin((i + 1) * 12.9898) * 43758.5), down: false, holding: null, busyT: 0 });
+    }
+    const buffers = []; for (let i = 0; i < n; i++) buffers.push([]);
+    const parts = []; const partGeo = new THREE.BoxGeometry(1.7, 1.3, 1.7);
+    for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); const mm = new THREE.Mesh(partGeo, FLOW_M.metal); grp.add(mm); grp.visible = false; g.add(grp);
+      parts.push({ grp, mesh: mm, active: false, mi: -1, holding: false, vx: 0, lane: ((k % 3) - 1) * 1.3, exit: 0 }); }
+    const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 53, -2); g.add(dashA);
+    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 47, -2); g.add(dashB);
+    sceneState[section] = { g, C, machineX, machines, buffers, parts, chev, beltTop, beltLen, dashA, dashB,
+      spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
+      count: new Array(n).fill(0), val: new Array(n).fill(0) };
+    updateSmartFactoryScene(section);
+  }
+  function updateSmartFactoryScene(section){ const st = sceneState[section]; if (!st || !st.parts) return; const n = st.C.n;
+    st.count.fill(0);
+    for (const p of st.parts){ if (!p.active) continue; if (p.mi >= 0 && p.mi < n) st.count[p.mi]++; oeePlace(st, p, 0); } }
+  function animateSmartFactoryScene(section, dt){ const st = sceneState[section]; if (!st || !st.parts) return; const C = st.C, n = C.n; st.phase += dt; const T = st.phase;
+    let up = 0; const mul = st.mtbfMul || 1;
+    for (const m of st.machines){ const ph = ((T / (m.period * mul)) + m.offset) % 1; m.down = ph < m.downFrac; if (!m.down) up++; }
+    st.availInst = up / n;
+    st.spawnT += dt; if (st.spawnT >= C.spawn && st.buffers[0].length < (st.bufCap + 2)){ st.spawnT = 0; oeeSpawn(st); }
+    for (let i = 0; i < n; i++){ const m = st.machines[i], buf = st.buffers[i], dn = st.buffers[i + 1];
+      const room = (i === n - 1) || (dn && dn.length < st.bufCap);
+      if (!m.down){
+        if (m.holding){ m.busyT -= dt; if (m.busyT <= 0){ const p = m.holding; m.holding = null;
+          if (i === n - 1){ p.holding = false; p.exit = 0.001; st.compN++; st.completed++; } else { p.mi = i + 1; p.holding = false; dn.push(p); } } }
+        else if (buf.length && room){ m.holding = buf.shift(); m.holding.holding = true; m.busyT = 1 / C.rate; } }
+      const stt = m.down ? 'down' : (m.holding ? 'running' : (buf.length && !room ? 'blocked' : 'starved'));
+      if (stt !== m.state){ m.state = stt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
+        L(m.lampR, stt === 'down', 0xff4a4a); L(m.lampA, stt === 'blocked', 0xffb030); L(m.lampG, stt === 'running', 0x3fe07a); }
+      if (m.down && m.lampR && m.lampR.color && m.lampR.color.setHex){ m.lampR.color.setHex(Math.abs(Math.sin(T * 4)) > 0.4 ? 0xff4a4a : 0x401015); }
+      if (m.spindle && stt === 'running') m.spindle.rotation.y += dt * 6; }
+    for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
+    for (const a of st.chev){ a.position.x += 6 * dt; if (a.position.x > st.beltLen / 2) a.position.x = -st.beltLen / 2; }
+    st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
+      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / C.rate)), quality = 0.97, oee = avail * perf * quality;
+      if (st.dashA) setSpriteText(st.dashA, 'OEE ' + Math.round(oee * 100) + '%   =  A ' + Math.round(avail * 100) + '%  ×  P ' + Math.round(perf * 100) + '%  ×  Q ' + Math.round(quality * 100) + '%');
+      let wip = 0; for (const b of st.buffers) wip += b.length; const down = st.machines.filter((m) => m.down).length;
+      if (st.dashB) setSpriteText(st.dashB, 'Throughput ' + Math.round(st.perfEMA * 60) + '/min   ·   WIP ' + wip + '   ·   Down ' + down + '/' + n);
+      try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
+
+  /* ============================================================
    *  VFX LAB DIORAMA (skeleton) — a NEUTRAL PREVIEW STAGE + a selectable
    *  SAMPLE OBJECT that the VFX library will drive (the control PANELS land
    *  next phase). This is a decorative orbit-camera diorama, exactly like
@@ -11127,6 +11228,7 @@
     buildLeaderboardScene();
     buildErpScene();
     buildCrmScene();
+    buildSmartFactoryScene('smart-factory');
     buildDigitalTwinScene();
     buildVfxLabScene();
     // dioramas hidden until their section is active (factory is the default visible world)
@@ -11143,6 +11245,7 @@
     try { updateLeaderboardScene(); } catch(_){}
     try { updateErpScene(); } catch(_){}
     try { updateCrmScene(); } catch(_){}
+    try { updateSmartFactoryScene('smart-factory'); } catch(_){}
     try { updateDigitalTwinScene(); } catch(_){}
     try { updateVfxLabScene(); } catch(_){}
   }
@@ -11227,7 +11330,7 @@
     // section restores the prior look. activeSection is already set above, so applyTwinMode → applyFactoryTwin
     // correctly shows/hides the factory twin for THIS section. (If twin-mode is already on manually, we still
     // re-run applyTwinMode below to re-evaluate the factory-twin visibility for the new section.)
-    const twinSection = (section === 'digital-twin' || section === 'smart-factory' || section === 'smart-city');
+    const twinSection = (section === 'digital-twin' || section === 'smart-city');   // smart-factory is now a plain OEE diorama
     if (twinSection){
       if (!twinMode){ twinAuto = true; applyTwinMode(true); }
       else applyTwinMode(true);                 // already on → re-evaluate factory-twin visibility for this section
@@ -11371,10 +11474,11 @@
   function setSimArrV(v){ const e = $('sim-arr-v'); if (e) e.textContent = v + '/min'; }
   function setSimCapV(v){ const e = $('sim-cap-v'); if (e) e.textContent = v + '/min'; }
   function updateSimReadout(){
-    const r = $('sim-read'); if (!r) return;
-    const st = (typeof sceneState !== 'undefined') ? sceneState.erp : null;
-    if (activeSection === 'erp' && st && st.stations){ let wip = 0; for (const s of st.stations) wip += s.queue.length;
-      r.textContent = 'Throughput ' + Math.round((st.thruEMA || 0) * 60) + '/min  ·  WIP ' + wip; }
+    const r = $('sim-read'); if (!r) return; const S = (typeof sceneState !== 'undefined') ? sceneState : {};
+    if (activeSection === 'erp'){ const st = S.erp; if (st && st.stations){ let wip = 0; for (const s of st.stations) wip += s.queue.length;
+      r.textContent = 'Throughput ' + Math.round((st.thruEMA || 0) * 60) + '/min  ·  WIP ' + wip; } }
+    else if (activeSection === 'smart-factory'){ const st = S['smart-factory']; if (st){
+      r.textContent = 'Availability ' + Math.round((st.availInst || 1) * 100) + '%  ·  Throughput ' + Math.round((st.perfEMA || 0) * 60) + '/min'; } }
   }
   function buildSimPanel(sec){
     const title = $('sim-title'), body = $('sim-body'); if (!body) return;
@@ -11392,12 +11496,27 @@
       setSimArrV(arrMin); setSimCapV(capMin);
       const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.C.spawn = 1.05; if (st.stations[st.C.constraintIdx]) st.stations[st.C.constraintIdx].rate = ERP_TOC.rateSlow;
         if (arr){ arr.value = Math.round(60 / st.C.spawn); setSimArrV(+arr.value); } if (cap){ cap.value = Math.round(st.stations[st.C.constraintIdx].rate * 60); setSimCapV(+cap.value); } };
+    } else if (sec === 'smart-factory'){
+      if (title) title.textContent = 'Smart Factory · Availability / OEE';
+      body.innerHTML =
+        '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between failures"></div>' +
+        '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="8" step="1" aria-label="Inter-machine buffer capacity"></div>' +
+        '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
+      const st = sceneState['smart-factory'], mt = $('sim-mtbf'), bf = $('sim-buf');
+      const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
+      const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
+      const mtv = st ? Math.round((st.mtbfMul || 1) * 10) : 10, bfv = st ? (st.bufCap || 4) : 4;
+      if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
+      if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || 4; if (st) st.bufCap = v; setBf(v); }; }
+      setMt(mtv); setBf(bfv);
+      const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = SF_OEE.bufCap;
+        if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); } };
     }
   }
   function syncSimPanel(){
     const panel = $('sim-panel'); if (!panel) return;
     const sec = (typeof activeSection !== 'undefined') ? activeSection : '';
-    const isSim = (sec === 'erp');
+    const isSim = (sec === 'erp' || sec === 'smart-factory');
     if (panel.classList) panel.classList.toggle('on', isSim);
     if (panel.setAttribute) panel.setAttribute('aria-hidden', isSim ? 'false' : 'true');
     if (!isSim) return;
