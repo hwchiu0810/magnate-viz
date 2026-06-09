@@ -5926,7 +5926,7 @@
       rows: (c) => world.firms.slice().sort((a, b) => vizLoadOf(b.id, c) - vizLoadOf(a.id, c)).map(f => ({ firmId: f.id, you: f.id === world.PLAYER, cells: [vizName(f), vizPct(vizLoadOf(f.id, c)), fmt$(c.nwOf(f))] })) },
     'smart-factory': { title: 'Smart Factory · OEE / Availability', cols: [{ label: 'Machine' }, { label: 'State' }, { label: 'Buffer', num: true }],
       rows: () => { const st = (typeof sceneState !== 'undefined') ? sceneState['smart-factory'] : null;
-        if (!st || !st.machines) return []; return st.machines.map((m, i) => ({ cells: [(i + 1) + '. ' + m.name, m.state || '—', String((st.buffers[i] || []).length)] })); } },
+        if (!st || !st.machines) return []; return st.machines.map((m, i) => ({ cells: [(i + 1) + '. ' + m.name, m.state || '—', String((m.buf || []).length)] })); } },
     'shopping-mall': { title: 'Shopping Mall · retail', cols: [{ label: 'Item' }, { label: 'Tier' }, { label: 'Price', num: true }, { label: 'Demand', num: true }],
       rows: (c) => vizRetailRows(c) },
     'digital-twin': { title: 'Digital Twin · telemetry', cols: [{ label: 'Asset' }, { label: 'Load', num: true }, { label: 'Temp', num: true }],
@@ -8607,7 +8607,7 @@
     const g = p.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); OEE_PART[s](g); p.stageBuilt = s; }
   // build ONE detailed, TYPE-SPECIFIC machine cell (base+feet+hazard stripe · enclosure+window+roof · control
   // panel+screen+buttons · type tooling · robot arm(s) · andon stack-light · down beacon · label).
-  function sfMakeCell(g, i, x, z, hex, type, C){
+  function sfMakeCell(g, i, x, z, hex, type, name){
     const cg = new THREE.Group(); cg.position.set(x, 0, z); g.add(cg);
     const base = dioBox(11, 1.2, 7.5, 0x161e2a, 0x0a121c); base.position.set(0, 0.6, 0); cg.add(base);
     for (const fx of [-4.6, 4.6]) for (const fz of [-3, 3]){ const ft = dioBox(0.9, 0.6, 0.9, 0x10161f, 0x05080c); ft.position.set(fx, 0.3, fz); cg.add(ft); }
@@ -8642,136 +8642,157 @@
     const lampR = mkSeg(12.4, 0x20242c), lampA = mkSeg(11.3, 0x20242c), lampG = mkSeg(10.2, 0x3fe07a);
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.95, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
       new THREE.MeshBasicMaterial({ color: 0xffb030, transparent: true, opacity: 0.0, depthWrite: false, blending: FLOW_ADD })); beacon.position.set(0, 8.9, 0); cg.add(beacon);
-    cg.add(labelSpriteSafe((i + 1) + '. ' + C.names[i], '#dbe8fb', 12, 0, 14.7, 0));
+    cg.add(labelSpriteSafe(name || 'Machine', '#dbe8fb', 12, 0, 14.7, 0));
     return { cg, tool, arms, lampR, lampA, lampG, beacon };
   }
   // factory ENVIRONMENT: floor aisle/safety markings, support pillars, an overhead gantry rail + traveling hook,
   // a glass control booth, and storage racks behind the line. Returns the animatable gantry hook.
-  function sfBuildEnv(g, machineX, beltLen, beltTop, n){
-    const add = FLOW_ADD;
-    // yellow aisle lines flanking the belt + a safety zone under each machine
-    for (const zz of [4.4, -4.4]){ const ln = dioBox(beltLen + 8, 0.06, 0.5, 0xd9ad28, 0x2a2000); ln.position.set(0, 0.5, zz); g.add(ln); }
-    for (let i = 0; i < n; i++){ const zone = dioBox(13, 0.05, 11, 0x2a2a18, 0x161608); zone.position.set(machineX[i], 0.42, -8); g.add(zone);
-      const edge = new THREE.Mesh(new THREE.TorusGeometry(7, 0.12, 6, 4), new THREE.MeshBasicMaterial({ color: 0xd9ad28, transparent: true, opacity: 0.4 })); edge.rotation.x = Math.PI / 2; edge.position.set(machineX[i], 0.5, -8); /* skip (decorative) */ }
+  function sfBuildEnv(g, mpos, beltTop){
+    let xmin = 1e9, xmax = -1e9, zmax = 1;
+    for (const p of mpos){ if (p.x < xmin) xmin = p.x; if (p.x > xmax) xmax = p.x; zmax = Math.max(zmax, Math.abs(p.z)); }
+    if (!isFinite(xmin)){ xmin = -60; xmax = 60; }
+    const cx = (xmin + xmax) / 2, span = (xmax - xmin) + 64;
+    // floor SAFETY ZONE under each machine node
+    for (const p of mpos){ const zone = dioBox(13, 0.05, 11, 0x2a2a18, 0x161608); zone.position.set(p.x, 0.42, p.z); g.add(zone); }
     // support pillars at the floor corners
-    for (const px of [-beltLen / 2 - 6, beltLen / 2 + 6]) for (const pz of [-22, 22]){ const pil = dioBox(2.2, 34, 2.2, 0x39424f, 0x141a22); pil.position.set(px, 17, pz); g.add(pil); }
-    // overhead gantry: two rails along the line at high Y + a traveling trolley + hook
-    const railY = 26; for (const rz of [-3, 3]){ const rail = dioBox(beltLen + 14, 0.7, 0.7, 0x4a586c, 0x16202c); rail.position.set(0, railY, rz); g.add(rail); }
-    const trolley = new THREE.Group(); const tb = dioBox(3, 1.2, 7.4, 0x5a6678, 0x1a2430); tb.position.y = railY - 0.9; trolley.add(tb);
-    const cable = dioBox(0.18, 9, 0.18, 0x2a3340, 0x0a0f18); cable.position.y = railY - 6; trolley.add(cable);
-    const hook = dioBox(1.4, 1.0, 1.4, 0x9fb0c8, 0x2a3a4d); hook.position.y = railY - 11; trolley.add(hook);
-    trolley.position.x = machineX[0]; g.add(trolley);
-    // glass control booth at the left end
-    const booth = new THREE.Group(); booth.position.set(machineX[0] - 22, 0, -8);
+    for (const px of [xmin - 18, xmax + 18]) for (const pz of [-(zmax + 16), zmax + 16]){ const pil = dioBox(2.2, 38, 2.2, 0x39424f, 0x141a22); pil.position.set(px, 19, pz); g.add(pil); }
+    // overhead gantry: rails along the plant + a traveling trolley hook
+    const railY = 30; for (const rz of [-5, 5]){ const rail = dioBox(span, 0.7, 0.7, 0x4a586c, 0x16202c); rail.position.set(cx, railY, rz); g.add(rail); }
+    const trolley = new THREE.Group();
+    const tb = dioBox(3, 1.2, 9, 0x5a6678, 0x1a2430); tb.position.y = railY - 0.9; trolley.add(tb);
+    const cable = dioBox(0.18, 11, 0.18, 0x2a3340, 0x0a0f18); cable.position.y = railY - 6.5; trolley.add(cable);
+    const hook = dioBox(1.5, 1.0, 1.5, 0x9fb0c8, 0x2a3a4d); hook.position.y = railY - 12.5; trolley.add(hook);
+    trolley.position.set(cx, 0, 0); g.add(trolley);
+    // glass control booth off the intake end
+    const booth = new THREE.Group(); booth.position.set(xmin - 14, 0, zmax + 8);
     const bf = dioBox(12, 0.3, 12, 0x222a36, 0x0c1018); bf.position.y = 0.3; booth.add(bf);
     const glass = new THREE.Mesh(new THREE.BoxGeometry(12, 8, 12), new THREE.MeshBasicMaterial({ color: 0x6fb6d8, transparent: true, opacity: 0.12, depthWrite: false })); glass.position.y = 4.3; booth.add(glass);
-    if (typeof THREE.EdgesGeometry === 'function' && typeof THREE.LineSegments === 'function'){ const fr = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(12, 8, 12)), new THREE.LineBasicMaterial({ color: 0x5a8fae, transparent: true, opacity: 0.6 })); fr.position.y = 4.3; booth.add(fr); }
+    if (typeof THREE.EdgesGeometry === 'function' && typeof THREE.LineSegments === 'function'){ const frm = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(12, 8, 12)), new THREE.LineBasicMaterial({ color: 0x5a8fae, transparent: true, opacity: 0.6 })); frm.position.y = 4.3; booth.add(frm); }
     const desk = dioBox(6, 0.4, 2.5, 0x3a4658, 0x141c28); desk.position.set(0, 2.4, -3); booth.add(desk);
     const cmon = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 0.2), new THREE.MeshBasicMaterial({ color: 0x2fd6ff, transparent: true, opacity: 0.7 })); cmon.position.set(0, 4.4, -5.8); booth.add(cmon);
     g.add(booth);
-    // storage racks behind the line
-    for (let r = 0; r < 2; r++){ const rk = new THREE.Group(); rk.position.set(machineX[1] + r * (machineX[3] - machineX[1]), 0, -20);
+    // storage racks along the back wall
+    for (let r = 0; r < 3; r++){ const rk = new THREE.Group(); rk.position.set(xmin + 22 + r * ((xmax - xmin) / 2.5), 0, -(zmax + 18));
       for (const ux of [-5, 5]){ const up = dioBox(0.5, 12, 1.2, 0x39424f, 0x141a22); up.position.set(ux, 6, 0); rk.add(up); }
       for (const sy of [3.5, 7.5, 11]){ const sh = dioBox(11, 0.4, 1.6, 0x4a586c, 0x16202c); sh.position.set(0, sy, 0); rk.add(sh);
         for (const bx of [-3.2, 0, 3.2]){ const pal = dioBox(2.6, 1.4, 1.3, 0xc8975a, 0x3a2912); pal.position.set(bx, sy + 0.9, 0); rk.add(pal); } }
       g.add(rk); }
-    return { trolley };
+    return { trolley, cx, span };
   }
-  function oeePartTargetX(st, p){ if (p.holding) return st.machineX[p.mi];
-    const buf = st.buffers[p.mi], slot = Math.max(0, buf.indexOf(p)); return st.machineX[p.mi] - 5.5 - slot * 2.4; }
+  // --- NETWORKED factory flow (node-graph): parts MOVE on segments, QUEUE in node buffers, are SERVICED by
+  //     machines (gated by breakdowns), then advance — WELD COMBINES (2→1), ASSEMBLE DISPATCHES (1→2). ---
   function oeePlace(st, p, dt){
-    if (p.exit > 0){ p.vx += 22 * dt; const s = Math.max(0, 1 - p.exit); p.grp.position.set(p.vx, st.beltTop + 0.5, p.lane);
-      p.grp.scale.setScalar(st.C.objScale * s); p.exit += dt * 1.6; if (p.exit >= 1){ p.active = false; p.grp.visible = false; } return; }
-    const tx = oeePartTargetX(st, p), k = dt > 0 ? Math.min(1, dt * 4) : 1; p.vx += (tx - p.vx) * k;
-    p.grp.position.set(p.vx, st.beltTop + 0.5, p.lane); p.grp.scale.setScalar(st.C.objScale); p.grp.visible = true; }
-  function oeeSpawn(st){ let p = null; for (const x of st.parts){ if (!x.active){ p = x; break; } } if (!p) return;
-    p.active = true; p.mi = 0; p.holding = false; p.exit = 0; p.vx = st.machineX[0] - 32; p.lane = ((st.spawned % 3) - 1) * 1.3;
-    setOeePart(p, 0); st.buffers[0].push(p); st.spawned++; }
+    let tx, tz;
+    if (p.state === 'exit'){ p.exitT += dt * 1.6; const s = Math.max(0, 1 - p.exitT); p.vx += 14 * dt;
+      p.grp.position.set(p.vx, st.beltTop + 0.5 + p.exitT * 1.4, p.vz); p.grp.scale.setScalar(st.C.objScale * s);
+      if (p.exitT >= 1){ p.active = false; p.grp.visible = false; } return; }
+    if (p.state === 'moving'){ const s = st.S[p.seg]; tx = s.ax + (s.bx - s.ax) * p.t; tz = s.az + (s.bz - s.az) * p.t; }
+    else if (p.state === 'holding'){ const nd = st.N[p.node]; tx = nd.x; tz = nd.z; }
+    else { const nd = st.N[p.node]; const slot = Math.max(0, nd.buf.indexOf(p)); tx = nd.x - 6 - (slot % 3) * 2.3; tz = nd.z + (((slot / 3) | 0) - 1) * 2.2; }
+    const k = dt > 0 ? Math.min(1, dt * 4) : 1; p.vx += (tx - p.vx) * k; p.vz += (tz - p.vz) * k;
+    p.grp.position.set(p.vx, st.beltTop + 0.5, p.vz); p.grp.scale.setScalar(st.C.objScale); p.grp.visible = true;
+  }
+  function oeeFree(st){ for (const x of st.parts){ if (!x.active) return x; } return null; }
+  function oeeEmit(st, p, segIdx, stage){ p.active = true; p.state = 'moving'; p.seg = segIdx; p.t = 0; p.node = null; setOeePart(p, stage);
+    const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.grp.visible = true; }
   function buildSmartFactoryScene(section){
     const g = buildSceneRoot(section);
-    g.add(labelSpriteSafe('🏭 Smart Factory · Availability / OEE', '#cfe0ff', 24, 0, 64, 0));
-    const floor = dioBox(190, 0.5, 110, 0x2a3344, 0x12181f); floor.position.y = 0.15; g.add(floor);
+    g.add(labelSpriteSafe('🏭 Smart Factory · Networked OEE Plant — converge · assemble · dispatch', '#cfe0ff', 22, 0, 70, 0));
+    const floor = dioBox(240, 0.5, 130, 0x2a3344, 0x12181f); floor.position.y = 0.15; g.add(floor);
     g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.85));
-    const pl = new THREE.PointLight(0xeaf2ff, 0.5, 600, 2); pl.position.set(0, 120, 40); g.add(pl);
-    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(190, 38, 0x46557a, 0x2c3850); grid.position.y = 0.4;
+    const pl = new THREE.PointLight(0xeaf2ff, 0.55, 700, 2); pl.position.set(0, 130, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(240, 48, 0x46557a, 0x2c3850); grid.position.y = 0.4;
       const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.2; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
-    const C = SF_OEE, n = C.n, beltTop = 3.0, X0 = -((n - 1) / 2) * C.spacing, DESK_Z = -8;
-    const machineX = []; for (let i = 0; i < n; i++) machineX.push(X0 + i * C.spacing);
-    const beltLen = (n - 1) * C.spacing + C.spacing * 1.9;
-    const belt = dioBox(beltLen, 0.6, 6, 0x202d40, 0x0c1622); belt.position.set(0, beltTop, 0); g.add(belt);
-    for (const zz of [3.1, -3.1]){ const rail = dioBox(beltLen, 0.9, 0.7, 0x2a3a52, 0x16243a); rail.position.set(0, beltTop + 0.6, zz); g.add(rail); }
-    const NR = 20; for (let r = 0; r < NR; r++){ const m = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 5.8, 12),
-      new THREE.MeshStandardMaterial({ color: 0x3a4a60, emissive: new THREE.Color(0x10202f), emissiveIntensity: 0.13, roughness: 0.5, metalness: 0.6 }));
-      m.rotation.x = Math.PI / 2; m.position.set(-beltLen / 2 + (r + 0.5) * (beltLen / NR), beltTop - 0.5, 0); g.add(m); }
-    const chev = []; const NC = 14; for (let c = 0; c < NC; c++){ const a = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4),
-      new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
-      a.rotation.z = -Math.PI / 2; a.position.set(-beltLen / 2 + c * (beltLen / NC), beltTop + 0.4, 0); g.add(a); chev.push(a); }
-    const fr = (v) => v - Math.floor(v);
-    const env = sfBuildEnv(g, machineX, beltLen, beltTop, n);   // pillars · gantry+hook · control booth · racks · floor markings
-    const machines = [];
-    for (let i = 0; i < n; i++){
-      const cell = sfMakeCell(g, i, machineX[i], DESK_Z, FLOW_COL[i % FLOW_COL.length], C.types[i], C);
-      machines.push({ x: machineX[i], i, name: C.names[i], type: C.types[i], tool: cell.tool, arms: cell.arms,
-        lampR: cell.lampR, lampA: cell.lampA, lampG: cell.lampG, beacon: cell.beacon, state: '',
-        period: C.mtbf + fr(Math.sin((i + 1) * 7.7) * 1000) * 14, downFrac: 0.07 + fr(Math.sin((i + 1) * 3.3) * 500) * 0.11,
-        offset: fr(Math.sin((i + 1) * 12.9898) * 43758.5), down: false, holding: null, busyT: 0 });
-    }
-    // WELD SPARKS: a small additive-point pool at the Weld cell — fountains while that machine is RUNNING
-    const weldIdx = C.types.indexOf('weld'); const sparks = [];
-    if (weldIdx >= 0){ const sg = new THREE.SphereGeometry(0.17, 6, 5);
-      for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD }));
-        sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
-    const buffers = []; for (let i = 0; i < n; i++) buffers.push([]);
-    const parts = [];
-    for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
-      parts.push({ grp, active: false, mi: -1, holding: false, vx: 0, lane: ((k % 3) - 1) * 1.3, exit: 0, stageBuilt: -1 }); }
-    const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 53, -2); g.add(dashA);
-    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 47, -2); g.add(dashB);
-    sceneState[section] = { g, C, machineX, machines, buffers, parts, chev, beltTop, beltLen, dashA, dashB, env, sparks, weldIdx, DESK_Z,
+    const C = SF_OEE, beltTop = 3.0, fr = (v) => v - Math.floor(v);
+    // NODE GRAPH: 2 intake lines → mill/lathe → WELD (combine 2→1) → ASSEMBLE (dispatch 1→2) → 2 pack → 2 docks
+    const N = {}, S = [];
+    const node = (id, x, z, kind, type, name, outStage) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
+    node('IN0', -96, -22, 'source', null, 'Intake A', 0); node('IN1', -96, 22, 'source', null, 'Intake B', 0);
+    node('M0', -60, -22, 'machine', 'mill', 'Mill', 1); node('M1', -60, 22, 'machine', 'lathe', 'Lathe', 1);
+    node('WELD', -18, 0, 'merge', 'weld', 'Weld (combine)', 2);
+    node('ASSY', 22, 0, 'split', 'assemble', 'Assemble (dispatch)', 3);
+    node('P0', 60, -22, 'machine', 'pack', 'Pack A', 4); node('P1', 60, 22, 'machine', 'pack', 'Pack B', 4);
+    node('D0', 96, -22, 'sink', null, 'Dispatch A', 4); node('D1', 96, 22, 'sink', null, 'Dispatch B', 4);
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z };
+      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
+    seg('IN0', 'M0'); seg('IN1', 'M1'); seg('M0', 'WELD'); seg('M1', 'WELD'); seg('WELD', 'ASSY'); seg('ASSY', 'P0'); seg('ASSY', 'P1'); seg('P0', 'D0'); seg('P1', 'D1');
+    const chev = [];
+    S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, 0x202d40, 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
+      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
+        const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, beltTop + 0.4, s.az + (s.bz - s.az) * t0); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); } });
+    const machines = []; let mi = 0;
+    for (const id in N){ const nd = N[id];
+      if (nd.kind === 'source' || nd.kind === 'sink'){ const pad = new THREE.Mesh(new THREE.CylinderGeometry(4, 4.6, 1, 20),
+          new THREE.MeshStandardMaterial({ color: 0x33414f, emissive: new THREE.Color(nd.kind === 'source' ? 0x1c4a36 : 0x4a3620), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3, nd.z); g.add(pad);
+        g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 11, nd.x, beltTop + 4.5, nd.z)); continue; }
+      const hex = FLOW_COL[nd.outStage % FLOW_COL.length]; const cell = sfMakeCell(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
+      nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
+      nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7) * 1000) * 14; nd.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3) * 500) * 0.11; nd.offset = fr(Math.sin((mi + 1) * 12.9898) * 43758.5);
+      machines.push(nd); mi++; }
+    const sparks = []; if (N.WELD){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
+      for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sgo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD })); sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
+    const env = sfBuildEnv(g, machines.map((m) => ({ x: m.x, z: m.z })), beltTop);
+    const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, exitT: 0, stageBuilt: -1 }); }
+    const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 58, 0); g.add(dashA);
+    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
+    sceneState[section] = { g, C, N, S, machines, parts, chev, sparks, beltTop, env,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
-      count: new Array(n).fill(0), val: new Array(n).fill(0) };
+      count: new Array(5).fill(0), val: new Array(5).fill(0) };
     updateSmartFactoryScene(section);
   }
-  function updateSmartFactoryScene(section){ const st = sceneState[section]; if (!st || !st.parts) return; const n = st.C.n;
+  function updateSmartFactoryScene(section){ const st = sceneState[section]; if (!st || !st.parts) return;
     st.count.fill(0);
-    for (const p of st.parts){ if (!p.active) continue; if (p.mi >= 0 && p.mi < n) st.count[p.mi]++; oeePlace(st, p, 0); } }
-  function animateSmartFactoryScene(section, dt){ const st = sceneState[section]; if (!st || !st.parts) return; const C = st.C, n = C.n; st.phase += dt; const T = st.phase;
-    let up = 0; const mul = st.mtbfMul || 1;
-    for (const m of st.machines){ const ph = ((T / (m.period * mul)) + m.offset) % 1; m.down = ph < m.downFrac; if (!m.down) up++; }
-    st.availInst = up / n;
-    st.spawnT += dt; if (st.spawnT >= C.spawn && st.buffers[0].length < (st.bufCap + 2)){ st.spawnT = 0; oeeSpawn(st); }
-    for (let i = 0; i < n; i++){ const m = st.machines[i], buf = st.buffers[i], dn = st.buffers[i + 1];
-      const room = (i === n - 1) || (dn && dn.length < st.bufCap);
+    for (const p of st.parts){ if (!p.active) continue; const stg = (p.stageBuilt >= 0) ? p.stageBuilt : 0; if (stg < st.count.length) st.count[stg]++; oeePlace(st, p, 0); } }
+  function animateSmartFactoryScene(section, dt){ const st = sceneState[section]; if (!st || !st.parts) return; const C = st.C; st.phase += dt; const T = st.phase; const mul = st.mtbfMul || 1;
+    let up = 0, tot = 0;
+    for (const m of st.machines){ tot++; const ph = ((T / (m.period * mul)) + m.offset) % 1; m.down = ph < m.downFrac; if (!m.down) up++; }
+    st.availInst = tot ? up / tot : 1;
+    // sources emit onto their out-segment (if the downstream node has buffer room)
+    st.spawnT += dt; if (st.spawnT >= C.spawn){ st.spawnT = 0;
+      for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
+        const tgt = st.N[st.S[nd.outSegs[0]].b]; if (tgt.buf && tgt.buf.length >= st.bufCap) continue; const p = oeeFree(st); if (p){ oeeEmit(st, p, nd.outSegs[0], 0); st.spawned++; } } }
+    // moving parts advance + ARRIVE (join a node buffer, or deliver at a sink)
+    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg]; p.t += (16 * dt) / s.len;
+      if (p.t >= 1){ const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; } else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); } } }
+    // machine SERVICE (breakdown-gated): start (consume need, merge takes 2) → finish (emit; split dispatches 1→2)
+    for (const m of st.machines){
+      const outs = m.outSegs.map((si) => st.N[st.S[si].b]);
+      const roomAll = outs.every((t) => t.kind === 'sink' || t.buf.length < st.bufCap);
+      const roomAny = outs.some((t) => t.kind === 'sink' || t.buf.length < st.bufCap);
       if (!m.down){
-        if (m.holding){ m.busyT -= dt; if (m.busyT <= 0){ const p = m.holding; m.holding = null;
-          if (i === n - 1){ p.holding = false; p.exit = 0.001; st.compN++; st.completed++; } else { p.mi = i + 1; p.holding = false; setOeePart(p, i + 1); dn.push(p); } } }
-        else if (buf.length && room){ m.holding = buf.shift(); m.holding.holding = true; m.busyT = 1 / C.rate; } }
-      const stt = m.down ? 'down' : (m.holding ? 'running' : (buf.length && !room ? 'blocked' : 'starved'));
+        if (m.holding){ m.busyT -= dt; if (m.busyT <= 0){ const carrier = m.holding; m.holding = null;
+          if (m.kind === 'split'){ for (let oi = 0; oi < m.outSegs.length; oi++){ if (outs[oi].kind !== 'sink' && outs[oi].buf.length >= st.bufCap) continue;
+              const pp = (oi === 0) ? carrier : oeeFree(st); if (pp) oeeEmit(st, pp, m.outSegs[oi], m.outStage); } }
+          else { oeeEmit(st, carrier, m.outSegs[0], m.outStage); } } }
+        else if (m.buf.length >= m.need && (m.kind === 'split' ? roomAll : roomAny)){
+          const carrier = m.buf.shift(); for (let e = 1; e < m.need; e++){ const ex = m.buf.shift(); if (ex){ ex.active = false; ex.grp.visible = false; } }
+          carrier.state = 'holding'; carrier.node = m.id; m.holding = carrier; m.busyT = 1 / C.rate; } }
+      const blocked = (m.buf.length || m.holding) && !roomAny;
+      const stt = m.down ? 'down' : (m.holding ? 'running' : (m.buf.length && blocked ? 'blocked' : (m.buf.length ? 'running' : 'starved')));
       if (stt !== m.state){ m.state = stt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
         L(m.lampR, stt === 'down', 0xff4a4a); L(m.lampA, stt === 'blocked', 0xffb030); L(m.lampG, stt === 'running', 0x3fe07a); }
-      if (m.down && m.lampR && m.lampR.color && m.lampR.color.setHex){ m.lampR.color.setHex(Math.abs(Math.sin(T * 4)) > 0.4 ? 0xff4a4a : 0x401015); }
-      // type-specific TOOLING motion (only while RUNNING): spin mill/lathe spindle/chuck, bob the mill head /
-      // pack ram; robot arms sweep. Down/idle → everything freezes (visible stoppage = lost availability).
+      if (m.down && m.lampR && m.lampR.color && m.lampR.color.setHex) m.lampR.color.setHex(Math.abs(Math.sin(T * 4)) > 0.4 ? 0xff4a4a : 0x401015);
       const run = (stt === 'running');
       if (m.tool){ if (m.tool.spin && run) m.tool.spin.rotation.y += dt * (m.type === 'lathe' ? 9 : 6);
-        if (m.tool.head) m.tool.head.position.y = 5.5 - (run ? (0.5 + 0.5 * Math.sin(T * 3 + m.i)) * 1.0 : 0);
-        if (m.tool.ram) m.tool.ram.position.y = (m.tool.ramBaseY || 6.3) - (run ? (0.5 + 0.5 * Math.sin(T * 4 + m.i)) * 1.2 : 0); }
+        if (m.tool.head) m.tool.head.position.y = 5.5 - (run ? (0.5 + 0.5 * Math.sin(T * 3)) * 1.0 : 0);
+        if (m.tool.ram) m.tool.ram.position.y = (m.tool.ramBaseY || 6.3) - (run ? (0.5 + 0.5 * Math.sin(T * 4)) * 1.2 : 0); }
       if (m.arms){ for (const a of m.arms){ if (run && a.seg1 && a.seg1.visible){ a.seg1.rotation.z = a.bz1 + Math.sin(T * 1.7 + a.phase) * 0.3; a.seg2.rotation.z = a.bz2 + Math.sin(T * 2.0 + a.phase + 1) * 0.32; } } }
-      if (m.beacon && m.beacon.material) m.beacon.material.opacity = m.down ? (0.4 + 0.4 * Math.abs(Math.sin(T * 5))) : 0.0; }
+      if (m.beacon && m.beacon.material) m.beacon.material.opacity = m.down ? (0.4 + 0.4 * Math.abs(Math.sin(T * 5))) : 0.0;
+    }
     for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
-    for (const a of st.chev){ a.position.x += 6 * dt; if (a.position.x > st.beltLen / 2) a.position.x = -st.beltLen / 2; }
-    // weld sparks fountain while the Weld machine runs; gantry hook trolleys back and forth overhead
-    if (st.sparks && st.sparks.length && st.weldIdx >= 0){ const wm = st.machines[st.weldIdx], welding = !!(wm && wm.state === 'running');
-      const ex = st.machineX[st.weldIdx], ey = st.beltTop + 4.2, ez = (st.DESK_Z || -8) + 1.6;
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * dt) / s.len; if (c.t > 1) c.t -= 1; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    const wnode = st.N.WELD;
+    if (st.sparks && st.sparks.length && wnode){ const welding = wnode.state === 'running'; const ex = wnode.x, ey = st.beltTop + 4.2, ez = wnode.z + 1.6;
       for (let s = 0; s < st.sparks.length; s++){ const k = st.sparks[s]; k.t += dt * 2.4;
         if (k.t >= 1){ if (welding){ k.t = flowFrac(Math.sin((T + s) * 12.9898) * 4378.5); k.vx = (flowFrac(Math.sin((T * 7 + s) * 7.1) * 913) - 0.5) * 9; k.vy = 5 + flowFrac(Math.cos((T * 5 + s) * 3.3) * 557) * 5; k.m.position.set(ex, ey, ez); k.m.visible = true; } else { k.m.visible = false; } continue; }
         k.m.position.x += k.vx * dt; k.m.position.y += (k.vy - 16 * k.t) * dt; k.m.position.z = ez; if (k.m.material) k.m.material.opacity = 0.9 * (1 - k.t); } }
-    if (st.env && st.env.trolley) st.env.trolley.position.x = Math.sin(T * 0.12) * (st.beltLen / 2 - 4);
+    if (st.env && st.env.trolley) st.env.trolley.position.x = (st.env.cx || 0) + Math.sin(T * 0.12) * ((st.env.span || 120) / 2 - 8);
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
-      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / C.rate)), quality = 0.97, oee = avail * perf * quality;
+      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / (C.rate * 1.6))), quality = 0.97, oee = avail * perf * quality;
       if (st.dashA) setSpriteText(st.dashA, 'OEE ' + Math.round(oee * 100) + '%   =  A ' + Math.round(avail * 100) + '%  ×  P ' + Math.round(perf * 100) + '%  ×  Q ' + Math.round(quality * 100) + '%');
-      let wip = 0; for (const b of st.buffers) wip += b.length; const down = st.machines.filter((m) => m.down).length;
-      if (st.dashB) setSpriteText(st.dashB, 'Throughput ' + Math.round(st.perfEMA * 60) + '/min   ·   WIP ' + wip + '   ·   Down ' + down + '/' + n);
+      let wip = 0; for (const m of st.machines) wip += m.buf.length + (m.holding ? 1 : 0); const down = st.machines.filter((m) => m.down).length;
+      if (st.dashB) setSpriteText(st.dashB, 'Throughput ' + Math.round(st.perfEMA * 60) + '/min   ·   WIP ' + wip + '   ·   Down ' + down + '/' + st.machines.length);
       try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
 
   /* ============================================================
