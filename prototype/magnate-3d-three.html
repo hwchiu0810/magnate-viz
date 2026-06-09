@@ -771,7 +771,7 @@
               <button class="vfx-abtn" id="vfx-layout-import" type="button" aria-label="Paste a layout JSON to load object adjustments">⤒ Import</button>
               <button class="vfx-abtn" id="vfx-layout-reset" type="button" aria-label="Reset all saved object adjustments back to defaults">↺ Reset</button>
             </div>
-            <div class="vfx-target-hint">Pick an object (click it after arming, or choose above), then add effects from the Palette. Each added effect stays bound to the object it was applied to. <b>Move (X/Y/Z)</b> shows a drag gizmo on the selected object (Move / Rotate / Scale). POST effects are always full-screen.</div>
+            <div class="vfx-target-hint">Arm <b>◎ Pick in scene</b> or <b>⌖ Pick any</b> (stays on until you toggle it off), then click an object. <b>Shift+click</b> adds more (multi-select); Shift+click a selected one to remove it. <b>Move (X/Y/Z)</b> shows a drag gizmo — with several selected it moves them all together. <b>📌 Pin</b> makes a move stick on animated objects. Drag (not click) still orbits the camera.</div>
           </aside>
         </div>
       </section>
@@ -8737,8 +8737,8 @@
           if (!node || node === gizmo) continue;
           const label = node.name || (h.object.name) || ((typeof activeSection !== 'undefined' ? activeSection : 'scene') + ' object');
           pickInto(node, label, additive);
-          if (!additive) setFreePick(false);     // shift keeps picking more; plain click selects one + disarms
-          msg((additive ? 'Added: ' : 'Selected: ') + label + (additive ? '  (' + selection.length + ' selected)' : ''));
+          // pick-any mode STAYS armed (toggle ⌖ Pick any off when done) so Shift-click can keep adding objects
+          msg((additive ? 'Added: ' : 'Selected: ') + label + '  (' + selection.length + ' selected)');
           return true;
         }
       } catch(_){}
@@ -9518,6 +9518,8 @@
       pickArmed(){ return pickArmed || freePickArmed; },
       // re-assert pinned objects' transforms (called every frame from renderFrameGL, after the sims).
       enforcePin(){ enforcePin(); },
+      // introspection: how many objects are currently selected (1 = single, >1 = multi). View-only.
+      selectionCount(){ return selection.length; },
       // raycast the active section's candidate objects; on hit, set it as the target. Returns true if consumed.
       pickFromRay(ray, additive){
         if (freePickArmed) return freePickFromRay(ray, additive);     // "Pick any" → whole-scene raycast (Part 2)
@@ -9531,8 +9533,8 @@
               const found = cands.find(t => t.obj === o);
               if (found){
                 pickInto(found.obj, found.label, additive);
-                if (!additive){ syncTargetSelect(); setPickArmed(false); }   // shift keeps picking; plain click selects one + disarms
-                msg((additive ? 'Added: ' : 'Target: ') + found.label + (additive ? '  (' + selection.length + ' selected)' : ''));
+                if (!additive) syncTargetSelect();   // STAYS armed (toggle ◎ off when done) so Shift-click can keep adding
+                msg((additive ? 'Added: ' : 'Target: ') + found.label + '  (' + selection.length + ' selected)');
                 return true;
               }
               o = o.parent;
