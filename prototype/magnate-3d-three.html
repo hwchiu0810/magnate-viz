@@ -771,7 +771,7 @@
               <button class="vfx-abtn" id="vfx-layout-import" type="button" aria-label="Paste a layout JSON to load object adjustments">⤒ Import</button>
               <button class="vfx-abtn" id="vfx-layout-reset" type="button" aria-label="Reset all saved object adjustments back to defaults">↺ Reset</button>
             </div>
-            <div class="vfx-target-hint">Arm <b>◎ Pick in scene</b> or <b>⌖ Pick any</b> (stays on until you toggle it off), then click an object. <b>Shift+click</b> adds more (multi-select); Shift+click a selected one to remove it. <b>Move (X/Y/Z)</b> shows a drag gizmo — with several selected it moves them all together. <b>📌 Pin</b> makes a move stick on animated objects. Drag (not click) still orbits the camera.</div>
+            <div class="vfx-target-hint"><b>Shift- or Ctrl+click</b> an object to ADD it to the selection (multi-select) — works even without arming a pick mode; modifier+click a selected one to remove it. To pick with a plain click, arm <b>◎ Pick in scene</b> or <b>⌖ Pick any</b> (they stay on). <b>Move (X/Y/Z)</b> shows a drag gizmo — with several selected it moves them all together; <b>📌 Pin</b> makes the move stick on animated objects. Drag (not click) still orbits the camera.</div>
           </aside>
         </div>
       </section>
@@ -6194,11 +6194,16 @@
       // VFX Lab "Pick in scene" mode: a click selects the clicked object as the VFX effect target. Works in
       // EVERY section, raycasting that section's own objects (independent of the 2 economy pickables).
       try {
-        if (typeof VFXLab !== 'undefined' && VFXLab && VFXLab.pickArmed && VFXLab.pickArmed()){
+        // A modifier+click (Shift / Ctrl / Cmd / Alt) ALWAYS picks-and-ADDS — even when no pick mode is armed —
+        // so multi-select "just works" after selecting one via the dropdown. A plain click picks only while a
+        // pick mode is armed (so unmodified clicks elsewhere still orbit / inspect as before).
+        const addKey = !!(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey);
+        const armed = !!(typeof VFXLab !== 'undefined' && VFXLab && VFXLab.pickArmed && VFXLab.pickArmed());
+        if (VFXLab && (armed || addKey)){
           const pr = gl.getBoundingClientRect ? gl.getBoundingClientRect() : { left:0, top:0, width:window.innerWidth, height:window.innerHeight };
           const pndc = new THREE.Vector2(((e.clientX - pr.left) / pr.width) * 2 - 1, -((e.clientY - pr.top) / pr.height) * 2 + 1);
           const pray = new THREE.Raycaster(); pray.setFromCamera(pndc, cam);
-          if (VFXLab.pickFromRay(pray, !!e.shiftKey)) return;     // shift = add to multi-selection
+          if (VFXLab.pickFromRay(pray, addKey)) return;     // modifier = add to the multi-selection
         }
       } catch(_){}
       // PHASE 2: the firm towers + NPC_DESK exchange are the ONLY pickables, and they live in economyGroup
@@ -8268,27 +8273,29 @@
     let hubRing = null;
     for (const id in N){
       const nd = N[id], hex = cfg.colors[Math.min(nd.stage, cfg.colors.length - 1)], isHub = nd.kind === 'hub';
-      // each functional site's meshes live in their OWN group (nd.grp) → selectable/movable as a unit (Part 1)
-      const ng = new THREE.Group(); ng.name = isHub ? '🏛 ERP CORE' : nd.label;
+      // each functional site's meshes live in their OWN group whose ORIGIN is AT the node (nd.x,0,nd.z), with
+      // child meshes at LOCAL offsets → the group is selectable/movable as a unit AND the gizmo/box appears ON
+      // the node (not at the diorama centre). (Part 1 + multi-select pivot correctness.)
+      const ng = new THREE.Group(); ng.name = isHub ? '🏛 ERP CORE' : nd.label; ng.position.set(nd.x, 0, nd.z);
       const padR = isHub ? 9 : 4.6;
       const pad = new THREE.Mesh(new THREE.CylinderGeometry(padR, padR + 0.6, 1.0, isHub ? 40 : 24),
         new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.08), emissive: new THREE.Color(hex), emissiveIntensity: 0.32, roughness: 0.5, metalness: 0.35 }));
-      pad.position.set(nd.x, ERP_BELT_TOP - 0.25, nd.z); ng.add(pad);
+      pad.position.set(0, ERP_BELT_TOP - 0.25, 0); ng.add(pad);
       if (isHub){
         const col = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 15, 22),
           new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.2), emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.55 }));
-        col.position.set(nd.x, ERP_BELT_TOP + 7.5, nd.z); ng.add(col);
+        col.position.set(0, ERP_BELT_TOP + 7.5, 0); ng.add(col);
         hubRing = new THREE.Mesh(new THREE.TorusGeometry(6.4, 0.55, 8, 36),
           new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.45), transparent: true, opacity: 0.7, depthWrite: false, blending: FLOW_ADD }));
-        hubRing.rotation.x = Math.PI / 2; hubRing.position.set(nd.x, ERP_BELT_TOP + 11, nd.z); ng.add(hubRing);
+        hubRing.rotation.x = Math.PI / 2; hubRing.position.set(0, ERP_BELT_TOP + 11, 0); ng.add(hubRing);
         const orb = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12),
           new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
-        orb.position.set(nd.x, ERP_BELT_TOP + 16, nd.z); ng.add(orb);
-        ng.add(labelSpriteSafe('🏛 ERP CORE', '#bfeaff', 16, nd.x, ERP_BELT_TOP + 21, nd.z));
+        orb.position.set(0, ERP_BELT_TOP + 16, 0); ng.add(orb);
+        ng.add(labelSpriteSafe('🏛 ERP CORE', '#bfeaff', 16, 0, ERP_BELT_TOP + 21, 0));
       } else {
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.45) }));
-        led.position.set(nd.x, ERP_BELT_TOP + 3.2, nd.z); ng.add(led); nd.led = led;
-        ng.add(labelSpriteSafe(nd.label, '#dbe8fb', 11, nd.x, ERP_BELT_TOP + 5.6, nd.z));
+        led.position.set(0, ERP_BELT_TOP + 3.2, 0); ng.add(led); nd.led = led;
+        ng.add(labelSpriteSafe(nd.label, '#dbe8fb', 11, 0, ERP_BELT_TOP + 5.6, 0));
       }
       g.add(ng); nd.grp = ng;
     }
