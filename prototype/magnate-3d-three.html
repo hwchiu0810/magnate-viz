@@ -5377,7 +5377,7 @@
       // ERP = Smart Conveyor (objects ride the belt + morph at scanner stations); CRM = circular 3D Sankey
       // (tokens circulate the ring, pole-top objects spin, particles stream the ribbons). Frozen under reduced-motion.
       if (!reduceMotion){
-        if (activeSection === 'erp'){ try { animateErpConveyor('erp', dt); } catch(_){} }
+        if (activeSection === 'erp'){ try { animateErpToc('erp', dt); } catch(_){} }
         else if (activeSection === 'crm'){ try { animateRingSankey('crm', dt); } catch(_){} }
       }
       // (VFXLab.retargetLive + Builder.update now run section-independently, just after VFX.update above.)
@@ -8262,6 +8262,10 @@
   // (slower than the converging arrival rate), so WIP piles into a visible buffer (cap ERP_CORE_CAP) before it
   // while the downstream dispatch stations STARVE. Throughput is capped by the constraint (drum-buffer-rope).
   const ERP_CORE_SERVICE = 1.5, ERP_CORE_CAP = 22;
+  // ERP · ORDER-TO-CASH process LINE (Theory of Constraints, from-scratch rebuild): n workstations in a row;
+  // one (constraintIdx) is the BOTTLENECK (slow service rate) so orders queue + WIP backs up before it while the
+  // downstream stations STARVE. Orders ease toward their computed queue slot → smooth conveyor motion emerges.
+  const ERP_TOC = { n: 6, spacing: 23, constraintIdx: 2, rateFast: 1.4, rateSlow: 0.42, spawn: 1.05, qcap: 9, qgap: 4, qsp: 2.5, objN: 64, objScale: 1.7 };
   function buildErpConveyor(section, cfg){
     const g = buildSceneRoot(section);
     g.add(labelSpriteSafe('📦 ERP · Operations Office — converge → ERP core → dispatch', '#cfe0ff', 24, 0, 64, 0));
@@ -8440,9 +8444,104 @@
       // pulse the constraint ring harder as its WIP buffer fills (visual urgency)
       if (st.hubRing.material){ const load = Math.min(1, st.coreQ.length / ERP_CORE_CAP); st.hubRing.material.opacity = 0.45 + 0.45 * (0.5 + 0.5 * Math.sin(st.beltPhase * (2 + load * 3))); } }
   }
-  function buildErpScene(){ buildErpConveyor('erp', ERP_FLOW_CFG); }
+  /* ============================================================
+   *  📦 ERP · ORDER-TO-CASH PROCESS LINE (Theory of Constraints) — buildErpToc()  [FROM-SCRATCH BUILD]
+   *  A left→right line of 6 purpose-built WORKSTATIONS (desk · terminal+screen · server · ANDON stack-light) on a
+   *  conveyor. Orders are the recognizable O2C objects; they QUEUE on the belt before each station (visible WIP),
+   *  are SERVICED at the station's rate, then advance + MORPH to the next stage. One station is the CONSTRAINT
+   *  (slow) → its queue grows and backpressures upstream while downstream STARVES (drum-buffer-rope). The andon
+   *  lights read green=running · amber=blocked/constraint · dim=starved. VIEW-ONLY, pooled, headless-safe.
+   * ============================================================ */
+  function erpTocModel(st, o, stage){ const s = Math.max(0, Math.min(st.cfg.models.length - 1, stage));
+    if (o.stageBuilt !== s){ setFlowModel(o.grp, s, st.cfg); o.stageBuilt = s; } }
+  function erpTocSpawn(st){ let o = null; for (const x of st.orders){ if (!x.active){ o = x; break; } } if (!o) return;
+    o.active = true; o.station = 0; o.exit = 0; o.value = Math.round(st.cfg.valBase + flowFrac(Math.sin((st.spawned + 1) * 78.233) * 12543.1) * st.cfg.valSpan);
+    o.vx = st.stationX[0] - 34; o.lane = ((st.spawned % 3) - 1) * 1.5; o.stageBuilt = -1; erpTocModel(st, o, 0);
+    st.stations[0].queue.push(o); st.spawned++; }
+  function erpTocTargetX(st, o){ const stn = st.stations[o.station]; const slot = Math.max(0, stn.queue.indexOf(o));
+    return stn.x - st.C.qgap - slot * st.C.qsp; }
+  function erpTocPlace(st, o, dt){
+    if (o.exit > 0){ o.vx += 24 * dt; const s = Math.max(0, 1 - o.exit); o.grp.position.set(o.vx, st.beltTop + 0.4, o.lane);
+      o.grp.scale.setScalar(st.C.objScale * s); o.exit += dt * 1.6; if (o.exit >= 1){ o.active = false; o.grp.visible = false; } return; }
+    const tx = erpTocTargetX(st, o), k = dt > 0 ? Math.min(1, dt * 4) : 1; o.vx += (tx - o.vx) * k;
+    o.grp.position.set(o.vx, st.beltTop + 0.4, o.lane); o.grp.scale.setScalar(st.C.objScale); o.grp.visible = true;
+  }
+  function buildErpToc(section, cfg){
+    const g = buildSceneRoot(section);
+    g.add(labelSpriteSafe('📦 ERP · Order-to-Cash — Theory of Constraints', '#cfe0ff', 24, 0, 64, 0));
+    const floor = dioBox(200, 0.5, 120, 0x2c3550, 0x141b28); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.8));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.5, 600, 2); pl.position.set(0, 120, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(200, 40, 0x46557a, 0x2c3850); grid.position.y = 0.4;
+      const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.2; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
+    const C = ERP_TOC, n = C.n, beltTop = ERP_BELT_TOP, X0 = -((n - 1) / 2) * C.spacing, DESK_Z = -7;
+    const stationX = []; for (let i = 0; i < n; i++) stationX.push(X0 + i * C.spacing);
+    const beltLen = (n - 1) * C.spacing + C.spacing * 1.8;
+    const belt = dioBox(beltLen, 0.6, 6.5, 0x202d40, 0x0c1622); belt.position.set(0, beltTop, 0); g.add(belt);
+    for (const zz of [3.4, -3.4]){ const rail = dioBox(beltLen, 0.9, 0.7, 0x2a3a52, 0x16243a); rail.position.set(0, beltTop + 0.6, zz); g.add(rail); }
+    const rollers = []; const NR = 22;
+    for (let r = 0; r < NR; r++){ const m = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 6.2, 12),
+      new THREE.MeshStandardMaterial({ color: 0x3a4a60, emissive: new THREE.Color(0x10202f), emissiveIntensity: 0.13, roughness: 0.5, metalness: 0.6 }));
+      m.rotation.x = Math.PI / 2; m.position.set(-beltLen / 2 + (r + 0.5) * (beltLen / NR), beltTop - 0.5, 0); g.add(m); rollers.push(m); }
+    const chev = []; const NC = 16;
+    for (let c = 0; c < NC; c++){ const a = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.5, 4),
+      new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
+      a.rotation.z = -Math.PI / 2; a.position.set(-beltLen / 2 + c * (beltLen / NC), beltTop + 0.4, 0); g.add(a); chev.push(a); }
+    const stations = [];
+    for (let i = 0; i < n; i++){
+      const x = stationX[i], isC = (i === C.constraintIdx), hex = cfg.colors[i];
+      const sg = new THREE.Group(); sg.position.set(x, 0, DESK_Z); g.add(sg);
+      const base = dioBox(11, 3.2, 6.5, 0x1c2636, 0x0c141f); base.position.set(0, 1.6, 0); sg.add(base);
+      const top = dioBox(11, 0.4, 6.5, brightenHex(hex, 0.05), 0x10202f); top.position.set(0, 3.4, 0); sg.add(top);
+      const acc = dioBox(11, 0.5, 0.5, brightenHex(hex, 0.3), hex); acc.position.set(0, 3.85, -3.0); sg.add(acc);
+      const stand = dioBox(0.4, 2.2, 0.4, 0x2a3340, 0x0a0f18); stand.position.set(-2.8, 4.6, -2.2); sg.add(stand);
+      const mon = dioBox(4.4, 2.9, 0.3, 0x0c1622, 0x05151c); mon.position.set(-2.8, 6.3, -2.2); sg.add(mon);
+      const screen = new THREE.Mesh(new THREE.BoxGeometry(3.9, 2.5, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 }));
+      screen.position.set(-2.8, 6.3, -2.03); sg.add(screen);
+      const proc = dioBox(2.4, 2.6, 2.4, 0x26303e, 0x101822); proc.position.set(3.1, 4.9, -1.8); sg.add(proc);
+      const pole = dioBox(0.3, 5, 0.3, 0x2a3340, 0x0a0f18); pole.position.set(4.7, 6.0, 0.6); sg.add(pole);
+      const segGeo = new THREE.CylinderGeometry(0.72, 0.72, 1.0, 14);
+      const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(4.7, yy, 0.6); sg.add(m); return mt; };
+      const lampR = mkSeg(9.4, 0x20242c), lampA = mkSeg(8.3, 0x20242c), lampG = mkSeg(7.2, 0x3fe07a);
+      sg.add(labelSpriteSafe((isC ? '⚠ ' : (i + 1) + '. ') + cfg.stageNames[i] + (isC ? ' · CONSTRAINT' : ''), isC ? '#ffd0a0' : '#dbe8fb', isC ? 13 : 12, 0, 11.5, 0));
+      stations.push({ x, i, name: cfg.stageNames[i], rate: isC ? C.rateSlow : C.rateFast, isC, queue: [], busyT: 0, lampR, lampA, lampG, state: '' });
+    }
+    const orders = [];
+    for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      orders.push({ grp, active: false, station: -1, stageBuilt: -1, vx: 0, lane: 0, value: 0, exit: 0 }); }
+    const dashThru = labelSpriteSafe('', '#bfeaff', 15, 0, 52, -2); g.add(dashThru);
+    const dashWip = labelSpriteSafe('', '#ffd0a0', 13, 0, 46, -2); g.add(dashWip);
+    sceneState[section] = { g, cfg, C, stationX, stations, orders, chev, rollers, beltLen, beltTop, dashThru, dashWip,
+      spawnT: 0, spawned: 0, thruN: 0, thruT: 0, thruEMA: 0, count: new Array(n).fill(0), val: new Array(n).fill(0), phase: 0 };
+    updateErpToc(section);
+  }
+  // VIEW-ONLY refresh: per-station WIP counts + place orders at their queue slots (idempotent; stub-safe)
+  function updateErpToc(section){ const st = sceneState[section]; if (!st || !st.orders) return; const n = st.C.n;
+    st.count.fill(0); st.val.fill(0);
+    for (const o of st.orders){ if (!o.active) continue; if (o.station >= 0 && o.station < n){ st.count[o.station]++; st.val[o.station] += o.value; } erpTocPlace(st, o, 0); } }
+  // FREE-RUNNING (render loop only): spawn → service each station at its rate (constraint is slow) → advance + morph.
+  function animateErpToc(section, dt){ const st = sceneState[section]; if (!st || !st.orders) return; const C = st.C, n = C.n; st.phase += dt;
+    st.spawnT += dt; if (st.spawnT >= C.spawn && st.stations[0].queue.length < C.qcap){ st.spawnT = 0; erpTocSpawn(st); }
+    for (let i = 0; i < n; i++){ const stn = st.stations[i]; stn.busyT -= dt; const next = st.stations[i + 1];
+      const canPush = (i === n - 1) || (next && next.queue.length < C.qcap);
+      if (stn.busyT <= 0 && stn.queue.length && canPush){ const o = stn.queue.shift();
+        if (i === n - 1){ o.exit = 0.001; erpTocModel(st, o, n - 1); st.thruN++; }
+        else { o.station = i + 1; erpTocModel(st, o, i + 1); next.queue.push(o); }
+        stn.busyT = 1 / stn.rate; }
+      const blocked = stn.queue.length && !canPush, running = stn.queue.length && canPush;
+      const stt = stn.isC && stn.queue.length ? 'constraint' : (blocked ? 'blocked' : (running ? 'running' : 'starved'));
+      if (stt !== stn.state){ stn.state = stt;
+        const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
+        L(stn.lampG, stt === 'running', 0x3fe07a); L(stn.lampA, stt === 'constraint' || stt === 'blocked', 0xffb030); L(stn.lampR, false, 0xff4a4a); } }
+    for (const o of st.orders){ if (o.active) erpTocPlace(st, o, dt); }
+    for (const a of st.chev){ a.position.x += 7 * dt; if (a.position.x > st.beltLen / 2) a.position.x = -st.beltLen / 2; }
+    st.thruT += dt; if (st.thruT >= 1){ st.thruEMA = st.thruEMA * 0.6 + st.thruN * 0.4; st.thruN = 0; st.thruT -= 1;
+      let wip = 0; for (const stn of st.stations) wip += stn.queue.length;
+      if (st.dashThru) setSpriteText(st.dashThru, 'THROUGHPUT  ' + (Math.round(st.thruEMA * 60)) + '/min');
+      if (st.dashWip) setSpriteText(st.dashWip, 'WIP ' + wip + '   ·   CONSTRAINT: ' + st.cfg.stageNames[C.constraintIdx]); } }
+  function buildErpScene(){ buildErpToc('erp', ERP_FLOW_CFG); }
   function buildCrmScene(){ buildRingSankey('crm', CRM_FLOW_CFG); }
-  function updateErpScene(){ updateErpConveyor('erp'); }
+  function updateErpScene(){ updateErpToc('erp'); }
   function updateCrmScene(){ updateRingSankey('crm'); }
 
   /* ============================================================
