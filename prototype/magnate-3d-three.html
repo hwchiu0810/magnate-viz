@@ -9492,8 +9492,30 @@
   function buildTrafficTwin(){
     const G = new THREE.Group(); G.visible = false; scene.add(G);
     const N = 6, SP = 40, x0 = -(N - 1) / 2 * SP;
-    const carGeo = new THREE.BoxGeometry(2.2, 1.3, 4.2);
-    const carMats = [0x49e0ff, 0xffb347, 0x6ee7a8, 0xff8aa0, 0xc89bf0, 0xe6e6ea].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.12), emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.2 }));
+    const carMats = [0x49e0ff, 0xffb347, 0x6ee7a8, 0xff8aa0, 0xc89bf0, 0xe6e6ea].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.12), emissiveIntensity: 0.5, roughness: 0.45, metalness: 0.35 }));
+    // LOW-POLY CAR built from shared primitives (forward = +X so rotation.y = -heading orients it): chassis +
+    // hood/boot taper + cabin greenhouse + wrap-around tinted glass + 4 wheels + head/tail lights.
+    const cg = {
+      chassis: new THREE.BoxGeometry(4.6, 0.7, 2.0), hood: new THREE.BoxGeometry(1.5, 0.5, 1.8), cabin: new THREE.BoxGeometry(2.0, 0.95, 1.7),
+      glass: new THREE.BoxGeometry(2.05, 0.8, 1.45), wheel: new THREE.CylinderGeometry(0.5, 0.5, 0.42, 12),
+      headL: new THREE.BoxGeometry(0.18, 0.32, 1.5), tailL: new THREE.BoxGeometry(0.16, 0.34, 1.55),
+    };
+    const cm = {
+      glass: new THREE.MeshStandardMaterial({ color: 0x0c141e, roughness: 0.15, metalness: 0.6, transparent: true, opacity: 0.78 }),
+      wheel: new THREE.MeshStandardMaterial({ color: 0x12141a, roughness: 0.9, metalness: 0.1 }),
+      hub:   new THREE.MeshStandardMaterial({ color: 0x9aa6b8, roughness: 0.4, metalness: 0.7 }),
+      head:  new THREE.MeshBasicMaterial({ color: 0xfff1c8 }), tail: new THREE.MeshBasicMaterial({ color: 0xff3326 }),
+    };
+    const makeCar = (bodyMat) => { const g = new THREE.Group();
+      const ch = new THREE.Mesh(cg.chassis, bodyMat); ch.position.y = 0.78; g.add(ch);
+      const hd = new THREE.Mesh(cg.hood, bodyMat); hd.position.set(1.45, 1.05, 0); g.add(hd);
+      const cb = new THREE.Mesh(cg.cabin, bodyMat); cb.position.set(-0.45, 1.45, 0); g.add(cb);
+      const gl = new THREE.Mesh(cg.glass, cm.glass); gl.position.set(-0.45, 1.47, 0); g.add(gl);
+      for (const wx of [1.45, -1.45]) for (const wz of [-1.02, 1.02]){ const w = new THREE.Mesh(cg.wheel, cm.wheel); w.rotation.x = Math.PI / 2; w.position.set(wx, 0.5, wz); g.add(w);
+        const hub = new THREE.Mesh(cg.hub, cm.hub); hub.rotation.x = Math.PI / 2; hub.position.set(wx, 0.5, wz + (wz > 0 ? 0.22 : -0.22)); hub.scale.set(0.5, 1.05, 0.5); g.add(hub); }
+      const hlL = new THREE.Mesh(cg.headL, cm.head); hlL.position.set(2.32, 0.85, 0); g.add(hlL);
+      const tlL = new THREE.Mesh(cg.tailL, cm.tail); tlL.position.set(-2.32, 0.9, 0); g.add(tlL);
+      return g; };
     const lampGeo = new THREE.SphereGeometry(0.7, 8, 6);
     const nodes = [];
     for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){ const x = x0 + ix * SP, z = x0 + iy * SP;
@@ -9512,7 +9534,7 @@
       s.mat = mat; const idx = segs.push(s) - 1; a.edges.push(idx); b.edges.push(idx); s.road = rd; s.label = 'Road ' + a.ix + ',' + a.iy + (axis === 'H' ? '→E' : '→S'); return idx; };
     for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){ const nd = nodeAt(ix, iy);
       if (ix < N - 1) addSeg(nd, nodeAt(ix + 1, iy), 'H'); if (iy < N - 1) addSeg(nd, nodeAt(ix, iy + 1), 'V'); }
-    const vehicles = []; for (let k = 0; k < 160; k++){ const m = new THREE.Mesh(carGeo, carMats[k % carMats.length]); m.visible = false; G.add(m); vehicles.push({ mesh: m, active: false, seg: -1, dir: 1, t: 0, hops: 0, waitT: 0 }); }
+    const vehicles = []; for (let k = 0; k < 150; k++){ const m = makeCar(carMats[k % carMats.length]); m.visible = false; G.add(m); vehicles.push({ mesh: m, active: false, seg: -1, dir: 1, t: 0, hops: 0, waitT: 0 }); }
     const dashT = labelSpriteSafe('🚦 Smart City II · Traffic & Signal Control', '#cfe0ff', 20, 0, 42, 0); G.add(dashT);
     const dashA = labelSpriteSafe('', '#bfe6ff', 16, 0, 34, 0); G.add(dashA);
     trafficTwin = { G, N, SP, nodes, segs, nodeAt, vehicles, dashA,
@@ -9548,7 +9570,7 @@
       const s2 = tw.segs[v.seg]; const fx = v.dir > 0 ? s2.ax : s2.bx, fz = v.dir > 0 ? s2.az : s2.bz;
       const ex = v.dir > 0 ? s2.bx : s2.ax, ez = v.dir > 0 ? s2.bz : s2.az;
       const px = fx + (ex - fx) * v.t, pz = fz + (ez - fz) * v.t; const ang = Math.atan2(ez - fz, ex - fx);
-      v.mesh.position.set(px + Math.sin(ang) * 1.8, 1.05, pz - Math.cos(ang) * 1.8); v.mesh.rotation.y = -ang; }
+      v.mesh.position.set(px + Math.sin(ang) * 1.8, 0.4, pz - Math.cos(ang) * 1.8); v.mesh.rotation.y = -ang; }
     let cong = 0; for (const s of tw.segs){ const dens = Math.min(1, s.count / c.capacity); let col;
       if (s.closed) col = 0x6a2a2a; else if (dens < 0.4) col = 0x2f5e3a; else if (dens < 0.7) col = 0x7a6a2a; else { col = 0x7a2a2a; }
       if (dens > 0.65 && !s.closed) cong++; if (s.mat && s.mat.color && s.mat.color.setHex) s.mat.color.setHex(col); }
