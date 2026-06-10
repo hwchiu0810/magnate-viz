@@ -9447,22 +9447,26 @@
     // ---- UNIFIED RANDOMIZE: roll the selected object(s)' TRANSFORM (position / rotation / scale) and VISUAL
     //      params (material colour / opacity, and the selected effect layer's parameters within their ranges).
     //      Seeded (no wall-clock); originals captured so "Restore" reverts. Mirrors the Smart-Factory randomizer. ----
-    let vfxRndSeed = 1; const rndMatOrig = new Map(); const rndTouched = new Set(); const rndParamOrig = {};
+    let vfxRndSeed = 1; const rndMatOrig = new Map(); const rndTouched = new Set(); const rndParamOrig = {}; const rndPinned = new Set();
     const vRnd = () => { vfxRndSeed++; return (function(v){ return v - Math.floor(v); })(Math.sin(vfxRndSeed * 12.9898 + 78.233) * 43758.5453); };
     const vRange = (lo, hi) => lo + vRnd() * (hi - lo);
     function rndHueColor(){ const c = new THREE.Color(); try { c.setHSL(vRnd(), 0.5 + vRnd() * 0.32, 0.45 + vRnd() * 0.2); } catch(_){} return c; }   // sub-white-safe (capped lightness)
     function eachMat(obj, fn){ try { obj.traverse((o) => { if (o && o.isMesh && o.material){ const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (m) fn(m); }); } }); } catch(_){} }
     function randomizeObjects(objs, opts){   // roll TRANSFORM + MATERIAL of an explicit object list; returns count
       vfxRndSeed = (vfxRndSeed % 99000) + 7; let n = 0;
+      const movedXf = opts.pos || opts.rot || opts.scl;
       for (const o of objs){ if (!o) continue; rndTouched.add(o); captureOrig(o);
         if (opts.pos){ o.position.x += vRange(-9, 9); o.position.z += vRange(-9, 9); o.position.y += vRange(-3, 3); }
         if (opts.rot){ o.rotation.y = vRange(0, Math.PI * 2); }
         if (opts.scl){ o.scale.setScalar(+(vRange(0.6, 1.7)).toFixed(3)); }
-        if (opts.col || opts.opa){ eachMat(o, (m) => { if (!rndMatOrig.has(m)) rndMatOrig.set(m, { c: (m.color && m.color.getHex) ? m.color.getHex() : null, o: m.opacity, t: m.transparent, dw: m.depthWrite });
-          if (opts.col && m.color && m.color.copy) m.color.copy(rndHueColor());
+        if (opts.col || opts.opa){ eachMat(o, (m) => { if (!rndMatOrig.has(m)) rndMatOrig.set(m, { c: (m.color && m.color.getHex) ? m.color.getHex() : null, e: (m.emissive && m.emissive.getHex) ? m.emissive.getHex() : null, o: m.opacity, t: m.transparent, dw: m.depthWrite });
+          if (opts.col){ if (m.color && m.color.copy) m.color.copy(rndHueColor());
+            if (m.emissive && m.emissive.copy){ const e = rndHueColor(); e.multiplyScalar(0.5); m.emissive.copy(e); } }   // tint the GLOW too (sub-white) so the change reads under bloom
           if (opts.opa){ const op = +(vRange(0.32, 1)).toFixed(2); m.opacity = op; m.transparent = (op < 0.99); } }); }
+        // PIN the moved transform so the section's animation loop can't snap it back next frame (else "no visible change")
+        if (movedXf){ try { snapshotPin(o); rndPinned.add(o); } catch(_){} }
         try { recordLayout(o); } catch(_){} n++; }
-      try { updateTargetHelper(); } catch(_){}
+      try { if (movedXf && typeof syncPinBtn === 'function') syncPinBtn(); updateTargetHelper(); } catch(_){}
       return n;
     }
     // randomize EVERY selectable object in the active section (drives the per-section panel button)
@@ -9496,12 +9500,13 @@
       msg(did ? ('🎲 Randomized ' + (objs.length || 0) + ' object' + (objs.length === 1 ? '' : 's') + (opts.fx ? ' + effect params' : '') + '.') : 'Select object(s) first (Shift-click), then 🎲 Randomize.', !did);
     }
     function restoreRandomized(){
+      rndPinned.forEach((o) => { try { pinned.delete(o); } catch(_){} });   // un-pin so the section animation resumes
       rndTouched.forEach((o) => { const t = origMap.get(o); if (t){ try { o.position.fromArray(t.p); o.quaternion.fromArray(t.q); o.scale.fromArray(t.s); } catch(_){} } });
-      rndMatOrig.forEach((s, m) => { try { if (s.c != null && m.color && m.color.setHex) m.color.setHex(s.c); m.opacity = s.o; m.transparent = s.t; m.depthWrite = s.dw; } catch(_){} });
+      rndMatOrig.forEach((s, m) => { try { if (s.c != null && m.color && m.color.setHex) m.color.setHex(s.c); if (s.e != null && m.emissive && m.emissive.setHex) m.emissive.setHex(s.e); m.opacity = s.o; m.transparent = s.t; m.depthWrite = s.dw; } catch(_){} });
       for (const lid in rndParamOrig){ const L = layers.find((x) => String(x.id) === String(lid)); if (L){ try { L.params = JSON.parse(JSON.stringify(rndParamOrig[lid])); for (const k in L.params) pushHandle(L, k); } catch(_){} } }
-      rndTouched.clear(); rndMatOrig.clear(); for (const k in rndParamOrig) delete rndParamOrig[k];
-      try { buildParamPane(); updateTargetHelper(); } catch(_){}
-      msg('↺ Restored randomized objects + params.');
+      rndTouched.clear(); rndMatOrig.clear(); rndPinned.clear(); for (const k in rndParamOrig) delete rndParamOrig[k];
+      try { if (typeof syncPinBtn === 'function') syncPinBtn(); buildParamPane(); updateTargetHelper(); } catch(_){}
+      msg('↺ Restored randomized objects + params (animation resumes).');
     }
     // ---- MULTI-SELECT helpers: a pivot proxy at the selection centroid; its drag delta is applied rigidly
     //      (translate/rotate/scale) to every selected object via matrix math (Part: multi-select) ----
@@ -11975,8 +11980,8 @@
       if (title) title.textContent = nice + ' · Scene';
       body.innerHTML =
         '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="sc-rnd-pos" checked> Position</label>' +
-          '<label class="chk"><input type="checkbox" id="sc-rnd-rot"> Rotation</label>' +
-          '<label class="chk"><input type="checkbox" id="sc-rnd-scl"> Scale</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-rot" checked> Rotation</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-scl" checked> Scale</label>' +
           '<label class="chk"><input type="checkbox" id="sc-rnd-col" checked> Color</label>' +
           '<label class="chk"><input type="checkbox" id="sc-rnd-opa"> Opacity</label></div>' +
         '<button class="simbtn" id="sc-rnd-go" type="button">🎲 Randomize scene</button>' +
