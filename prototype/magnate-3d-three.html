@@ -9311,9 +9311,11 @@
         for (const uz of [-modDepth / 2 - 0.3, modDepth / 2 + 0.3]){ const post = dioBox(2.4, cubeH + 1.2, 0.5, 0x39424f, 0x141a22); post.position.set(0, cubeBaseY + cubeH / 2 - CELLY * 0.5, uz); wall.add(post); }
         wallsArr.push({ group: wall, baseX }); }
       const nearZ = mz - modDepth / 2 - 1, farZ = mz + modDepth / 2 - 1;
-      const convZ = (mz < -12) ? -24 : (mz > 12 ? 24 : -24);   // the retrieval conveyor row this bay delivers to
+      const li = (mz < 0) ? 0 : 1, convZ = li ? 24 : -24;   // the retrieval conveyor row this bay delivers to
+      let injSeg = -1; for (let si = 0; si < S.length; si++){ if (S[si].a === 'RET' + li && S[si].b === 'DSP' + li){ injSeg = si; break; } }   // a dropped tote enters the flow on this line's Retrieval→Dispatch belt
+      const injT = Math.max(0, Math.min(0.95, mx / 64));     // appear near the drop X, then flow on to shipping
       const p = whPicker(); p.grp.rotation.y = Math.PI / 2; p.grp.position.set(mx, 0, convZ); cubeGroup.add(p.grp);
-      banks.push({ walls: wallsArr, picker: { grp: p.grp, shuttle: p.shuttle, tote: p.tote }, modBins, cx: mx, cz: mz, nearZ, farZ, convZ,
+      banks.push({ walls: wallsArr, picker: { grp: p.grp, shuttle: p.shuttle, tote: p.tote }, modBins, cx: mx, cz: mz, nearZ, farZ, convZ, injSeg, injT,
         depth: DEPTH, floors: FLOORS, cellZ: CELLZ, cellY: CELLY, baseY: cubeBaseY, pst: 'seek', tgt: null, hold: 0, seed: mi2 * 4.13, step: 0 }); }
     cubeGroup.add(labelSpriteSafe('▦ Mobile-Rack Inventory · 3×4 grid of 12 modules (' + slotTot + ' bins)', '#cfe0ff', 16, cubeCX, cubeBaseY + cubeH + 9, 0));
     // AMR FLEET — one autonomous mobile robot per INTER-STAGE conveyor (between processing nodes; skips dock
@@ -9436,7 +9438,10 @@
               const ro = Math.floor(flowFrac(Math.sin((bk.seed + bk.step * 3.7)) * 9133.1) * bk.modBins.length);
               for (let n = 0; n < bk.modBins.length; n++){ const rb = bk.modBins[(ro + n) % bk.modBins.length]; if (!rb.occ){ rb.occ = true; rb.mesh.material = rb.mat; st.slotOcc++; break; } } }
             if (pk.tote) pk.tote.visible = true; bk.pst = 'return'; } }
-        else if (bk.pst === 'return'){ if (reach(pk, bk.cx, bk.baseY + 1, bk.convZ)){ if (pk.tote) pk.tote.visible = false; st.picks = (st.picks || 0) + 1; bk.tgt = null; bk.pst = 'seek'; } }
+        else if (bk.pst === 'return'){ if (reach(pk, bk.cx, bk.baseY + 1, bk.convZ)){ if (pk.tote) pk.tote.visible = false; st.picks = (st.picks || 0) + 1;
+          // INJECT the retrieved tote as a part onto this bay's retrieval-conveyor line (flows on to shipping)
+          if (bk.injSeg >= 0){ const fp = oeeFree(st); if (fp){ oeeEmit(st, fp, bk.injSeg, 3); fp.t = bk.injT; const s = st.S[bk.injSeg]; fp.vx = s.ax + (s.bx - s.ax) * fp.t; fp.vz = s.az + (s.bz - s.az) * fp.t; fp.vy = (s.say != null ? s.say : st.beltTop); } }
+          bk.tgt = null; bk.pst = 'seek'; } }
         else { reach(pk, bk.cx, bk.baseY + 1, bk.convZ); }
       } }
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
