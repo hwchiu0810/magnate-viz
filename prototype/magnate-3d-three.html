@@ -9231,11 +9231,11 @@
     const mast = dioBox(0.8, 42, 0.8, 0x6577a0, 0x1a2230); mast.position.y = 22; g.add(mast);
     const shuttle = new THREE.Group(); shuttle.position.y = 6; g.add(shuttle);
     const fork = dioBox(2.6, 0.4, 2.2, 0x9fb0c8, 0x2a3a4d); shuttle.add(fork);
-    const tote = dioBox(1.9, 1.5, 1.9, 0xc8975a, 0x3a2912); tote.position.y = 1.0; shuttle.add(tote);
-    return { grp: g, shuttle }; }
+    const tote = dioBox(1.9, 1.5, 1.9, 0xc8975a, 0x3a2912); tote.position.y = 1.0; tote.visible = false; shuttle.add(tote);   // shown only while carrying
+    return { grp: g, shuttle, tote }; }
   function buildWarehouseScene(section){
     const g = buildSceneRoot(section);
-    g.add(labelSpriteSafe('📦 Warehouse Automation · WMS — 3D Automated Inventory (10×10×10 grid · 1000 bins) · store · retrieve · ship', '#cfe0ff', 22, 0, 88, 0));
+    g.add(labelSpriteSafe('📦 Warehouse Automation · WMS — Mobile-Rack DC (3×4 bays) · pick robots retrieve to the conveyors', '#cfe0ff', 22, 0, 78, 0));
     const floor = dioBox(330, 0.5, 200, 0x252e3e, 0x10161f); floor.position.y = 0.15; g.add(floor);
     g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.85));
     const pl = new THREE.PointLight(0xeaf2ff, 0.6, 950, 2); pl.position.set(0, 170, 40); g.add(pl);
@@ -9298,7 +9298,7 @@
     const emptyMat = new THREE.MeshStandardMaterial({ color: 0x1a2330, emissive: new THREE.Color(0x070b12), roughness: 0.85, metalness: 0.1, transparent: true, opacity: 0.5 });
     const cellY = (iy) => cubeBaseY + iy * CELLY;
     const bins = [], banks = []; let slotTot = 0, slotOcc = 0, mIdx = 0;
-    for (let r = 0; r < ROWZ.length; r++) for (let cc = 0; cc < COLX.length; cc++){ const mx = COLX[cc], mz = ROWZ[r], mi2 = mIdx++; const wallsArr = [];
+    for (let r = 0; r < ROWZ.length; r++) for (let cc = 0; cc < COLX.length; cc++){ const mx = COLX[cc], mz = ROWZ[r], mi2 = mIdx++; const wallsArr = [], modBins = [];
       // each MODULE sits on its own footprint slab so the 3×4 grid of distinct structures reads clearly
       const slab = dioBox(modW + 3, 0.7, modDepth + 4, 0x222c3a, 0x0c131d); slab.position.set(mx, cubeBaseY - 1.4, mz); cubeGroup.add(slab);
       cubeGroup.add(labelSpriteSafe('Bay ' + String.fromCharCode(65 + r) + (cc + 1), '#8fb6d8', 9, mx, cubeBaseY + cubeH + 2.5, mz));
@@ -9306,13 +9306,15 @@
         for (let iy = 0; iy < FLOORS; iy++) for (let c = 0; c < DEPTH; c++){ slotTot++;
           const occ = flowFrac(Math.sin((mi2 * 71.3 + w * 53.1 + c * 12.9 + iy * 37.7 + whRateSeed * 3.3)) * 43758.5453) > 0.28; const sku = (mi2 + w * 5 + c * 3 + iy) % skuMats.length;
           const m = new THREE.Mesh(binGeo, occ ? skuMats[sku] : emptyMat); m.position.set(0, cellY(iy), (c - (DEPTH - 1) / 2) * CELLZ); wall.add(m);
-          if (occ) slotOcc++; bins.push({ mesh: m, occ, mat: skuMats[sku] }); }
+          const b = { mesh: m, occ, mat: skuMats[sku], w: w, c: c, f: iy }; if (occ) slotOcc++; bins.push(b); modBins.push(b); }
         for (let iy = 0; iy < FLOORS; iy++){ const shelf = dioBox(2.4, 0.2, modDepth + 1.0, 0x2a3442, 0x0e1620); shelf.position.set(0, cellY(iy) - CELLY * 0.42, 0); wall.add(shelf); }
         for (const uz of [-modDepth / 2 - 0.3, modDepth / 2 + 0.3]){ const post = dioBox(2.4, cubeH + 1.2, 0.5, 0x39424f, 0x141a22); post.position.set(0, cubeBaseY + cubeH / 2 - CELLY * 0.5, uz); wall.add(post); }
         wallsArr.push({ group: wall, baseX }); }
       const nearZ = mz - modDepth / 2 - 1, farZ = mz + modDepth / 2 - 1;
-      const p = whPicker(); p.grp.rotation.y = Math.PI / 2; p.grp.position.set(mx, 0, nearZ); cubeGroup.add(p.grp);
-      banks.push({ walls: wallsArr, picker: { grp: p.grp, shuttle: p.shuttle }, cx: mx, cz: mz, nearZ, farZ, phase: mi2 * 0.9 }); }
+      const convZ = (mz < -12) ? -24 : (mz > 12 ? 24 : -24);   // the retrieval conveyor row this bay delivers to
+      const p = whPicker(); p.grp.rotation.y = Math.PI / 2; p.grp.position.set(mx, 0, convZ); cubeGroup.add(p.grp);
+      banks.push({ walls: wallsArr, picker: { grp: p.grp, shuttle: p.shuttle, tote: p.tote }, modBins, cx: mx, cz: mz, nearZ, farZ, convZ,
+        depth: DEPTH, floors: FLOORS, cellZ: CELLZ, cellY: CELLY, baseY: cubeBaseY, pst: 'seek', tgt: null, hold: 0, seed: mi2 * 4.13, step: 0 }); }
     cubeGroup.add(labelSpriteSafe('▦ Mobile-Rack Inventory · 3×4 grid of 12 modules (' + slotTot + ' bins)', '#cfe0ff', 16, cubeCX, cubeBaseY + cubeH + 9, 0));
     // AMR FLEET — one autonomous mobile robot per INTER-STAGE conveyor (between processing nodes; skips dock
     // stubs + vertical lifts). On the RE-PICK conveyors the AMR is FUNCTIONAL: it picks up the actual mis-picked
@@ -9411,23 +9413,36 @@
       } } }
     if (st.env){ const ecx = st.env.cx || 0, esp = st.env.span || 120;
       if (st.env.trolley) st.env.trolley.position.x = ecx + Math.sin(T * 0.12) * (esp / 2 - 8); }
-    // MOBILE RACK (two banks flanking the conveyor): slide each bank's 10 walls along X so ONE Z-aisle opens at a
-    // cycling index; that bank's pick robot eases to the open aisle's X, drives its depth (Z) + hoists (Y). Live
-    // store/retrieve churn flips bins so occupancy drifts.
-    if (st.banks){ const kz = Math.min(1, dt * 2.5), dwell = 6;
-      for (let bi = 0; bi < st.banks.length; bi++){ const bk = st.banks[bi], NW = bk.walls.length, a = 1 + (Math.floor(T / dwell + bi * 3) % (NW - 1));
-        for (let i = 0; i < NW; i++){ const wll = bk.walls[i]; const tgt = wll.baseX + (i >= a ? st.aisleW / 2 : -st.aisleW / 2); wll.group.position.x += (tgt - wll.group.position.x) * kz; }
-        const gapX = (bk.walls[a - 1].baseX + bk.walls[a].baseX) / 2;
-        const pk = bk.picker; if (pk){ pk.grp.position.x += (gapX - pk.grp.position.x) * kz;
-          pk.grp.position.z = bk.nearZ + (0.5 + 0.5 * Math.sin(T * 0.55 + bk.phase)) * (bk.farZ - bk.nearZ);
-          if (pk.shuttle) pk.shuttle.position.y = 6 + (0.5 + 0.5 * Math.sin(T * 0.9 + bk.phase)) * (st.cubeH - 6); } } }
-    if (st.bins && st.bins.length){ st.invClock = (st.invClock || 0) + dt; if (st.invClock > 0.7){ st.invClock = 0;
-      for (let q = 0; q < 4; q++){ st.invStep = (st.invStep || 0) + 1; const idx = Math.floor(flowFrac(Math.sin(st.invStep * 12.9898) * 43758.5453) * st.bins.length) % st.bins.length; const b = st.bins[idx]; if (!b) continue;
-        b.occ = !b.occ; b.mesh.material = b.occ ? b.mat : st.emptyMat; st.slotOcc += b.occ ? 1 : -1; if (st.slotOcc < 0) st.slotOcc = 0; if (st.slotOcc > st.slotTot) st.slotOcc = st.slotTot; } } }
+    // MOBILE RACK + PICK ROBOTS: each bay's robot runs a retrieval CYCLE — choose an occupied bin, open that
+    // bin's aisle (the walls slide), drive in + hoist to it, GRAB the tote (bin empties + a bin elsewhere
+    // restocks), carry it OUT to the retrieval conveyor, DROP it (count a pick), repeat.
+    if (st.banks){ const kz = Math.min(1, dt * 2.6), NWv = st.banks[0] ? st.banks[0].walls.length : 4;
+      const reach = (pk, tx, ty, tz) => { pk.grp.position.x += (tx - pk.grp.position.x) * kz; pk.grp.position.z += (tz - pk.grp.position.z) * kz; if (pk.shuttle) pk.shuttle.position.y += (ty - pk.shuttle.position.y) * kz;
+        return Math.abs(pk.grp.position.x - tx) < 1.2 && Math.abs(pk.grp.position.z - tz) < 1.2 && Math.abs(pk.shuttle.position.y - ty) < 1.2; };
+      for (const bk of st.banks){ const pk = bk.picker, NW = bk.walls.length;
+        if (!bk.tgt){ // pick an occupied bin in this bay (seeded scan from a rotating offset)
+          const off = Math.floor(flowFrac(Math.sin((bk.seed + (bk.step = (bk.step || 0) + 1) * 7.31)) * 4137.2) * bk.modBins.length);
+          for (let n = 0; n < bk.modBins.length; n++){ const b = bk.modBins[(off + n) % bk.modBins.length]; if (b.occ && b.w >= 1){ bk.tgt = b; break; } }
+          bk.pst = 'seek'; }
+        const tgt = bk.tgt; let aisle = tgt ? tgt.w : 1; if (aisle < 1) aisle = 1; if (aisle > NW - 1) aisle = NW - 1;
+        // slide the walls to open the target bin's aisle (or sit compact when returning)
+        const openA = (bk.pst === 'seek' || bk.pst === 'grab') ? aisle : (bk.aisleHold || aisle); bk.aisleHold = openA;
+        for (let i = 0; i < NW; i++){ const wll = bk.walls[i]; const wx = wll.baseX + (i >= openA ? st.aisleW / 2 : -st.aisleW / 2); wll.group.position.x += (wx - wll.group.position.x) * kz; }
+        const gapX = (bk.walls[aisle - 1].baseX + bk.walls[aisle].baseX) / 2;
+        if (bk.pst === 'seek' && tgt){ const binZ = bk.cz + (tgt.c - (bk.depth - 1) / 2) * bk.cellZ, binY = bk.baseY + tgt.f * bk.cellY;
+          if (reach(pk, gapX, binY, binZ)) { bk.pst = 'grab'; bk.hold = 0.35; } }
+        else if (bk.pst === 'grab'){ bk.hold -= dt; if (bk.hold <= 0){ if (tgt.occ){ tgt.occ = false; tgt.mesh.material = st.emptyMat; if (st.slotOcc > 0) st.slotOcc--;
+              // restock a random empty bin elsewhere in the bay so occupancy stays balanced
+              const ro = Math.floor(flowFrac(Math.sin((bk.seed + bk.step * 3.7)) * 9133.1) * bk.modBins.length);
+              for (let n = 0; n < bk.modBins.length; n++){ const rb = bk.modBins[(ro + n) % bk.modBins.length]; if (!rb.occ){ rb.occ = true; rb.mesh.material = rb.mat; st.slotOcc++; break; } } }
+            if (pk.tote) pk.tote.visible = true; bk.pst = 'return'; } }
+        else if (bk.pst === 'return'){ if (reach(pk, bk.cx, bk.baseY + 1, bk.convZ)){ if (pk.tote) pk.tote.visible = false; st.picks = (st.picks || 0) + 1; bk.tgt = null; bk.pst = 'seek'; } }
+        else { reach(pk, bk.cx, bk.baseY + 1, bk.convZ); }
+      } }
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
       const occ = Math.max(0, Math.min(1, (st.slotOcc || 0) / (st.slotTot || 1)));
       const fill = Math.max(0.5, 1 - (st.qcFail || 0.03)), dock = st.availInst;
-      if (st.dashA) setSpriteText(st.dashA, 'Storage ' + Math.round(occ * 100) + '%   ·   Fill rate ' + Math.round(fill * 100) + '%   ·   Dock util ' + Math.round(dock * 100) + '%');
+      if (st.dashA) setSpriteText(st.dashA, 'Storage ' + Math.round(occ * 100) + '%   ·   Picks ' + (st.picks || 0) + '   ·   Dock util ' + Math.round(dock * 100) + '%');
       let wip = 0; for (const m of st.machines) wip += m.buf.length + (m.holding ? 1 : 0); const down = st.machines.filter((m) => m.down).length;
       if (st.dashB) setSpriteText(st.dashB, 'Throughput ' + Math.round(st.perfEMA * 60) + ' lines/min   ·   WIP ' + wip + '   ·   Blocked ' + down + '/' + st.machines.length);
       try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
