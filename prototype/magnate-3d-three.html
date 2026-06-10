@@ -8582,7 +8582,7 @@
    *  decouple machines (so buffer size buffers breakdowns — the OEE lesson). Live OEE = Availability ×
    *  Performance × Quality dashboard. VIEW-ONLY, pooled, headless-safe.
    * ============================================================ */
-  const SF_OEE = { bufCap: 5, rate: 1.2, spawn: 0.72, objN: 120, objScale: 1.35, mtbf: 16 };
+  const SF_OEE = { bufCap: 5, rate: 1.2, spawn: 0.66, objN: 240, objScale: 1.35, mtbf: 16 };
   // shared materials/geometries for the detailed machines + morphing workpieces (built once; recognizable, not boxes)
   const SFX_M = {
     steel: new THREE.MeshStandardMaterial({ color: 0x8a98ac, emissive: new THREE.Color(0x18222e), emissiveIntensity: 0.1, roughness: 0.4, metalness: 0.62 }),
@@ -8765,35 +8765,45 @@
     const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.grp.visible = true; }
   function buildSmartFactoryScene(section){
     const g = buildSceneRoot(section);
-    g.add(labelSpriteSafe('🏭 Smart Factory · Networked OEE Plant — converge · assemble · dispatch', '#cfe0ff', 22, 0, 70, 0));
-    const floor = dioBox(280, 0.5, 165, 0x2a3344, 0x12181f); floor.position.y = 0.15; g.add(floor);
+    g.add(labelSpriteSafe('🏭 Smart Factory · Networked OEE Plant — 6 lines · converge · branch · assemble · dispatch', '#cfe0ff', 22, 0, 74, 0));
+    const floor = dioBox(310, 0.5, 185, 0x2a3344, 0x12181f); floor.position.y = 0.15; g.add(floor);
     g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.85));
-    const pl = new THREE.PointLight(0xeaf2ff, 0.6, 800, 2); pl.position.set(0, 150, 40); g.add(pl);
-    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(280, 56, 0x46557a, 0x2c3850); grid.position.y = 0.4;
+    const pl = new THREE.PointLight(0xeaf2ff, 0.6, 900, 2); pl.position.set(0, 160, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(310, 62, 0x46557a, 0x2c3850); grid.position.y = 0.4;
       const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.2; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
     const C = SF_OEE, beltTop = 3.0, fr = (v) => v - Math.floor(v);
     // NODE GRAPH: 2 intake lines → mill/lathe → WELD (combine 2→1) → ASSEMBLE (dispatch 1→2) → 2 pack → 2 docks
     const N = {}, S = [];
     const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
-    // 4 intake → 4 machining → 2 sub-assembly welds → MAIN ASSEMBLY → QC/dispatch → 3 pack → 3 ship docks.
-    // EACH SITE RUNS AT A DIFFERENT THROUGHPUT (parts/s) — fast mills, slower lathes, the Main Assembly is the
-    // deliberate bottleneck — and the belts downstream of each site scroll at that site's throughput.
-    node('IN0', -108, -36, 'source', null, 'Intake A', 0); node('IN1', -108, -12, 'source', null, 'Intake B', 0);
-    node('IN2', -108, 12, 'source', null, 'Intake C', 0); node('IN3', -108, 36, 'source', null, 'Intake D', 0);
-    node('M0', -80, -36, 'machine', 'mill', 'Mill 1', 1, 1.6); node('M1', -80, -12, 'machine', 'lathe', 'Lathe 1', 1, 1.05);
-    node('M2', -80, 12, 'machine', 'mill', 'Mill 2', 1, 1.45); node('M3', -80, 36, 'machine', 'lathe', 'Lathe 2', 1, 0.95);
-    node('S0', -46, -24, 'merge', 'weld', 'Sub-weld A', 2, 1.0); node('S1', -46, 24, 'merge', 'weld', 'Sub-weld B', 2, 0.9);
-    node('ASSY', -8, 0, 'merge', 'assemble', 'Main Assembly', 3, 0.6);
-    node('QC', 26, 0, 'split', 'qc', 'QC · Dispatch', 3, 1.8);
-    node('P0', 64, -32, 'machine', 'pack', 'Pack A', 4, 1.3); node('P1', 64, 0, 'machine', 'pack', 'Pack B', 4, 1.1); node('P2', 64, 32, 'machine', 'pack', 'Pack C', 4, 1.2);
-    node('D0', 100, -32, 'sink', null, 'Ship A', 4); node('D1', 100, 0, 'sink', null, 'Ship B', 4); node('D2', 100, 32, 'sink', null, 'Ship C', 4);
+    // A BRANCHING, MULTI-PATH PLANT: 6 intake → 6 machining → 3 sub-assembly welds (combine 2→1) → 3 distribution
+    // hubs (dispatch 1→many) → 5 finishing cells (one is a mid-line splitter) → 2 main-assembly hubs (combine) →
+    // 2 QC/dispatch sorters (dispatch 1→3) → 5 pack lines → 5 ship docks. Cross-connecting diagonals everywhere.
+    // EACH SITE RUNS AT A DIFFERENT THROUGHPUT (parts/s) — the two Main-Assembly hubs are the deliberate
+    // bottlenecks — and the belts downstream of each site scroll at that site's throughput.
+    // DIVERGENCE only happens at 'split' nodes (1→N); CONVERGENCE (multiple inbound belts) is fine on any node.
+    const Zsrc = [-55, -33, -11, 11, 33, 55];
+    Zsrc.forEach((z, i) => node('IN' + i, -134, z, 'source', null, 'Intake ' + String.fromCharCode(65 + i), 0));
+    const mtypes = ['mill', 'lathe', 'mill', 'lathe', 'mill', 'lathe'], mrate = [1.9, 1.5, 1.85, 1.45, 1.9, 1.5];
+    Zsrc.forEach((z, i) => node('M' + i, -106, z, 'machine', mtypes[i], (mtypes[i] === 'mill' ? 'Mill ' : 'Lathe ') + (i + 1), 1, mrate[i]));
+    node('W0', -76, -37, 'merge', 'weld', 'Sub-weld A', 2, 1.7); node('W1', -76, 0, 'merge', 'weld', 'Sub-weld B', 2, 1.6); node('W2', -76, 37, 'merge', 'weld', 'Sub-weld C', 2, 1.65);
+    node('DS0', -46, -37, 'split', 'assemble', 'Distrib 1', 2, 2.2); node('DS1', -46, 0, 'split', 'assemble', 'Distrib 2', 2, 2.1); node('DS2', -46, 37, 'split', 'assemble', 'Distrib 3', 2, 2.15);
+    node('F0', -16, -44, 'machine', 'mill', 'Finish 1', 3, 1.6); node('F1', -16, -22, 'machine', 'lathe', 'Finish 2', 3, 1.4);
+    node('F2', -16, 0, 'split', 'qc', 'Sorter', 3, 2.0); node('F3', -16, 22, 'machine', 'lathe', 'Finish 3', 3, 1.35); node('F4', -16, 44, 'machine', 'mill', 'Finish 4', 3, 1.55);
+    node('A0', 16, -22, 'merge', 'assemble', 'Main Assembly A', 3, 0.92); node('A1', 16, 22, 'merge', 'assemble', 'Main Assembly B', 3, 0.88);
+    node('Q0', 46, -22, 'split', 'qc', 'QC · Dispatch A', 3, 2.2); node('Q1', 46, 22, 'split', 'qc', 'QC · Dispatch B', 3, 2.15);
+    const prate = [1.6, 1.4, 1.5, 1.45, 1.55], Zpk = [-48, -24, 0, 24, 48];
+    Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4, prate[i]));
+    Zpk.forEach((z, i) => node('D' + i, 110, z, 'sink', null, 'Ship ' + String.fromCharCode(65 + i), 4));
     const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate };
       s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
-    seg('IN0', 'M0'); seg('IN1', 'M1'); seg('IN2', 'M2'); seg('IN3', 'M3');
-    seg('M0', 'S0'); seg('M1', 'S0'); seg('M2', 'S1'); seg('M3', 'S1');
-    seg('S0', 'ASSY'); seg('S1', 'ASSY'); seg('ASSY', 'QC');
-    seg('QC', 'P0'); seg('QC', 'P1'); seg('QC', 'P2');
-    seg('P0', 'D0'); seg('P1', 'D1'); seg('P2', 'D2');
+    for (let i = 0; i < 6; i++) seg('IN' + i, 'M' + i);                                  // intake → machining
+    seg('M0', 'W0'); seg('M1', 'W0'); seg('M2', 'W1'); seg('M3', 'W1'); seg('M4', 'W2'); seg('M5', 'W2'); // 6 mills/lathes → 3 welds
+    seg('W0', 'DS0'); seg('W1', 'DS1'); seg('W2', 'DS2');                                // welds → distribution hubs
+    seg('DS0', 'F0'); seg('DS0', 'F1'); seg('DS1', 'F1'); seg('DS1', 'F2'); seg('DS1', 'F3'); seg('DS2', 'F3'); seg('DS2', 'F4'); // hubs fan out (crossing) → finishing
+    seg('F0', 'A0'); seg('F1', 'A0'); seg('F2', 'A0'); seg('F2', 'A1'); seg('F3', 'A1'); seg('F4', 'A1'); // finishing → 2 assembly hubs (sorter F2 feeds both)
+    seg('A0', 'Q0'); seg('A1', 'Q1');                                                    // assembly → QC
+    seg('Q0', 'PK0'); seg('Q0', 'PK1'); seg('Q0', 'PK2'); seg('Q1', 'PK2'); seg('Q1', 'PK3'); seg('Q1', 'PK4'); // QC dispatch → 5 pack (PK2 shared)
+    for (let i = 0; i < 5; i++) seg('PK' + i, 'D' + i);                                  // pack → ship docks
     const chev = [];
     S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, 0x202d40, 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
       for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
@@ -8807,7 +8817,7 @@
       nd.cg = cell.cg; nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
       nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7) * 1000) * 14; nd.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3) * 500) * 0.11; nd.offset = fr(Math.sin((mi + 1) * 12.9898) * 43758.5);
       machines.push(nd); mi++; }
-    const sparkNode = N.S0 || N.S1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
+    const sparkNode = N.W0 || N.W1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
       for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sgo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD })); sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
     // AGV FLEET — one cart per INTER-STAGE belt (between processing nodes; skips intake-pad + ship-dock stubs)
     const agvs = []; S.forEach((s, si) => { if (N[s.a].kind === 'source' || N[s.b].kind === 'sink') return;
@@ -8817,9 +8827,10 @@
       parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, exitT: 0, stageBuilt: -1 }); }
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 58, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
+    let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
     sceneState[section] = { g, C, N, S, machines, parts, chev, sparks, sparkNode, agvs, beltTop, env,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
-      count: new Array(5).fill(0), val: new Array(5).fill(0) };
+      perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 3), count: new Array(5).fill(0), val: new Array(5).fill(0) };
     updateSmartFactoryScene(section);
   }
   function updateSmartFactoryScene(section){ const st = sceneState[section]; if (!st || !st.parts) return;
@@ -8878,7 +8889,7 @@
         k.m.position.x += k.vx * dt; k.m.position.y += (k.vy - 16 * k.t) * dt; k.m.position.z = ez; if (k.m.material) k.m.material.opacity = 0.9 * (1 - k.t); } }
     if (st.env && st.env.trolley) st.env.trolley.position.x = (st.env.cx || 0) + Math.sin(T * 0.12) * ((st.env.span || 120) / 2 - 8);
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
-      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / (C.rate * 1.6))), quality = 0.97, oee = avail * perf * quality;
+      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / (st.perfRef || (C.rate * 1.6)))), quality = 0.97, oee = avail * perf * quality;
       if (st.dashA) setSpriteText(st.dashA, 'OEE ' + Math.round(oee * 100) + '%   =  A ' + Math.round(avail * 100) + '%  ×  P ' + Math.round(perf * 100) + '%  ×  Q ' + Math.round(quality * 100) + '%');
       let wip = 0; for (const m of st.machines) wip += m.buf.length + (m.holding ? 1 : 0); const down = st.machines.filter((m) => m.down).length;
       if (st.dashB) setSpriteText(st.dashB, 'Throughput ' + Math.round(st.perfEMA * 60) + '/min   ·   WIP ' + wip + '   ·   Down ' + down + '/' + st.machines.length);
@@ -11482,7 +11493,7 @@
     // OrbitControls path: retarget controls to the diorama center + place the orbit camera. The
     // rotate-to flourish runs as controls.autoRotate (frame loop disables it under reduced-motion).
     if (useOrbit && controls){
-      const dist = (section === 'smart-factory') ? 215 : stageCam.dist;   // the big networked plant needs a wider view
+      const dist = (section === 'smart-factory') ? 250 : stageCam.dist;   // the big networked plant needs a wider view
       orbitTo(stageCam.pivot.x, stageCam.pivot.y, stageCam.pivot.z, dist, ORBIT_DEFAULT.polar, sectionToYaw);
       controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
     }
