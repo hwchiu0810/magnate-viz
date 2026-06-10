@@ -319,6 +319,9 @@
   .vfx-target-now{font-size:10px;color:#bfe7f8;margin-bottom:2px}
   .vfx-target-now b{color:#9be7ff}
   .vfx-target-btns{display:flex;gap:6px;margin-top:6px}
+  .vfx-rnd-chk{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:5px}
+  .vfx-rnd-chk .chk{display:flex;align-items:center;gap:3px;font-size:10.5px;color:#cfe0ff;cursor:pointer;white-space:nowrap}
+  .vfx-rnd-chk .chk input{accent-color:#3fd6ff;cursor:pointer;margin:0}
   #vfx-target-pick.on,.vfx-abtn.on{background:#0d3a52;border-color:#3fd6ff;color:#dff6ff;box-shadow:0 0 0 1px #3fd6ff inset}
   .vfx-target-hint{font-size:8.5px;color:#5a8197;margin-top:6px;line-height:1.4}
   #vfx-target-badge{font-variant-numeric:tabular-nums}
@@ -791,6 +794,19 @@
               <button class="vfx-abtn on" type="button" data-gmode="translate" aria-pressed="true">Move</button>
               <button class="vfx-abtn" type="button" data-gmode="rotate" aria-pressed="false">Rotate</button>
               <button class="vfx-abtn" type="button" data-gmode="scale" aria-pressed="false">Scale</button>
+            </div>
+            <div class="vfx-target-now" style="margin-top:6px">🎲 Randomize selection</div>
+            <div class="vfx-rnd-chk" id="vfx-rnd-chk">
+              <label class="chk"><input type="checkbox" id="vfx-rnd-pos" checked> Position</label>
+              <label class="chk"><input type="checkbox" id="vfx-rnd-rot"> Rotation</label>
+              <label class="chk"><input type="checkbox" id="vfx-rnd-scl"> Scale</label>
+              <label class="chk"><input type="checkbox" id="vfx-rnd-col"> Color</label>
+              <label class="chk"><input type="checkbox" id="vfx-rnd-opa"> Opacity</label>
+              <label class="chk"><input type="checkbox" id="vfx-rnd-fx"> Effect params</label>
+            </div>
+            <div class="vfx-target-btns">
+              <button class="vfx-abtn" id="vfx-rnd-go" type="button" aria-label="Randomize the chosen transform / visual parameters of the selected objects">🎲 Randomize</button>
+              <button class="vfx-abtn" id="vfx-rnd-restore" type="button" aria-label="Restore the randomized objects to their values before randomizing">↺ Restore</button>
             </div>
             <div class="vfx-target-now" style="margin-top:6px">Scene layout (saved adjustments)</div>
             <div class="vfx-target-btns">
@@ -9428,6 +9444,53 @@
       syncPinBtn(); msg('Layout reset + cleared. Reload to restore positions that came from a saved layout.');
     }
 
+    // ---- UNIFIED RANDOMIZE: roll the selected object(s)' TRANSFORM (position / rotation / scale) and VISUAL
+    //      params (material colour / opacity, and the selected effect layer's parameters within their ranges).
+    //      Seeded (no wall-clock); originals captured so "Restore" reverts. Mirrors the Smart-Factory randomizer. ----
+    let vfxRndSeed = 1; const rndMatOrig = new Map(); const rndTouched = new Set(); const rndParamOrig = {};
+    const vRnd = () => { vfxRndSeed++; return (function(v){ return v - Math.floor(v); })(Math.sin(vfxRndSeed * 12.9898 + 78.233) * 43758.5453); };
+    const vRange = (lo, hi) => lo + vRnd() * (hi - lo);
+    function rndHueColor(){ const c = new THREE.Color(); try { c.setHSL(vRnd(), 0.5 + vRnd() * 0.32, 0.45 + vRnd() * 0.2); } catch(_){} return c; }   // sub-white-safe (capped lightness)
+    function eachMat(obj, fn){ try { obj.traverse((o) => { if (o && o.isMesh && o.material){ const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (m) fn(m); }); } }); } catch(_){} }
+    function randomizeSelection(opts){
+      vfxRndSeed = (vfxRndSeed % 99000) + 7;
+      const objs = (selection && selection.length) ? selection.slice() : ((sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : []);
+      const wantXf = opts.pos || opts.rot || opts.scl || opts.col || opts.opa;
+      if (wantXf && objs.length){
+        for (const o of objs){ if (!o) continue; rndTouched.add(o); captureOrig(o);
+          if (opts.pos){ o.position.x += vRange(-9, 9); o.position.z += vRange(-9, 9); o.position.y += vRange(-3, 3); }
+          if (opts.rot){ o.rotation.y = vRange(0, Math.PI * 2); }
+          if (opts.scl){ o.scale.setScalar(+(vRange(0.6, 1.7)).toFixed(3)); }
+          if (opts.col || opts.opa){ eachMat(o, (m) => { if (!rndMatOrig.has(m)) rndMatOrig.set(m, { c: (m.color && m.color.getHex) ? m.color.getHex() : null, o: m.opacity, t: m.transparent, dw: m.depthWrite });
+            if (opts.col && m.color && m.color.copy) m.color.copy(rndHueColor());
+            if (opts.opa){ const op = +(vRange(0.32, 1)).toFixed(2); m.opacity = op; m.transparent = (op < 0.99); } }); }
+          try { recordLayout(o); } catch(_){} }
+        try { updateTargetHelper(); } catch(_){}
+      }
+      if (opts.fx){ const L = layers.find((x) => x.id === selId); if (L && L.controls){
+        if (!(L.id in rndParamOrig)){ try { rndParamOrig[L.id] = JSON.parse(JSON.stringify(L.params || {})); } catch(_){ rndParamOrig[L.id] = {}; } }
+        for (const key in L.controls){ const c = L.controls[key]; if (!c) continue;
+          if (c.type === 'color'){ const col = rndHueColor(); L.params[key] = [col.r, col.g, col.b]; }
+          else if (c.type === 'vector'){ const lo = (typeof c.min === 'number') ? c.min : 0, hi = (typeof c.max === 'number') ? c.max : 1; const a = [vRange(lo, hi), vRange(lo, hi)]; if (Array.isArray(L.params[key]) && L.params[key].length > 2) a.push(vRange(lo, hi)); L.params[key] = a.map((v) => +v.toFixed(4)); }
+          else if (c.type === 'select' && c.options && c.options.length){ L.params[key] = c.options[Math.min(c.options.length - 1, (vRnd() * c.options.length) | 0)]; }
+          else if (c.type === 'bool'){ L.params[key] = vRnd() < 0.5; }
+          else if (c.type === 'number' && typeof c.min === 'number' && typeof c.max === 'number'){ let v = vRange(c.min, c.max); if (c.step) v = Math.round(v / c.step) * c.step; L.params[key] = +v.toFixed(4); }
+          else if (typeof L.params[key] === 'number'){ L.params[key] = +(L.params[key] * vRange(0.5, 1.6)).toFixed(4); }
+          else continue;
+          try { pushHandle(L, key); } catch(_){} }
+        try { buildParamPane(); } catch(_){}
+      } }
+      const did = (wantXf && objs.length) || opts.fx;
+      msg(did ? ('🎲 Randomized ' + (objs.length || 0) + ' object' + (objs.length === 1 ? '' : 's') + (opts.fx ? ' + effect params' : '') + '.') : 'Select object(s) first (Shift-click), then 🎲 Randomize.', !did);
+    }
+    function restoreRandomized(){
+      rndTouched.forEach((o) => { const t = origMap.get(o); if (t){ try { o.position.fromArray(t.p); o.quaternion.fromArray(t.q); o.scale.fromArray(t.s); } catch(_){} } });
+      rndMatOrig.forEach((s, m) => { try { if (s.c != null && m.color && m.color.setHex) m.color.setHex(s.c); m.opacity = s.o; m.transparent = s.t; m.depthWrite = s.dw; } catch(_){} });
+      for (const lid in rndParamOrig){ const L = layers.find((x) => String(x.id) === String(lid)); if (L){ try { L.params = JSON.parse(JSON.stringify(rndParamOrig[lid])); for (const k in L.params) pushHandle(L, k); } catch(_){} } }
+      rndTouched.clear(); rndMatOrig.clear(); for (const k in rndParamOrig) delete rndParamOrig[k];
+      try { buildParamPane(); updateTargetHelper(); } catch(_){}
+      msg('↺ Restored randomized objects + params.');
+    }
     // ---- MULTI-SELECT helpers: a pivot proxy at the selection centroid; its drag delta is applied rigidly
     //      (translate/rotate/scale) to every selected object via matrix math (Part: multi-select) ----
     function recenterMultiProxy(){
@@ -10096,6 +10159,10 @@
         const tpin = $('vfx-pin-toggle'); if (tpin) tpin.onclick = () => { const o = pinTargets(); setPinned(!(o.length && o.every((x) => pinned.has(x)))); };
         // scene-layout config (save / export / import / reset) — persist gizmo adjustments
         try { loadLayoutFromStore(); } catch(_){}
+        const rgo = $('vfx-rnd-go'); if (rgo) rgo.onclick = () => randomizeSelection({
+          pos: !!($('vfx-rnd-pos') || {}).checked, rot: !!($('vfx-rnd-rot') || {}).checked, scl: !!($('vfx-rnd-scl') || {}).checked,
+          col: !!($('vfx-rnd-col') || {}).checked, opa: !!($('vfx-rnd-opa') || {}).checked, fx: !!($('vfx-rnd-fx') || {}).checked });
+        const rrst = $('vfx-rnd-restore'); if (rrst) rrst.onclick = restoreRandomized;
         const lsave = $('vfx-layout-save'); if (lsave) lsave.onclick = saveLayout;
         const lexp = $('vfx-layout-export'); if (lexp) lexp.onclick = exportLayout;
         const limp = $('vfx-layout-import'); if (limp) limp.onclick = importLayout;
@@ -10140,6 +10207,7 @@
         return {
           section: (typeof activeSection !== 'undefined') ? activeSection : null,
           target: tgt ? { id: tgt.id, label: tgt.label, group: !!tgt.group } : null,
+          selected: (selection || []).map((o) => { try { return { p: o.position.toArray().map((v) => +v.toFixed(2)), s: +o.scale.x.toFixed(3) }; } catch(_){ return null; } }),
           effect: L ? { name: L.name, family: L.family, kind: L.kind, params: cloneParams(L.params),
             driven: L.driven ? Object.keys(L.driven).map(k => ({ param: k, formula: L.driven[k].src })) : [] } : null
         };
@@ -10160,6 +10228,9 @@
       enforcePin(){ enforcePin(); },
       // introspection: how many objects are currently selected (1 = single, >1 = multi). View-only.
       selectionCount(){ return selection.length; },
+      // unified randomize — roll the chosen transform/visual params of the selected objects; restore reverts.
+      randomize(opts){ randomizeSelection(opts || { pos: true }); },
+      restoreRandom(){ restoreRandomized(); },
       // raycast the active section's candidate objects; on hit, set it as the target. Returns true if consumed.
       pickFromRay(ray, additive){
         if (freePickArmed) return freePickFromRay(ray, additive);     // "Pick any" → whole-scene raycast (Part 2)
