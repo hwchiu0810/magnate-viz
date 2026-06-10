@@ -8749,6 +8749,7 @@
   //     machines (gated by breakdowns), then advance — WELD COMBINES (2→1), ASSEMBLE DISPATCHES (1→2). ---
   function oeePlace(st, p, dt){
     let tx, tz;
+    if (p.carried){ p.grp.visible = true; return; }   // an AGV is ferrying this part; the AGV update sets its position
     if (p.state === 'exit'){ p.exitT += dt * 1.6; const s = Math.max(0, 1 - p.exitT); p.vx += 14 * dt;
       p.grp.position.set(p.vx, st.beltTop + 0.5 + p.exitT * 1.4, p.vz); p.grp.scale.setScalar(st.C.objScale * s);
       if (p.exitT >= 1){ p.active = false; p.grp.visible = false; } return; }
@@ -8842,9 +8843,12 @@
       machines.push(nd); mi++; }
     const sparkNode = N.W0 || N.W1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
       for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sgo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD })); sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
-    // AGV FLEET — one cart per INTER-STAGE belt (between processing nodes; skips intake-pad + ship-dock stubs)
+    // AGV FLEET — one cart per INTER-STAGE belt (between processing nodes; skips intake-pad + ship-dock stubs).
+    // On the REWORK belts the cart is FUNCTIONAL: it picks up the actual rejected part and ferries it (its generic
+    // crate is hidden — the real workpiece rides the deck); elsewhere it's a decorative ferry carrying a crate.
     const agvs = []; S.forEach((s, si) => { if (N[s.a].kind === 'source' || N[s.b].kind === 'sink') return;
-      const a = oeeAgv(); g.add(a.grp); agvs.push({ grp: a.grp, crate: a.crate, seg: si, off: 4.4, u: fr(Math.sin((si + 1) * 5.1) * 311), dir: 1 }); });
+      const a = oeeAgv(); g.add(a.grp); if (s.rework && a.crate) a.crate.visible = false;
+      agvs.push({ grp: a.grp, crate: a.crate, seg: si, off: 4.4, u: fr(Math.sin((si + 1) * 5.1) * 311), dir: 1, rework: !!s.rework, carry: null }); });
     const env = sfBuildEnv(g, machines.map((m) => ({ x: m.x, z: m.z })), beltTop);
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
       parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, exitT: 0, stageBuilt: -1 }); }
@@ -8869,7 +8873,9 @@
       for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
         const tgt = st.N[st.S[nd.outSegs[0]].b]; if (tgt.buf && tgt.buf.length >= st.bufCap) continue; const p = oeeFree(st); if (p){ oeeEmit(st, p, nd.outSegs[0], 0); st.spawned++; } } }
     // moving parts advance + ARRIVE (join a node buffer, or deliver at a sink)
-    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg]; p.t += (16 * (s.spd || 1) * dt) / s.len;
+    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg];
+      if (p.carried || s.rework) continue;   // rework-belt parts are ferried by their AGV (driven in the AGV loop), not self-advancing
+      p.t += (16 * (s.spd || 1) * dt) / s.len;
       if (p.t >= 1){ const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; } else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); } } }
     // machine SERVICE (breakdown-gated): start (consume need, merge takes 2) → finish (emit; split dispatches 1→2)
     for (const m of st.machines){
@@ -8906,13 +8912,29 @@
     }
     for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
     for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
-    // AGV fleet: little guided carts ferry parts between processing nodes (drive a parallel aisle beside each
-    // inter-stage belt, carry a crate outbound, return empty) — speed tracks the feeding site's throughput
-    if (st.agvs){ for (const v of st.agvs){ const s = st.S[v.seg]; v.u += v.dir * (9 * (s.spd || 1) * dt) / s.len;
-      if (v.u >= 1){ v.u = 1; v.dir = -1; if (v.crate) v.crate.visible = false; } else if (v.u <= 0){ v.u = 0; v.dir = 1; if (v.crate) v.crate.visible = true; }
-      const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u;
-      v.grp.position.set(bx - Math.sin(s.ang) * v.off, 0.45, bz + Math.cos(s.ang) * v.off);
-      v.grp.rotation.y = -s.ang + (v.dir < 0 ? Math.PI : 0); } }
+    // AGV fleet — REWORK carts carry the actual rejected part (pick up at the start, ferry it across, deliver
+    // into the next node, drive back empty); other carts are decorative ferries (crate outbound, return empty).
+    if (st.agvs){ for (const v of st.agvs){ const s = st.S[v.seg]; const spd = (s.spd || 1);
+      if (v.rework){
+        if (!v.carry){
+          if (v.u <= 0.03){ for (const p of st.parts){ if (p.active && p.state === 'moving' && p.seg === v.seg && !p.carried){ v.carry = p; p.carried = true; v.u = 0; v.dir = 1; break; } } }
+          if (!v.carry && v.u > 0){ v.u -= (16 * spd * dt) / s.len; if (v.u < 0) v.u = 0; }   // empty: roll back to the pickup end
+        }
+        if (v.carry){ v.u += (16 * spd * dt) / s.len;
+          if (v.u >= 1){ v.u = 1; const p = v.carry; p.carried = false; v.carry = null;
+            const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; } else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); }
+            v.dir = -1; } }
+        const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u;
+        const px = bx - Math.sin(s.ang) * v.off, pz = bz + Math.cos(s.ang) * v.off;
+        v.grp.position.set(px, 0.45, pz); v.grp.rotation.y = -s.ang;
+        if (v.carry){ v.carry.grp.position.set(px, 2.0, pz); v.carry.grp.scale.setScalar(st.C.objScale * 0.9); v.carry.grp.visible = true; }
+      } else {
+        v.u += v.dir * (9 * spd * dt) / s.len;
+        if (v.u >= 1){ v.u = 1; v.dir = -1; if (v.crate) v.crate.visible = false; } else if (v.u <= 0){ v.u = 0; v.dir = 1; if (v.crate) v.crate.visible = true; }
+        const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u;
+        v.grp.position.set(bx - Math.sin(s.ang) * v.off, 0.45, bz + Math.cos(s.ang) * v.off);
+        v.grp.rotation.y = -s.ang + (v.dir < 0 ? Math.PI : 0);
+      } } }
     const wnode = st.sparkNode;
     if (st.sparks && st.sparks.length && wnode){ const welding = wnode.state === 'running'; const ex = wnode.x, ey = st.beltTop + 4.2, ez = wnode.z + 1.6;
       for (let s = 0; s < st.sparks.length; s++){ const k = st.sparks[s]; k.t += dt * 2.4;
