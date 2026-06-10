@@ -203,6 +203,9 @@
   .simctl input[type=range]{width:100%;accent-color:#3fe07a;cursor:pointer}
   .simctl select{width:100%;background:#0c2018;border:1px solid #2a6a4a;color:#dff6ea;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer}
   .simctl select:focus-visible{outline:2px solid #3fe07a;outline-offset:1px}
+  .simchk{flex-direction:row !important;flex-wrap:wrap;gap:4px 10px !important;align-items:center}
+  .simchk .chk{display:flex;align-items:center;gap:3px;font-size:10px;color:#cfeede;cursor:pointer;white-space:nowrap}
+  .simchk .chk input{accent-color:#3fe07a;cursor:pointer;margin:0}
   .simbtn{background:#0d3a2a;border:1px solid #2a6a4a;color:#cfeede;border-radius:8px;padding:4px 11px;font-size:11px;cursor:pointer;align-self:flex-end}
   .simbtn:hover{background:#125239;color:#eafff4}
   .simbtn:focus-visible{outline:2px solid #3fe07a;outline-offset:2px}
@@ -8588,7 +8591,12 @@
   // Assign every machine a SEEDED-RANDOM throughput within a band chosen by its FUNCTION so the network stays
   // balanced (assembly hubs are the slow bottleneck, convergence/dispatch nodes stay fast), then re-derive each
   // belt's speed + (optionally) each machine's availability clock. Returns the average QC reject rate.
-  function sfRollRates(N, S, C, seed, machines){
+  // opts: { rate, avail, reject } booleans (default all true) = WHICH parameters to roll; filter(id,nd) = WHICH
+  // objects are in scope (default all machines). Out-of-scope objects + unchecked parameters keep their values.
+  function sfRollRates(N, S, C, seed, machines, opts){
+    opts = opts || {};
+    const doRate = opts.rate !== false, doAvail = opts.avail !== false, doReject = opts.reject !== false;
+    const inScope = opts.filter || (() => true);
     let rc = 0; const fr = (v) => v - Math.floor(v);
     const rnd = () => { rc++; return fr(Math.sin(rc * 12.9898 + seed * 19.73) * 43758.5453); };
     const band = (id, nd) => {
@@ -8601,11 +8609,11 @@
       if (nd.type === 'lathe') return [1.3, 1.7];
       return [1.3, 1.7];
     };
-    for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink') continue;
-      const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate;
-      if (nd.qcGate) nd.failFrac = +(0.06 + rnd() * 0.12).toFixed(3); }
-    for (const s of S) s.spd = (N[s.a].rate || C.rate) / C.rate;       // belts scroll at the feeding site's rate
-    if (machines){ for (const m of machines){ const mi = m.mi || 0;    // reshuffle the availability/breakdown clocks too
+    for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink' || !inScope(id, nd)) continue;
+      if (doRate){ const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate; }
+      if (doReject && nd.qcGate) nd.failFrac = +(0.06 + rnd() * 0.12).toFixed(3); }
+    if (doRate) for (const s of S) s.spd = (N[s.a].rate || C.rate) / C.rate;   // belts scroll at the feeding site's rate
+    if (doAvail && machines){ for (const m of machines){ if (!inScope(m.id, m)) continue; const mi = m.mi || 0;  // reshuffle availability/breakdown clocks
       m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 14;
       m.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.11;
       m.offset = fr(Math.sin((mi + 1) * 12.9898 + seed * 5.0) * 43758.5); } }
@@ -11826,7 +11834,15 @@
         '<div class="simctl"><label>↳ Throughput <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="24" max="150" step="3" aria-label="Selected site throughput per minute"></div>' +
         '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between failures"></div>' +
         '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="8" step="1" aria-label="Inter-machine buffer capacity"></div>' +
-        '<button class="simbtn" id="sim-roll" type="button">🎲 Randomize rates</button>' +
+        '<div class="simctl"><label>🎲 Randomize — sites</label><select id="sim-rnd-scope" aria-label="Which sites to randomize">' +
+          '<option value="all">All sites</option><option value="sel">Selected site only</option>' +
+          '<option value="mill">All mills</option><option value="lathe">All lathes</option>' +
+          '<option value="weld">All welds + rework</option><option value="assemble">All assembly + distribution</option>' +
+          '<option value="qc">All QC + sorter</option><option value="pack">All pack</option></select></div>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="rnd-thru" checked> Throughput</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-avail" checked> Availability</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-rej" checked> Reject rate</label></div>' +
+        '<button class="simbtn" id="sim-roll" type="button">🎲 Randomize</button>' +
         '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
       const mt = $('sim-mtbf'), bf = $('sim-buf'), site = $('sim-site'), rate = $('sim-rate');
       const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
@@ -11844,10 +11860,16 @@
       if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
       if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || 4; if (st) st.bufCap = v; setBf(v); }; }
       setMt(mtv); setBf(bfv);
-      // 🎲 re-roll ALL sites' throughput + reject + availability rates to a fresh seeded-random set (deterministic per seed)
+      // 🎲 re-roll the CHOSEN parameters for the CHOSEN sites to a fresh seeded-random set (deterministic per seed)
       const rl = $('sim-roll'); if (rl) rl.onclick = () => { if (!st) return; sfRateSeed = (sfRateSeed % 9000) + 1;
-        st.qcFail = sfRollRates(st.N, st.S, st.C, sfRateSeed, st.machines);
-        cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
+        const scope = ($('sim-rnd-scope') || {}).value || 'all', selId = site ? site.value : null;
+        const filter = scope === 'all' ? null
+          : scope === 'sel' ? ((id) => id === selId)
+          : ((id, nd) => nd.type === scope);   // mill / lathe / weld(+RW) / assemble(distrib+assembly) / qc(sorter+dispatch) / pack
+        const opts = { rate: !!($('rnd-thru') || {}).checked, avail: !!($('rnd-avail') || {}).checked, reject: !!($('rnd-rej') || {}).checked, filter };
+        if (!opts.rate && !opts.avail && !opts.reject) return;   // nothing selected → no-op
+        st.qcFail = sfRollRates(st.N, st.S, st.C, sfRateSeed, st.machines, opts);
+        cur = findM(selId) || cur; setRate(cur); setSiteLabel(cur); };
       const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = SF_OEE.bufCap;
         if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); }
