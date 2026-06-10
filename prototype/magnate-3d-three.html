@@ -8604,44 +8604,102 @@
   ];
   function setOeePart(p, stage){ const s = Math.max(0, Math.min(OEE_PART.length - 1, stage)); if (p.stageBuilt === s) return;
     const g = p.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); OEE_PART[s](g); p.stageBuilt = s; }
-  // build ONE detailed, TYPE-SPECIFIC machine cell (base+feet+hazard stripe · enclosure+window+roof · control
-  // panel+screen+buttons · type tooling · robot arm(s) · andon stack-light · down beacon · label).
+  // build ONE detailed machine cell whose SILHOUETTE is SPECIFIC TO ITS FUNCTION (a vertical CNC mill reads
+  // differently from a horizontal lathe, a robotic weld cell, a big assembly hub, an inspection scanner gate,
+  // and a boxing/palletizing packer) — recognizable machines, not identical enclosures. Common to all: a base
+  // with feet + hazard stripe, an andon stack-light (R/A/G), a down beacon, and a name label.
   function sfMakeCell(g, i, x, z, hex, type, name){
     const cg = new THREE.Group(); cg.position.set(x, 0, z); g.add(cg);
-    const base = dioBox(11, 1.2, 7.5, 0x161e2a, 0x0a121c); base.position.set(0, 0.6, 0); cg.add(base);
-    for (const fx of [-4.6, 4.6]) for (const fz of [-3, 3]){ const ft = dioBox(0.9, 0.6, 0.9, 0x10161f, 0x05080c); ft.position.set(fx, 0.3, fz); cg.add(ft); }
-    const haz = dioBox(11.5, 0.32, 8.0, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.25, 0); cg.add(haz);
-    const enc = dioBox(9, 7, 6.2, 0x2a3442, 0x0e1620); enc.position.set(0, 4.8, 0); cg.add(enc);
-    const roof = dioBox(9.5, 0.5, 6.7, brightenHex(hex, 0.05), 0x10202f); roof.position.set(0, 8.5, 0); cg.add(roof);
-    const win = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.6, 0.14), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.25), transparent: true, opacity: 0.26 })); win.position.set(0, 5.1, -3.12); cg.add(win);
-    const panel = dioBox(3.0, 2.2, 0.3, 0x101820, 0x070d14); panel.position.set(3.2, 3.0, 3.18); cg.add(panel);
-    const scr = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.3, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 })); scr.position.set(3.2, 3.35, 3.35); cg.add(scr);
-    [0x3fe07a, 0xffb030, 0xff4a4a].forEach((c, b) => { const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.2, 10), new THREE.MeshBasicMaterial({ color: c })); btn.rotation.x = Math.PI / 2; btn.position.set(2.5 + b * 0.5, 2.1, 3.34); cg.add(btn); });
-    const tool = {};
+    const tool = {}, arms = []; let poleX = 4.6, poleZ = 3.2, beaconY = 8.9, baseW = 11, baseD = 7.5;
+    const feet = (w, d) => { for (const fx of [-w / 2 + 0.9, w / 2 - 0.9]) for (const fz of [-d / 2 + 0.9, d / 2 - 0.9]){ const ft = dioBox(0.9, 0.6, 0.9, 0x10161f, 0x05080c); ft.position.set(fx, 0.3, fz); cg.add(ft); } };
+    const ctrlPanel = (px, pz) => { const panel = dioBox(2.4, 2.0, 0.3, 0x101820, 0x070d14); panel.position.set(px, 2.6, pz); cg.add(panel);
+      const scr = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.1, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 })); scr.position.set(px, 2.95, pz + 0.18); cg.add(scr);
+      [0x3fe07a, 0xffb030, 0xff4a4a].forEach((c, b) => { const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.2, 10), new THREE.MeshBasicMaterial({ color: c })); btn.rotation.x = Math.PI / 2; btn.position.set(px - 0.5 + b * 0.5, 1.8, pz + 0.18); cg.add(btn); }); };
+    const robot = (ax, az, baseY, phase) => { try { const ag = new THREE.Group(); ag.position.set(ax, baseY, az);
+        const r = makeRobotArm(ag, 0, 0, 2.0, 0.5, -0.9); cg.add(ag);
+        if (r && r.seg1) arms.push({ seg1: r.seg1, seg2: r.seg2, bz1: r.seg1.rotation.z, bz2: r.seg2.rotation.z, phase }); } catch(_){} };
+
     if (type === 'mill'){
-      for (const gx of [-2.6, 2.6]){ const col = dioBox(0.5, 5, 5.6, 0x3a4658, 0x141c28); col.position.set(gx, 5.0, 0); cg.add(col); }
-      const beam = dioBox(5.6, 0.6, 0.7, 0x4a586c, 0x16202c); beam.position.set(0, 6.7, 0); cg.add(beam);
-      const head = dioBox(1.3, 1.6, 1.3, 0x9fb0c8, 0x2a3a4d); head.position.set(0, 5.5, 0); cg.add(head); tool.head = head;
-      const spin = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.16, 1.5, 10), SFX_M.steel); spin.position.set(0, 4.4, 0); cg.add(spin); tool.spin = spin;
+      // VERTICAL machining centre: cabinet body + tall portal columns + cross beam + sliding spindle head
+      baseW = 10; baseD = 7.5; beaconY = 10.0;
+      const base = dioBox(10, 1.2, 7.5, 0x161e2a, 0x0a121c); base.position.set(0, 0.6, 0); cg.add(base); feet(10, 7.5);
+      const haz = dioBox(10.5, 0.3, 8.0, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.25, 0); cg.add(haz);
+      const body = dioBox(8, 3.6, 3.0, 0x2a3442, 0x0e1620); body.position.set(0, 3.0, -2.0); cg.add(body);
+      for (const gx of [-3.5, 3.5]){ const col = dioBox(0.9, 8.4, 0.9, brightenHex(hex, 0.04), 0x141c28); col.position.set(gx, 5.4, 1.2); cg.add(col); }
+      const beam = dioBox(8.0, 1.0, 1.3, 0x4a586c, 0x16202c); beam.position.set(0, 9.4, 1.2); cg.add(beam);
+      const head = dioBox(2.2, 2.0, 2.0, 0x9fb0c8, 0x2a3a4d); head.position.set(0, 6.6, 1.2); cg.add(head); tool.head = head;
+      const spin = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.18, 1.9, 10), SFX_M.steel); spin.position.set(0, 5.2, 1.2); cg.add(spin); tool.spin = spin; tool.spinAxis = 'y';
+      ctrlPanel(4.0, 1.9); poleX = 4.5; poleZ = -2.0;
     } else if (type === 'lathe'){
-      const chuck = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 1.0, 18), SFX_M.steel); chuck.rotation.z = Math.PI / 2; chuck.position.set(-2.6, 4.6, 0); cg.add(chuck); tool.spin = chuck;
-      const wbar = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 4, 12), SFX_M.steel); wbar.rotation.z = Math.PI / 2; wbar.position.set(0.4, 4.6, 0); cg.add(wbar);
-      const post = dioBox(0.7, 1.3, 0.7, 0x4a586c, 0x16202c); post.position.set(0.6, 3.7, 1.4); cg.add(post);
-    } else if (type === 'pack'){
-      const ram = dioBox(2.1, 0.9, 2.1, 0x4a586c, 0x16202c); ram.position.set(0, 6.3, 0); cg.add(ram); tool.ram = ram; tool.ramBaseY = 6.3;
+      // HORIZONTAL turning centre: long low bed + big headstock + spinning chuck/bar + tool turret + tailstock
+      baseW = 12.5; baseD = 5.0; beaconY = 5.4;
+      const bed = dioBox(12.5, 1.4, 4.6, 0x161e2a, 0x0a121c); bed.position.set(0, 0.7, 0); cg.add(bed); feet(12.5, 4.6);
+      const haz = dioBox(13, 0.3, 5.0, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.45, 0); cg.add(haz);
+      const guard = dioBox(11.5, 2.4, 0.4, brightenHex(hex, 0.04), 0x16202c); guard.position.set(0, 2.8, -2.1); cg.add(guard);
+      const head = dioBox(3.0, 3.2, 4.2, 0x2a3442, 0x0e1620); head.position.set(-4.3, 3.0, 0); cg.add(head);
+      const spinG = new THREE.Group(); spinG.position.set(-1.8, 3.0, 0); cg.add(spinG); tool.spin = spinG; tool.spinAxis = 'x';
+      const chuck = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 1.0, 18), SFX_M.steel); chuck.rotation.z = Math.PI / 2; chuck.position.set(-0.4, 0, 0); spinG.add(chuck);
+      const wbar = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 4.4, 12), SFX_M.steel); wbar.rotation.z = Math.PI / 2; wbar.position.set(2.3, 0, 0); spinG.add(wbar);
+      const turret = dioBox(1.1, 1.5, 1.1, 0x9fb0c8, 0x2a3a4d); turret.position.set(1.0, 4.2, 1.2); cg.add(turret);
+      const tail = dioBox(2.2, 2.6, 2.8, 0x39424f, 0x141a22); tail.position.set(4.6, 2.4, 0); cg.add(tail);
+      ctrlPanel(-4.3, 2.3); poleX = 5.6; poleZ = 1.9;
+    } else if (type === 'weld'){
+      // ROBOTIC WELD CELL: open platform + weld table + heavy pedestal robot + wire spool + safety screens (sparks here)
+      baseW = 9; baseD = 8; beaconY = 7.6;
+      const plat = dioBox(9, 1.2, 8, 0x161e2a, 0x0a121c); plat.position.set(0, 0.6, 0); cg.add(plat); feet(9, 8);
+      const haz = dioBox(9.5, 0.3, 8.5, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.25, 0); cg.add(haz);
+      const table = dioBox(4.2, 1.6, 3.2, 0x39424f, 0x141a22); table.position.set(0.6, 2.0, 1.4); cg.add(table);
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.8, 2.4, 16), SFX_M.dark); ped.position.set(-2.6, 2.2, -1.4); cg.add(ped);
+      robot(-2.6, -1.4, 3.4, i * 0.7);
+      const spool = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.7, 16), SFX_M.steel); spool.rotation.x = Math.PI / 2; spool.position.set(2.8, 3.4, -2.6); cg.add(spool); tool.spin = spool; tool.spinAxis = 'z';
+      for (const sx of [-4.3, 4.3]){ const scr = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.0, 7.0), new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.16, depthWrite: false })); scr.position.set(sx, 3.2, 0); cg.add(scr); }
+      ctrlPanel(3.6, 2.2); poleX = 4.0; poleZ = 3.4;
+    } else if (type === 'assemble'){
+      // LARGE ASSEMBLY HUB: big platform + central rotary fixture turntable + TWO robot arms + overhead frame
+      baseW = 13; baseD = 11; beaconY = 9.0; poleX = 6.0; poleZ = 4.6;
+      const plat = dioBox(13, 1.4, 11, 0x161e2a, 0x0a121c); plat.position.set(0, 0.7, 0); cg.add(plat); feet(13, 11);
+      const haz = dioBox(13.5, 0.3, 11.5, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.45, 0); cg.add(haz);
+      const turn = new THREE.Group(); turn.position.set(0, 1.9, 0); cg.add(turn); tool.spin = turn; tool.spinAxis = 'y';
+      const tt = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.8, 0.8, 24), SFX_M.steel); turn.add(tt);
+      const fix = dioBox(1.6, 1.4, 1.6, 0x9fb0c8, 0x2a3a4d); fix.position.y = 1.0; turn.add(fix);
+      robot(-4.4, 2.6, 1.6, i * 0.7); robot(4.4, 2.6, 1.6, i * 0.7 + 1.1);
+      for (const px of [-5.6, 5.6]) for (const pz of [-4.6, 4.6]){ const post = dioBox(0.7, 7.5, 0.7, brightenHex(hex, 0.04), 0x141c28); post.position.set(px, 4.4, pz); cg.add(post); }
+      for (const fz of [-4.6, 4.6]){ const fb = dioBox(11.6, 0.7, 0.7, 0x4a586c, 0x16202c); fb.position.set(0, 8.1, fz); cg.add(fb); }
+      const rack = dioBox(2.6, 3.2, 9, 0x2a3442, 0x0e1620); rack.position.set(-5.4, 2.6, 0); cg.add(rack);
+      ctrlPanel(5.2, 3.0);
+    } else if (type === 'qc'){
+      // INSPECTION SCANNER GATE: low deck + portal arch + a SWEEPING scan bar + sensor cameras + a screen tower
+      baseW = 9; baseD = 7; beaconY = 8.0;
+      const deck = dioBox(9, 1.0, 7, 0x161e2a, 0x0a121c); deck.position.set(0, 0.5, 0); cg.add(deck); feet(9, 7);
+      const haz = dioBox(9.5, 0.3, 7.5, 0x28b0d0, 0x06303a); haz.position.set(0, 1.1, 0); cg.add(haz);
+      for (const px of [-3.0, 3.0]){ const post = dioBox(0.85, 7.0, 0.85, brightenHex(hex, 0.04), 0x141c28); post.position.set(px, 4.2, 0); cg.add(post); }
+      const arch = dioBox(7.0, 0.9, 1.6, 0x4a586c, 0x16202c); arch.position.set(0, 7.6, 0); cg.add(arch);
+      const scan = new THREE.Mesh(new THREE.BoxGeometry(0.35, 5.4, 1.3), new THREE.MeshBasicMaterial({ color: 0x49e0ff, transparent: true, opacity: 0.6, depthWrite: false, blending: FLOW_ADD })); scan.position.set(0, 4.4, 0); cg.add(scan); tool.scan = scan;
+      for (const cz of [-0.5, 0.5]){ const cam = dioBox(0.6, 0.6, 0.9, 0x101820, 0x070d14); cam.position.set(-2.6, 5.4, cz); cg.add(cam); const cam2 = dioBox(0.6, 0.6, 0.9, 0x101820, 0x070d14); cam2.position.set(2.6, 5.4, cz); cg.add(cam2); }
+      const tower = dioBox(1.5, 3.4, 1.2, 0x2a3442, 0x0e1620); tower.position.set(4.4, 2.2, 0); cg.add(tower);
+      const tscr = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.8, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.85 })); tscr.position.set(4.4, 2.8, 0.62); cg.add(tscr);
+      poleX = 4.5; poleZ = 3.0;
+    } else { // 'pack' — BOXING / PALLETISING machine: enclosure body + infeed chute + sealing ram + outfeed rollers + label printer + output pallet
+      baseW = 9; baseD = 7; beaconY = 8.4;
+      const base = dioBox(9, 1.2, 7, 0x161e2a, 0x0a121c); base.position.set(0, 0.6, 0); cg.add(base); feet(9, 7);
+      const haz = dioBox(9.5, 0.3, 7.5, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.25, 0); cg.add(haz);
+      const housing = dioBox(6, 5.2, 5.4, 0x2a3442, 0x0e1620); housing.position.set(-0.5, 4.0, -0.4); cg.add(housing);
+      const roof = dioBox(6.4, 0.5, 5.8, brightenHex(hex, 0.05), 0x10202f); roof.position.set(-0.5, 6.8, -0.4); cg.add(roof);
+      const chute = dioBox(2.4, 0.4, 2.2, 0x4a586c, 0x16202c); chute.position.set(-4.0, 3.6, 0); chute.rotation.z = 0.5; cg.add(chute);
+      const ram = dioBox(2.4, 1.0, 2.4, 0x9fb0c8, 0x2a3a4d); ram.position.set(-0.5, 6.3, -0.4); cg.add(ram); tool.ram = ram; tool.ramBaseY = 6.3;
+      for (let r = 0; r < 4; r++){ const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 4.2, 12), SFX_M.steel); roll.rotation.x = Math.PI / 2; roll.position.set(2.4 + r * 0.95, 1.9, 1.6); cg.add(roll); }
+      const printer = dioBox(1.2, 1.4, 1.0, 0x101820, 0x070d14); printer.position.set(3.0, 2.9, -1.6); cg.add(printer);
+      const lbl = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.85 })); lbl.position.set(3.0, 3.2, -1.08); cg.add(lbl);
+      const pallet = dioBox(2.4, 1.6, 2.0, 0xc8975a, 0x3a2912); pallet.position.set(3.4, 1.7, 1.6); cg.add(pallet);
+      ctrlPanel(-0.5, 2.4); poleX = 4.5; poleZ = -3.0;
     }
-    const arms = [];
-    try { const nA = (type === 'assemble') ? 2 : 1;
-      for (let a = 0; a < nA; a++){ const ag = new THREE.Group(); ag.position.set((type === 'assemble') ? (a ? 1.9 : -1.9) : 0, 1.2, 1.0);
-        const r = makeRobotArm(ag, 0, 0, 2.8, 0.5, -0.9); cg.add(ag);
-        if (r && r.seg1) arms.push({ seg1: r.seg1, seg2: r.seg2, bz1: r.seg1.rotation.z, bz2: r.seg2.rotation.z, phase: (i + a) * 0.7 }); } } catch(_){}
-    const pole = dioBox(0.32, 4, 0.32, 0x2a3340, 0x0a0f18); pole.position.set(4.1, 10.3, 0); cg.add(pole);
-    const segGeo = new THREE.CylinderGeometry(0.74, 0.74, 1.0, 14);
-    const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(4.1, yy, 0); cg.add(m); return mt; };
-    const lampR = mkSeg(12.4, 0x20242c), lampA = mkSeg(11.3, 0x20242c), lampG = mkSeg(10.2, 0x3fe07a);
+    const pole = dioBox(0.32, 4, 0.32, 0x2a3340, 0x0a0f18); pole.position.set(poleX, beaconY + 1.4, poleZ); cg.add(pole);
+    const segGeo = new THREE.CylinderGeometry(0.7, 0.7, 1.0, 14);
+    const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(poleX, yy, poleZ); cg.add(m); return mt; };
+    const lampR = mkSeg(beaconY + 3.5, 0x20242c), lampA = mkSeg(beaconY + 2.4, 0x20242c), lampG = mkSeg(beaconY + 1.3, 0x3fe07a);
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.95, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0xffb030, transparent: true, opacity: 0.0, depthWrite: false, blending: FLOW_ADD })); beacon.position.set(0, 8.9, 0); cg.add(beacon);
-    cg.add(labelSpriteSafe(name || 'Machine', '#dbe8fb', 12, 0, 14.7, 0));
+      new THREE.MeshBasicMaterial({ color: 0xffb030, transparent: true, opacity: 0.0, depthWrite: false, blending: FLOW_ADD })); beacon.position.set(0, beaconY, 0); cg.add(beacon);
+    cg.add(labelSpriteSafe(name || 'Machine', '#dbe8fb', 12, 0, beaconY + 6.0, 0));
     return { cg, tool, arms, lampR, lampA, lampG, beacon };
   }
   // factory ENVIRONMENT: floor aisle/safety markings, support pillars, an overhead gantry rail + traveling hook,
@@ -8692,6 +8750,15 @@
     p.grp.position.set(p.vx, st.beltTop + 0.5, p.vz); p.grp.scale.setScalar(st.C.objScale); p.grp.visible = true;
   }
   function oeeFree(st){ for (const x of st.parts){ if (!x.active) return x; } return null; }
+  // ONE Automated Guided Vehicle: a low cart on 4 wheels with a guide-light, carrying a crate on its deck
+  function oeeAgv(){ const g = new THREE.Group();
+    const body = dioBox(3.4, 0.7, 2.2, 0x2c3a4c, 0x0d1622); body.position.y = 0.75; g.add(body);
+    const deck = dioBox(2.8, 0.18, 1.8, 0x3a4a5e, 0x12202c); deck.position.y = 1.18; g.add(deck);
+    for (const wx of [-1.2, 1.2]) for (const wz of [-0.85, 0.85]){ const w = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.3, 12), SFX_M.dark); w.rotation.x = Math.PI / 2; w.position.set(wx, 0.42, wz); g.add(w); }
+    const led = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.2, 10), new THREE.MeshBasicMaterial({ color: 0x49e0ff })); led.rotation.z = Math.PI / 2; led.position.set(1.6, 1.0, 0); g.add(led);
+    const crate = new THREE.Group(); const cb = dioBox(1.6, 1.3, 1.4, 0xc8975a, 0x3a2912); cb.position.y = 0.65; crate.add(cb);
+    const tp = dioBox(1.66, 0.12, 0.5, 0xffb030, 0x3a2c00); tp.position.y = 1.34; crate.add(tp); crate.position.y = 1.27; g.add(crate);
+    return { grp: g, crate }; }
   function oeeEmit(st, p, segIdx, stage){ p.active = true; p.state = 'moving'; p.seg = segIdx; p.t = 0; p.node = null; setOeePart(p, stage);
     const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.grp.visible = true; }
   function buildSmartFactoryScene(section){
@@ -8705,18 +8772,20 @@
     const C = SF_OEE, beltTop = 3.0, fr = (v) => v - Math.floor(v);
     // NODE GRAPH: 2 intake lines → mill/lathe → WELD (combine 2→1) → ASSEMBLE (dispatch 1→2) → 2 pack → 2 docks
     const N = {}, S = [];
-    const node = (id, x, z, kind, type, name, outStage) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
-    // 4 intake → 4 machining → 2 sub-assembly welds → MAIN ASSEMBLY → QC/dispatch → 3 pack → 3 ship docks
+    const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
+    // 4 intake → 4 machining → 2 sub-assembly welds → MAIN ASSEMBLY → QC/dispatch → 3 pack → 3 ship docks.
+    // EACH SITE RUNS AT A DIFFERENT THROUGHPUT (parts/s) — fast mills, slower lathes, the Main Assembly is the
+    // deliberate bottleneck — and the belts downstream of each site scroll at that site's throughput.
     node('IN0', -108, -36, 'source', null, 'Intake A', 0); node('IN1', -108, -12, 'source', null, 'Intake B', 0);
     node('IN2', -108, 12, 'source', null, 'Intake C', 0); node('IN3', -108, 36, 'source', null, 'Intake D', 0);
-    node('M0', -80, -36, 'machine', 'mill', 'Mill 1', 1); node('M1', -80, -12, 'machine', 'lathe', 'Lathe 1', 1);
-    node('M2', -80, 12, 'machine', 'mill', 'Mill 2', 1); node('M3', -80, 36, 'machine', 'lathe', 'Lathe 2', 1);
-    node('S0', -46, -24, 'merge', 'weld', 'Sub-weld A', 2); node('S1', -46, 24, 'merge', 'weld', 'Sub-weld B', 2);
-    node('ASSY', -8, 0, 'merge', 'assemble', 'Main Assembly', 3);
-    node('QC', 26, 0, 'split', 'assemble', 'QC · Dispatch', 3);
-    node('P0', 64, -32, 'machine', 'pack', 'Pack A', 4); node('P1', 64, 0, 'machine', 'pack', 'Pack B', 4); node('P2', 64, 32, 'machine', 'pack', 'Pack C', 4);
+    node('M0', -80, -36, 'machine', 'mill', 'Mill 1', 1, 1.6); node('M1', -80, -12, 'machine', 'lathe', 'Lathe 1', 1, 1.05);
+    node('M2', -80, 12, 'machine', 'mill', 'Mill 2', 1, 1.45); node('M3', -80, 36, 'machine', 'lathe', 'Lathe 2', 1, 0.95);
+    node('S0', -46, -24, 'merge', 'weld', 'Sub-weld A', 2, 1.0); node('S1', -46, 24, 'merge', 'weld', 'Sub-weld B', 2, 0.9);
+    node('ASSY', -8, 0, 'merge', 'assemble', 'Main Assembly', 3, 0.6);
+    node('QC', 26, 0, 'split', 'qc', 'QC · Dispatch', 3, 1.8);
+    node('P0', 64, -32, 'machine', 'pack', 'Pack A', 4, 1.3); node('P1', 64, 0, 'machine', 'pack', 'Pack B', 4, 1.1); node('P2', 64, 32, 'machine', 'pack', 'Pack C', 4, 1.2);
     node('D0', 100, -32, 'sink', null, 'Ship A', 4); node('D1', 100, 0, 'sink', null, 'Ship B', 4); node('D2', 100, 32, 'sink', null, 'Ship C', 4);
-    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z };
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate };
       s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
     seg('IN0', 'M0'); seg('IN1', 'M1'); seg('IN2', 'M2'); seg('IN3', 'M3');
     seg('M0', 'S0'); seg('M1', 'S0'); seg('M2', 'S1'); seg('M3', 'S1');
@@ -8738,12 +8807,15 @@
       machines.push(nd); mi++; }
     const sparkNode = N.S0 || N.S1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
       for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sgo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD })); sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
+    // AGV FLEET — one cart per INTER-STAGE belt (between processing nodes; skips intake-pad + ship-dock stubs)
+    const agvs = []; S.forEach((s, si) => { if (N[s.a].kind === 'source' || N[s.b].kind === 'sink') return;
+      const a = oeeAgv(); g.add(a.grp); agvs.push({ grp: a.grp, crate: a.crate, seg: si, off: 4.4, u: fr(Math.sin((si + 1) * 5.1) * 311), dir: 1 }); });
     const env = sfBuildEnv(g, machines.map((m) => ({ x: m.x, z: m.z })), beltTop);
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
       parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, exitT: 0, stageBuilt: -1 }); }
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 58, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
-    sceneState[section] = { g, C, N, S, machines, parts, chev, sparks, sparkNode, beltTop, env,
+    sceneState[section] = { g, C, N, S, machines, parts, chev, sparks, sparkNode, agvs, beltTop, env,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
       count: new Array(5).fill(0), val: new Array(5).fill(0) };
     updateSmartFactoryScene(section);
@@ -8760,7 +8832,7 @@
       for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
         const tgt = st.N[st.S[nd.outSegs[0]].b]; if (tgt.buf && tgt.buf.length >= st.bufCap) continue; const p = oeeFree(st); if (p){ oeeEmit(st, p, nd.outSegs[0], 0); st.spawned++; } } }
     // moving parts advance + ARRIVE (join a node buffer, or deliver at a sink)
-    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg]; p.t += (16 * dt) / s.len;
+    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg]; p.t += (16 * (s.spd || 1) * dt) / s.len;
       if (p.t >= 1){ const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; } else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); } } }
     // machine SERVICE (breakdown-gated): start (consume need, merge takes 2) → finish (emit; split dispatches 1→2)
     for (const m of st.machines){
@@ -8774,21 +8846,29 @@
           else { oeeEmit(st, carrier, m.outSegs[0], m.outStage); } } }
         else if (m.buf.length >= m.need && roomAny){
           const carrier = m.buf.shift(); for (let e = 1; e < m.need; e++){ const ex = m.buf.shift(); if (ex){ ex.active = false; ex.grp.visible = false; } }
-          carrier.state = 'holding'; carrier.node = m.id; m.holding = carrier; m.busyT = 1 / C.rate; } }
+          carrier.state = 'holding'; carrier.node = m.id; m.holding = carrier; m.busyT = 1 / (m.rate || C.rate); } }
       const blocked = (m.buf.length || m.holding) && !roomAny;
       const stt = m.down ? 'down' : (m.holding ? 'running' : (m.buf.length && blocked ? 'blocked' : (m.buf.length ? 'running' : 'starved')));
       if (stt !== m.state){ m.state = stt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
         L(m.lampR, stt === 'down', 0xff4a4a); L(m.lampA, stt === 'blocked', 0xffb030); L(m.lampG, stt === 'running', 0x3fe07a); }
       if (m.down && m.lampR && m.lampR.color && m.lampR.color.setHex) m.lampR.color.setHex(Math.abs(Math.sin(T * 4)) > 0.4 ? 0xff4a4a : 0x401015);
       const run = (stt === 'running');
-      if (m.tool){ if (m.tool.spin && run) m.tool.spin.rotation.y += dt * (m.type === 'lathe' ? 9 : 6);
-        if (m.tool.head) m.tool.head.position.y = 5.5 - (run ? (0.5 + 0.5 * Math.sin(T * 3)) * 1.0 : 0);
-        if (m.tool.ram) m.tool.ram.position.y = (m.tool.ramBaseY || 6.3) - (run ? (0.5 + 0.5 * Math.sin(T * 4)) * 1.2 : 0); }
+      if (m.tool){ if (m.tool.spin && run) m.tool.spin.rotation[m.tool.spinAxis || 'y'] += dt * (m.type === 'lathe' ? 9 : (m.type === 'weld' ? 4 : 6));
+        if (m.tool.head) m.tool.head.position.y = 6.6 - (run ? (0.5 + 0.5 * Math.sin(T * 3)) * 1.0 : 0);
+        if (m.tool.ram) m.tool.ram.position.y = (m.tool.ramBaseY || 6.3) - (run ? (0.5 + 0.5 * Math.sin(T * 4)) * 1.2 : 0);
+        if (m.tool.scan) m.tool.scan.position.x = run ? Math.sin(T * 2.4) * 2.4 : 0; }
       if (m.arms){ for (const a of m.arms){ if (run && a.seg1 && a.seg1.visible){ a.seg1.rotation.z = a.bz1 + Math.sin(T * 1.7 + a.phase) * 0.3; a.seg2.rotation.z = a.bz2 + Math.sin(T * 2.0 + a.phase + 1) * 0.32; } } }
       if (m.beacon && m.beacon.material) m.beacon.material.opacity = m.down ? (0.4 + 0.4 * Math.abs(Math.sin(T * 5))) : 0.0;
     }
     for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
-    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * dt) / s.len; if (c.t > 1) c.t -= 1; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    // AGV fleet: little guided carts ferry parts between processing nodes (drive a parallel aisle beside each
+    // inter-stage belt, carry a crate outbound, return empty) — speed tracks the feeding site's throughput
+    if (st.agvs){ for (const v of st.agvs){ const s = st.S[v.seg]; v.u += v.dir * (9 * (s.spd || 1) * dt) / s.len;
+      if (v.u >= 1){ v.u = 1; v.dir = -1; if (v.crate) v.crate.visible = false; } else if (v.u <= 0){ v.u = 0; v.dir = 1; if (v.crate) v.crate.visible = true; }
+      const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u;
+      v.grp.position.set(bx - Math.sin(s.ang) * v.off, 0.45, bz + Math.cos(s.ang) * v.off);
+      v.grp.rotation.y = -s.ang + (v.dir < 0 ? Math.PI : 0); } }
     const wnode = st.sparkNode;
     if (st.sparks && st.sparks.length && wnode){ const welding = wnode.state === 'running'; const ex = wnode.x, ey = st.beltTop + 4.2, ez = wnode.z + 1.6;
       for (let s = 0; s < st.sparks.length; s++){ const k = st.sparks[s]; k.t += dt * 2.4;
