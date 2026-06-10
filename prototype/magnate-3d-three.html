@@ -9230,7 +9230,7 @@
   }
   function buildWarehouseScene(section){
     const g = buildSceneRoot(section);
-    g.add(labelSpriteSafe('📦 Warehouse Automation · WMS Distribution Centre — receive · putaway · AS/RS · pick · pack · sort · ship', '#cfe0ff', 22, 0, 74, 0));
+    g.add(labelSpriteSafe('📦 Warehouse Automation · WMS — 3D Automated Inventory (10×10×10 grid · 1000 bins) · store · retrieve · ship', '#cfe0ff', 22, 0, 88, 0));
     const floor = dioBox(330, 0.5, 200, 0x252e3e, 0x10161f); floor.position.y = 0.15; g.add(floor);
     g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.85));
     const pl = new THREE.PointLight(0xeaf2ff, 0.6, 950, 2); pl.position.set(0, 170, 40); g.add(pl);
@@ -9242,46 +9242,24 @@
     // pick module + vertical lift adds the multi-level layer; mis-picks loop back through a re-pick station.
     const N = {}, S = [];
     const node = (id, x, z, kind, type, name, outStage, rate, fy) => (N[id] = { id, x, z, fy: fy || 0, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
-    const Zsrc = [-46, 0, 46];
-    Zsrc.forEach((z, i) => node('IN' + i, -142, z, 'source', null, 'Receiving ' + String.fromCharCode(65 + i), 0));
-    Zsrc.forEach((z, i) => node('PA' + i, -110, z, 'machine', 'putaway', 'Putaway ' + (i + 1), 1));
-    // 4 AS/RS storage aisles (two pairs); putaway fans into them
-    node('AS0', -72, -60, 'machine', 'asrs', 'AS/RS Aisle 1', 2); node('AS1', -72, -20, 'machine', 'asrs', 'AS/RS Aisle 2', 2);
-    node('AS2', -72, 20, 'machine', 'asrs', 'AS/RS Aisle 3', 2);  node('AS3', -72, 60, 'machine', 'asrs', 'AS/RS Aisle 4', 2);
-    node('PK0', -30, -40, 'machine', 'pick', 'Pick Cell 1', 2); node('PK1', -30, 0, 'split', 'pick', 'Pick Cell 2', 2); node('PK2', -30, 40, 'machine', 'pick', 'Pick Cell 3', 2);
-    node('CN0', 6, -26, 'merge', 'consol', 'Consolidation A', 3); node('CN1', 6, 26, 'merge', 'consol', 'Consolidation B', 3);
-    node('RP', -14, -70, 'machine', 'pick', 'Re-pick · Exceptions', 2);   // mis-picked totes loop back here, get re-picked, re-enter consolidation
-    node('SO0', 40, -26, 'split', 'sort', 'Sortation A', 3); node('SO1', 40, 26, 'split', 'sort', 'Sortation B', 3);
-    const Zpk = [-54, -18, 18, 54];
-    Zpk.forEach((z, i) => node('PC' + i, 80, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4));
-    Zpk.forEach((z, i) => node('SH' + i, 118, z, 'sink', null, 'Shipping ' + String.fromCharCode(65 + i), 4));
+    // LEAN STORE / RETRIEVE FLOW around the inventory cube (the cube is the star, NOT a production line):
+    // 2 Receiving docks → Induction/Putaway → Storage Infeed (into the cube) → Storage Retrieval (out of the
+    // cube) → Order Sortation → 2 Shipping docks. Single level — NO mezzanine.
+    const Zsrc = [-14, 14];
+    Zsrc.forEach((z, i) => node('IN' + i, -96, z, 'source', null, 'Receiving ' + String.fromCharCode(65 + i), 0));
+    node('IND', -66, 0, 'machine', 'putaway', 'Induction / Putaway', 1);
+    node('STI', -36, 0, 'machine', 'pack', 'Storage Infeed', 2);     // totes enter the inventory cube here
+    node('STO', 36, 0, 'machine', 'pick', 'Storage Retrieval', 3);   // retrieved totes leave the cube here
+    node('DSP', 66, 0, 'split', 'sort', 'Order Sortation', 4);
+    const Zsh = [-14, 14];
+    Zsh.forEach((z, i) => node('SH' + i, 96, z, 'sink', null, 'Shipping ' + String.fromCharCode(65 + i), 4));
     const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, say: beltTop + (A.fy || 0), sby: beltTop + (B.fy || 0), spd: (A.rate || C.rate) / C.rate, spdAbs: false };
-      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); s.incline = Math.abs(s.sby - s.say) > 1.5;   // a vertical lift between levels
+      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); s.incline = Math.abs(s.sby - s.say) > 1.5;
       const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
-    for (let i = 0; i < 3; i++) seg('IN' + i, 'PA' + i);                                  // receive → putaway
-    seg('PA0', 'AS0'); seg('PA0', 'AS1'); seg('PA1', 'AS1'); seg('PA1', 'AS2'); seg('PA2', 'AS2'); seg('PA2', 'AS3'); // putaway fans into the storage aisles (crossing)
-    seg('AS0', 'PK0'); seg('AS1', 'PK0'); seg('AS1', 'PK1'); seg('AS2', 'PK1'); seg('AS2', 'PK2'); seg('AS3', 'PK2'); // AS/RS → pick cells (crossing)
-    seg('PK0', 'CN0'); seg('PK1', 'CN0'); seg('PK1', 'CN1'); seg('PK2', 'CN1');           // picking → consolidation (PK1 sorter feeds both)
-    seg('CN0', 'SO0'); seg('CN1', 'SO1');                                                 // consolidation → sortation
-    seg('SO0', 'PC0'); seg('SO0', 'PC1'); seg('SO0', 'PC2'); seg('SO1', 'PC1'); seg('SO1', 'PC2'); seg('SO1', 'PC3'); // sortation dispatch → 4 pack (PC1/PC2 shared)
-    // ===== MEZZANINE PICK MODULE — a second-level zone reached by a VERTICAL LIFT. A share of items ride the
-    // up-lift to a mezzanine intake, fan out to mezzanine pick pods, recombine, and descend a down-lift to a
-    // priority pack lane on level 1. =====
-    const MZ = WH_MEZZ;
-    node('MZI', 64, -54, 'split', 'pick', 'Mezzanine Intake', 2, 1.2, MZ);               // top of the up-lift; fans out
-    node('MG0', 92, -64, 'machine', 'pick', 'Mezz Pick 1', 2, 1.0, MZ); node('MG1', 100, -42, 'machine', 'pick', 'Mezz Pick 2', 2, 1.05, MZ); node('MG2', 92, -22, 'machine', 'pick', 'Mezz Pick 3', 2, 1.0, MZ);
-    node('MZO', 64, -32, 'machine', 'consol', 'Mezzanine Outfeed', 3, 1.4, MZ);          // recombines the 3 pods
-    node('MSH', 118, -32, 'sink', null, 'Priority Ship', 4, 0, 0);                        // back on level 1
-    seg('SO0', 'MZI'); seg('SO1', 'MZI');                                                 // ⬆ TWO up-lifts (a share of sorted totes go up)
-    seg('MZI', 'MG0'); seg('MZI', 'MG1'); seg('MZI', 'MG2');                              // mezzanine RADIAL fan-out
-    seg('MG0', 'MZO'); seg('MG1', 'MZO'); seg('MG2', 'MZO');                              // mezzanine recombine
-    seg('MZO', 'MSH');                                                                    // ⬇ down-lift → level-1 priority dock
-    seg('SO0', 'RP'); seg('SO1', 'RP'); seg('RP', 'CN0');                                 // RE-PICK LOOP: mis-picks → re-pick → back into consolidation
-    for (let i = 0; i < 4; i++) seg('PC' + i, 'SH' + i);                                  // pack → shipping docks
-    // mark the two sortation stations as pass/divert GATES (route each tote to ONE pack lane, or back to Re-pick).
-    [N.SO0, N.SO1].forEach((q, i) => { q.qcGate = true; q.failFrac = 0.10; q.reworkOut = q.outSegs.length - 1; q.rr = 0; q.qhash = (i + 1) * 13.37; });
-    for (const s of S){ if (s.a === 'RP' || s.b === 'RP') s.rework = true; }
-    whRollRates(N, S, C, whRateSeed);   // assign the RANDOMIZED initial throughput + mis-pick rates + belt speeds
+    for (let i = 0; i < 2; i++) seg('IN' + i, 'IND');                 // receive → induction
+    seg('IND', 'STI'); seg('STI', 'STO'); seg('STO', 'DSP');         // induction → store → retrieve → sortation
+    seg('DSP', 'SH0'); seg('DSP', 'SH1');                            // sortation → shipping docks
+    whRollRates(N, S, C, whRateSeed);   // assign the RANDOMIZED initial throughput + belt speeds
     const XAX = (typeof THREE !== 'undefined' && THREE.Vector3) ? new THREE.Vector3(1, 0, 0) : null;
     const orient3 = (obj, ax, ay, az, bx, by, bz) => { try { const d = new THREE.Vector3(bx - ax, by - ay, bz - az); if (d.length()) { d.normalize(); if (obj.quaternion && obj.quaternion.setFromUnitVectors) obj.quaternion.setFromUnitVectors(XAX, d); } } catch(_){} };
     const chev = [], belts = [];
@@ -9305,33 +9283,50 @@
       nd.mi = mi;
       nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + whRateSeed * 3.1) * 1000) * 16; nd.downFrac = 0.05 + fr(Math.sin((mi + 1) * 3.3 + whRateSeed * 1.7) * 500) * 0.09; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + whRateSeed * 5.0) * 43758.5);
       stations.push(nd); mi++; }
-    // MEZZANINE deck + support columns + glass railing (the upper pick-module level the floor-2 stations sit on)
-    { const f2 = []; for (const id in N){ if (N[id].fy) f2.push(N[id]); }
-      if (f2.length){ let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of f2){ x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
-        const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, dw = (x1 - x0) + 40, dd = (z1 - z0) + 40;
-        const deck = dioBox(dw, 1.4, dd, 0x222c3a, 0x0e151f); deck.position.set(cx, MZ - 0.5, cz); g.add(deck);
-        if (typeof THREE.GridHelper === 'function'){ try { const gr = new THREE.GridHelper(Math.max(dw, dd), 16, 0x46557a, 0x2c3850); gr.position.set(cx, MZ + 0.3, cz);
-          const ms = gr.material ? (Array.isArray(gr.material) ? gr.material : [gr.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.18; m.depthWrite = false; } }); g.add(gr); } catch(_){} }
-        for (const px of [x0 - 14, x1 + 14]) for (const pz of [z0 - 14, z1 + 14]){ const col = dioBox(2.4, MZ, 2.4, 0x39424f, 0x141a22); col.position.set(px, MZ / 2, pz); g.add(col); }
-        for (const rz of [z0 - 20, z1 + 20]){ const rail = new THREE.Mesh(new THREE.BoxGeometry(dw, 2.2, 0.3), new THREE.MeshBasicMaterial({ color: 0x6fb6d8, transparent: true, opacity: 0.16, depthWrite: false })); rail.position.set(cx, MZ + 1.6, rz); g.add(rail); }
-        g.add(labelSpriteSafe('▢ Mezzanine · Pick Module (radial)', '#cfe0ff', 15, cx, MZ + 18, cz)); } }
+    // ===== THE 3D INVENTORY CUBE — a 10×10×10 automated storage grid (10 floors × 10 columns × 10 rows =
+    // 1000 bin positions). Occupied bins are coloured totes; empty bins are dark slots. Live occupancy churns
+    // (store/retrieve) and stacker cranes ride the aisles. THIS is the warehouse's centrepiece. =====
+    const GX = 10, GZ = 10, GY = 10, CELLX = 4.4, CELLZ = 4.4, CELLY = 4.2, cubeCX = 0, cubeCZ = 0, cubeBaseY = 5;
+    const cubeGroup = new THREE.Group(); g.add(cubeGroup);
+    const binGeo = new THREE.BoxGeometry(CELLX * 0.78, CELLY * 0.72, CELLZ * 0.78);
+    const skuMats = [0x3fd6ff, 0xffb347, 0x6ee7a8, 0xc89bf0, 0xff8aa0, 0xe6c24a].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.18), emissiveIntensity: 0.5, roughness: 0.55, metalness: 0.2 }));
+    const emptyMat = new THREE.MeshStandardMaterial({ color: 0x141c28, emissive: new THREE.Color(0x05080c), roughness: 0.9, metalness: 0.1, transparent: true, opacity: 0.35 });
+    const cellX = (ix) => cubeCX + (ix - (GX - 1) / 2) * CELLX, cellZ = (iz) => cubeCZ + (iz - (GZ - 1) / 2) * CELLZ, cellY = (iy) => cubeBaseY + iy * CELLY;
+    const cubeW = GX * CELLX, cubeD = GZ * CELLZ, cubeH = GY * CELLY;
+    const bins = []; let slotTot = 0, slotOcc = 0;
+    for (let iy = 0; iy < GY; iy++) for (let ix = 0; ix < GX; ix++) for (let iz = 0; iz < GZ; iz++){
+      slotTot++; const occ = flowFrac(Math.sin((ix * 12.9 + iz * 78.2 + iy * 37.7 + whRateSeed * 3.3)) * 43758.5453) > 0.30;
+      const sku = (ix * 7 + iz * 3 + iy) % skuMats.length;
+      const m = new THREE.Mesh(binGeo, occ ? skuMats[sku] : emptyMat); m.position.set(cellX(ix), cellY(iy), cellZ(iz)); cubeGroup.add(m);
+      if (occ) slotOcc++; bins.push({ mesh: m, occ, mat: skuMats[sku] }); }
+    // rack frame: a thin shelf plate per floor + corner/edge uprights
+    for (let iy = 0; iy < GY; iy++){ const shelf = dioBox(cubeW + 1.4, 0.25, cubeD + 1.4, 0x2a3442, 0x0e1620); shelf.position.set(cubeCX, cellY(iy) - CELLY * 0.42, cubeCZ); cubeGroup.add(shelf); }
+    for (const ux of [-cubeW / 2 - 0.4, -cubeW / 6, cubeW / 6, cubeW / 2 + 0.4]) for (const uz of [-cubeD / 2 - 0.4, -cubeD / 6, cubeD / 6, cubeD / 2 + 0.4]){
+      const post = dioBox(0.7, cubeH + 1.5, 0.7, 0x39424f, 0x141a22); post.position.set(cubeCX + ux, cubeBaseY + cubeH / 2 - CELLY * 0.5, cubeCZ + uz); cubeGroup.add(post); }
+    cubeGroup.add(labelSpriteSafe('▦ Automated Inventory · 10×10×10 (' + slotTot + ' bins)', '#cfe0ff', 16, cubeCX, cubeBaseY + cubeH + 8, cubeCZ));
+    // STACKER CRANES — 3 masts riding the storage aisles (travel X, hoist a shuttle+tote in Y)
+    const cranes = [];
+    for (let k = 0; k < 3; k++){ const az = cubeCZ + (k - 1) * (cubeD / 3); const mast = new THREE.Group(); cubeGroup.add(mast);
+      const col = dioBox(1.0, cubeH + 2, 1.0, 0x6577a0, 0x1a2230); col.position.set(0, cubeBaseY + cubeH / 2, az); mast.add(col);
+      const shuttle = new THREE.Group(); shuttle.position.set(0, cubeBaseY + 4, az); mast.add(shuttle);
+      const fork = dioBox(3.2, 0.5, CELLZ * 0.9, 0x9fb0c8, 0x2a3a4d); shuttle.add(fork);
+      const tote = dioBox(2.4, 1.8, 2.4, 0xc8975a, 0x3a2912); tote.position.y = 1.2; shuttle.add(tote);
+      cranes.push({ mast, shuttle, cx: cubeCX, ampX: cubeW / 2 - 1, baseY: cubeBaseY + 2, hgt: cubeH - 4, phase: k * 2.1 }); }
     // AMR FLEET — one autonomous mobile robot per INTER-STAGE conveyor (between processing nodes; skips dock
     // stubs + vertical lifts). On the RE-PICK conveyors the AMR is FUNCTIONAL: it picks up the actual mis-picked
     // tote and ferries it (its generic tote is hidden); elsewhere it's a decorative ferry carrying a tote.
     const agvs = []; S.forEach((s, si) => { if (N[s.a].kind === 'source' || N[s.b].kind === 'sink' || s.incline) return;
       const a = oeeAgv(); g.add(a.grp); if (s.rework && a.crate) a.crate.visible = false;
       agvs.push({ grp: a.grp, crate: a.crate, seg: si, off: 4.2, floorY: (N[s.a].fy || 0) + 0.45, u: fr(Math.sin((si + 1) * 5.1) * 311), dir: 1, rework: !!s.rework, carry: null }); });
-    const env = whBuildEnv(g, stations.map((m) => ({ x: m.x, z: m.z })), beltTop, Zsrc, Zpk);
+    const env = whBuildEnv(g, stations.map((m) => ({ x: m.x, z: m.z })), beltTop, Zsrc, Zsh);
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
       parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1 }); }
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 58, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
     let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
-    // count total + occupied AS/RS pallet slots for the live Storage-occupancy gauge (deterministic, build-time)
-    let slotTot = 0, slotOcc = 0; for (const m of stations){ if (m.type !== 'asrs') continue; const LV = 6, BAYS = 4;
-      for (const side of [-1, 1]) for (let lv = 0; lv < LV; lv++) for (let b = 0; b < BAYS; b++){ slotTot++; if (flowFrac(Math.sin((m.mi * 31.7 + side * 9.1 + lv * 4.3 + b * 1.7 + whRateSeed * 2.9)) * 4137.1) > 0.28) slotOcc++; } }
     sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, agvs, beltTop, env,
+      bins, cranes, cubeGroup, emptyMat, invClock: 0, invStep: 0,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
       perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 3), qcFail: qn ? qf / qn : 0.03, count: new Array(5).fill(0), val: new Array(5).fill(0),
       slotTot: Math.max(1, slotTot), slotOcc, isWarehouse: true };
@@ -9413,6 +9408,12 @@
       } } }
     if (st.env){ const ecx = st.env.cx || 0, esp = st.env.span || 120;
       if (st.env.trolley) st.env.trolley.position.x = ecx + Math.sin(T * 0.12) * (esp / 2 - 8); }
+    // INVENTORY CUBE: stacker cranes ride the aisles (travel X + hoist Y), and live store/retrieve churn flips a
+    // few bins each beat so the 1000-bin occupancy + the WMS gauge visibly drift.
+    if (st.cranes){ for (const cr of st.cranes){ if (cr.mast) cr.mast.position.x = cr.cx + Math.sin(T * 0.35 + cr.phase) * cr.ampX; if (cr.shuttle) cr.shuttle.position.y = cr.baseY + (0.5 + 0.5 * Math.sin(T * 0.8 + cr.phase)) * cr.hgt; } }
+    if (st.bins && st.bins.length){ st.invClock = (st.invClock || 0) + dt; if (st.invClock > 0.7){ st.invClock = 0;
+      for (let q = 0; q < 4; q++){ st.invStep = (st.invStep || 0) + 1; const idx = Math.floor(flowFrac(Math.sin(st.invStep * 12.9898) * 43758.5453) * st.bins.length) % st.bins.length; const b = st.bins[idx]; if (!b) continue;
+        b.occ = !b.occ; b.mesh.material = b.occ ? b.mat : st.emptyMat; st.slotOcc += b.occ ? 1 : -1; if (st.slotOcc < 0) st.slotOcc = 0; if (st.slotOcc > st.slotTot) st.slotOcc = st.slotTot; } } }
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
       const occ = Math.max(0, Math.min(1, (st.slotOcc || 0) / (st.slotTot || 1)));
       const fill = Math.max(0.5, 1 - (st.qcFail || 0.03)), dock = st.availInst;
@@ -9666,6 +9667,7 @@
           const cellGrps = [];
           if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) cellGrps.push(m.cg); } }
           if (st && st.g && cellGrps.length) add('grp:wh', glabel('▦ All stations', cellGrps.length), st.g, true, cellGrps);
+          if (st && st.cubeGroup) add('wh:cube', '▦ Inventory Cube (10×10×10)', st.cubeGroup, true);
           if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) add('wh:' + m.id, m.name || m.id, m.cg); } }
           if (st && st.agvs && st.agvs.length){ st.agvs.forEach((v, i) => { if (v && v.grp) add('wh:amr' + i, 'AMR ' + (i + 1), v.grp); });
             add('grp:wh-amr', glabel('▦ All AMRs', st.agvs.length), st.g, true, st.agvs.map(v => v.grp).filter(Boolean)); }
