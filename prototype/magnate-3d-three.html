@@ -9452,21 +9452,33 @@
     const vRange = (lo, hi) => lo + vRnd() * (hi - lo);
     function rndHueColor(){ const c = new THREE.Color(); try { c.setHSL(vRnd(), 0.5 + vRnd() * 0.32, 0.45 + vRnd() * 0.2); } catch(_){} return c; }   // sub-white-safe (capped lightness)
     function eachMat(obj, fn){ try { obj.traverse((o) => { if (o && o.isMesh && o.material){ const ms = Array.isArray(o.material) ? o.material : [o.material]; ms.forEach((m) => { if (m) fn(m); }); } }); } catch(_){} }
+    function randomizeObjects(objs, opts){   // roll TRANSFORM + MATERIAL of an explicit object list; returns count
+      vfxRndSeed = (vfxRndSeed % 99000) + 7; let n = 0;
+      for (const o of objs){ if (!o) continue; rndTouched.add(o); captureOrig(o);
+        if (opts.pos){ o.position.x += vRange(-9, 9); o.position.z += vRange(-9, 9); o.position.y += vRange(-3, 3); }
+        if (opts.rot){ o.rotation.y = vRange(0, Math.PI * 2); }
+        if (opts.scl){ o.scale.setScalar(+(vRange(0.6, 1.7)).toFixed(3)); }
+        if (opts.col || opts.opa){ eachMat(o, (m) => { if (!rndMatOrig.has(m)) rndMatOrig.set(m, { c: (m.color && m.color.getHex) ? m.color.getHex() : null, o: m.opacity, t: m.transparent, dw: m.depthWrite });
+          if (opts.col && m.color && m.color.copy) m.color.copy(rndHueColor());
+          if (opts.opa){ const op = +(vRange(0.32, 1)).toFixed(2); m.opacity = op; m.transparent = (op < 0.99); } }); }
+        try { recordLayout(o); } catch(_){} n++; }
+      try { updateTargetHelper(); } catch(_){}
+      return n;
+    }
+    // randomize EVERY selectable object in the active section (drives the per-section panel button)
+    function randomizeSection(opts){
+      opts = opts || { pos: true, rot: true, col: true };
+      const tl = (typeof sectionTargets === 'function') ? sectionTargets(typeof activeSection !== 'undefined' ? activeSection : '') : [];
+      const seen = new Set(), objs = [];
+      for (const t of tl){ if (t && !t.group && t.obj && !seen.has(t.obj)){ seen.add(t.obj); objs.push(t.obj); } }
+      const n = randomizeObjects(objs, opts);
+      msg(n ? ('🎲 Randomized ' + n + ' object' + (n === 1 ? '' : 's') + ' in this section.') : 'No randomizable objects in this section.', !n);
+      return n;
+    }
     function randomizeSelection(opts){
-      vfxRndSeed = (vfxRndSeed % 99000) + 7;
       const objs = (selection && selection.length) ? selection.slice() : ((sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : []);
       const wantXf = opts.pos || opts.rot || opts.scl || opts.col || opts.opa;
-      if (wantXf && objs.length){
-        for (const o of objs){ if (!o) continue; rndTouched.add(o); captureOrig(o);
-          if (opts.pos){ o.position.x += vRange(-9, 9); o.position.z += vRange(-9, 9); o.position.y += vRange(-3, 3); }
-          if (opts.rot){ o.rotation.y = vRange(0, Math.PI * 2); }
-          if (opts.scl){ o.scale.setScalar(+(vRange(0.6, 1.7)).toFixed(3)); }
-          if (opts.col || opts.opa){ eachMat(o, (m) => { if (!rndMatOrig.has(m)) rndMatOrig.set(m, { c: (m.color && m.color.getHex) ? m.color.getHex() : null, o: m.opacity, t: m.transparent, dw: m.depthWrite });
-            if (opts.col && m.color && m.color.copy) m.color.copy(rndHueColor());
-            if (opts.opa){ const op = +(vRange(0.32, 1)).toFixed(2); m.opacity = op; m.transparent = (op < 0.99); } }); }
-          try { recordLayout(o); } catch(_){} }
-        try { updateTargetHelper(); } catch(_){}
-      }
+      if (wantXf && objs.length) randomizeObjects(objs, opts);
       if (opts.fx){ const L = layers.find((x) => x.id === selId); if (L && L.controls){
         if (!(L.id in rndParamOrig)){ try { rndParamOrig[L.id] = JSON.parse(JSON.stringify(L.params || {})); } catch(_){ rndParamOrig[L.id] = {}; } }
         for (const key in L.controls){ const c = L.controls[key]; if (!c) continue;
@@ -10230,6 +10242,7 @@
       selectionCount(){ return selection.length; },
       // unified randomize — roll the chosen transform/visual params of the selected objects; restore reverts.
       randomize(opts){ randomizeSelection(opts || { pos: true }); },
+      randomizeSection(opts){ return randomizeSection(opts); },   // roll EVERY object in the active section (per-section panel button)
       restoreRandom(){ restoreRandomized(); },
       // raycast the active section's candidate objects; on hit, set it as the target. Returns true if consumed.
       pickFromRay(ray, additive){
@@ -11879,6 +11892,7 @@
       r.textContent = 'Throughput ' + Math.round((st.thruEMA || 0) * 60) + '/min  ·  WIP ' + wip; } }
     else if (activeSection === 'smart-factory'){ const st = S['smart-factory']; if (st){
       r.textContent = 'Availability ' + Math.round((st.availInst || 1) * 100) + '%  ·  Throughput ' + Math.round((st.perfEMA || 0) * 60) + '/min'; } }
+    else r.textContent = '';   // generic Scene-randomize sections have no live readout
   }
   function buildSimPanel(sec){
     const title = $('sim-title'), body = $('sim-body'); if (!body) return;
@@ -11887,7 +11901,16 @@
       body.innerHTML =
         '<div class="simctl"><label>Arrival rate <b id="sim-arr-v"></b></label><input type="range" id="sim-arr" min="12" max="80" step="2" aria-label="Order arrival rate per minute"></div>' +
         '<div class="simctl"><label>⚠ Bottleneck capacity <b id="sim-cap-v"></b></label><input type="range" id="sim-cap" min="18" max="110" step="2" aria-label="Constraint station capacity per minute"></div>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="sc-rnd-pos" checked> Position</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-rot"> Rotation</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-scl"> Scale</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-col" checked> Color</label></div>' +
+        '<button class="simbtn" id="sc-rnd-go" type="button">🎲 Randomize scene</button>' +
+        '<button class="simbtn" id="sc-rnd-restore" type="button">↺ Restore</button>' +
         '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
+      { const go = $('sc-rnd-go'); if (go) go.onclick = () => { try { if (typeof VFXLab !== 'undefined' && VFXLab.randomizeSection)
+          VFXLab.randomizeSection({ pos: !!($('sc-rnd-pos') || {}).checked, rot: !!($('sc-rnd-rot') || {}).checked, scl: !!($('sc-rnd-scl') || {}).checked, col: !!($('sc-rnd-col') || {}).checked }); } catch(_){} };
+        const rs = $('sc-rnd-restore'); if (rs) rs.onclick = () => { try { if (typeof VFXLab !== 'undefined' && VFXLab.restoreRandom) VFXLab.restoreRandom(); } catch(_){} }; }
       const st = sceneState.erp, arr = $('sim-arr'), cap = $('sim-cap');
       const arrMin = st ? Math.round(60 / st.C.spawn) : 57;
       const capMin = (st && st.stations[st.C.constraintIdx]) ? Math.round(st.stations[st.C.constraintIdx].rate * 60) : 25;
@@ -11945,15 +11968,33 @@
         if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); }
         cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
+    } else {
+      // EVERY OTHER SECTION — a Scene-randomize block: roll the chosen transform / visual params of all this
+      // section's objects (via the VFX Lab engine), with ↺ Restore. Gives every section a randomize button.
+      const nice = ({ crm: 'CRM', 'vfx-lab': 'VFX Lab' })[sec] || sec.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      if (title) title.textContent = nice + ' · Scene';
+      body.innerHTML =
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="sc-rnd-pos" checked> Position</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-rot"> Rotation</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-scl"> Scale</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-col" checked> Color</label>' +
+          '<label class="chk"><input type="checkbox" id="sc-rnd-opa"> Opacity</label></div>' +
+        '<button class="simbtn" id="sc-rnd-go" type="button">🎲 Randomize scene</button>' +
+        '<button class="simbtn" id="sc-rnd-restore" type="button">↺ Restore</button>';
+      const go = $('sc-rnd-go'); if (go) go.onclick = () => { try { if (typeof VFXLab !== 'undefined' && VFXLab.randomizeSection)
+        VFXLab.randomizeSection({ pos: !!($('sc-rnd-pos') || {}).checked, rot: !!($('sc-rnd-rot') || {}).checked, scl: !!($('sc-rnd-scl') || {}).checked, col: !!($('sc-rnd-col') || {}).checked, opa: !!($('sc-rnd-opa') || {}).checked }); } catch(_){} };
+      const rs = $('sc-rnd-restore'); if (rs) rs.onclick = () => { try { if (typeof VFXLab !== 'undefined' && VFXLab.restoreRandom) VFXLab.restoreRandom(); } catch(_){} };
     }
   }
   function syncSimPanel(){
     const panel = $('sim-panel'); if (!panel) return;
     const sec = (typeof activeSection !== 'undefined') ? activeSection : '';
-    const isSim = (sec === 'erp' || sec === 'smart-factory');
-    if (panel.classList) panel.classList.toggle('on', isSim);
-    if (panel.setAttribute) panel.setAttribute('aria-hidden', isSim ? 'false' : 'true');
-    if (!isSim) return;
+    // the panel now shows in EVERY section — sim sections (erp / smart-factory) get their parameter levers,
+    // every other section gets a Scene-randomize block. The VFX Lab has its own richer Target randomizer.
+    const show = sec && sec !== 'vfx-lab';
+    if (panel.classList) panel.classList.toggle('on', !!show);
+    if (panel.setAttribute) panel.setAttribute('aria-hidden', show ? 'false' : 'true');
+    if (!show) return;
     if (panel.getAttribute && panel.getAttribute('data-built') !== sec){ buildSimPanel(sec); if (panel.setAttribute) panel.setAttribute('data-built', sec); }
     updateSimReadout();
   }
