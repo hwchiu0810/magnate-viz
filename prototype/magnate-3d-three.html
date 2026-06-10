@@ -9289,23 +9289,26 @@
     // (inventory row · conveyor · inventory row · conveyor · inventory row). Each module = 4 movable walls, each
     // wall a 4-deep × 10-floor grid (40 bins); walls are PERPENDICULAR to the conveyors (arrayed along X) and
     // slide along X so one Z-aisle opens; a pick robot drives that aisle. 12 × 160 = 1920 bins. =====
-    const WALLS = 4, DEPTH = 4, FLOORS = 10, CELLZ = 4.0, CELLY = 4.0, WALLPITCH = 3.2, AISLEW = 7, cubeBaseY = 5;
-    const cubeCX = 0, cubeW = 168, cubeH = FLOORS * CELLY, modDepth = DEPTH * CELLZ;
-    const COLX = [-66, -22, 22, 66], ROWZ = [-48, 0, 48];   // 4 columns × 3 inventory rows (rows at ±48 and 0; conveyors sit at ±24 between them)
+    const WALLS = 6, DEPTH = 5, FLOORS = 8, CELLZ = 3.4, CELLY = 4.0, WALLPITCH = 2.9, AISLEW = 6, cubeBaseY = 5;
+    const cubeCX = 0, cubeW = 168, cubeH = FLOORS * CELLY, modDepth = DEPTH * CELLZ, modW = WALLS * WALLPITCH + AISLEW;
+    const COLX = [-63, -21, 21, 63], ROWZ = [-50, 0, 50];   // 4 columns × 3 inventory rows; conveyors sit at z=±24 between them
     const cubeGroup = new THREE.Group(); g.add(cubeGroup);
-    const binGeo = new THREE.BoxGeometry(2.1, CELLY * 0.74, CELLZ * 0.82);
-    const skuMats = [0x3fd6ff, 0xffb347, 0x6ee7a8, 0xc89bf0, 0xff8aa0, 0xe6c24a].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.18), emissiveIntensity: 0.5, roughness: 0.55, metalness: 0.2 }));
-    const emptyMat = new THREE.MeshStandardMaterial({ color: 0x141c28, emissive: new THREE.Color(0x05080c), roughness: 0.9, metalness: 0.1, transparent: true, opacity: 0.35 });
+    const binGeo = new THREE.BoxGeometry(2.4, CELLY * 0.8, CELLZ * 0.86);
+    const skuMats = [0x3fd6ff, 0xffb347, 0x6ee7a8, 0xc89bf0, 0xff8aa0, 0xe6c24a].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.22), emissiveIntensity: 0.55, roughness: 0.5, metalness: 0.2 }));
+    const emptyMat = new THREE.MeshStandardMaterial({ color: 0x1a2330, emissive: new THREE.Color(0x070b12), roughness: 0.85, metalness: 0.1, transparent: true, opacity: 0.5 });
     const cellY = (iy) => cubeBaseY + iy * CELLY;
     const bins = [], banks = []; let slotTot = 0, slotOcc = 0, mIdx = 0;
     for (let r = 0; r < ROWZ.length; r++) for (let cc = 0; cc < COLX.length; cc++){ const mx = COLX[cc], mz = ROWZ[r], mi2 = mIdx++; const wallsArr = [];
+      // each MODULE sits on its own footprint slab so the 3×4 grid of distinct structures reads clearly
+      const slab = dioBox(modW + 3, 0.7, modDepth + 4, 0x222c3a, 0x0c131d); slab.position.set(mx, cubeBaseY - 1.4, mz); cubeGroup.add(slab);
+      cubeGroup.add(labelSpriteSafe('Bay ' + String.fromCharCode(65 + r) + (cc + 1), '#8fb6d8', 9, mx, cubeBaseY + cubeH + 2.5, mz));
       for (let w = 0; w < WALLS; w++){ const wall = new THREE.Group(); const baseX = mx + (w - (WALLS - 1) / 2) * WALLPITCH; wall.position.set(baseX, 0, mz); cubeGroup.add(wall);
         for (let iy = 0; iy < FLOORS; iy++) for (let c = 0; c < DEPTH; c++){ slotTot++;
-          const occ = flowFrac(Math.sin((mi2 * 71.3 + w * 53.1 + c * 12.9 + iy * 37.7 + whRateSeed * 3.3)) * 43758.5453) > 0.30; const sku = (mi2 + w * 5 + c * 3 + iy) % skuMats.length;
+          const occ = flowFrac(Math.sin((mi2 * 71.3 + w * 53.1 + c * 12.9 + iy * 37.7 + whRateSeed * 3.3)) * 43758.5453) > 0.28; const sku = (mi2 + w * 5 + c * 3 + iy) % skuMats.length;
           const m = new THREE.Mesh(binGeo, occ ? skuMats[sku] : emptyMat); m.position.set(0, cellY(iy), (c - (DEPTH - 1) / 2) * CELLZ); wall.add(m);
           if (occ) slotOcc++; bins.push({ mesh: m, occ, mat: skuMats[sku] }); }
-        for (let iy = 0; iy < FLOORS; iy++){ const shelf = dioBox(2.2, 0.2, modDepth + 1.0, 0x2a3442, 0x0e1620); shelf.position.set(0, cellY(iy) - CELLY * 0.42, 0); wall.add(shelf); }
-        for (const uz of [-modDepth / 2 - 0.3, modDepth / 2 + 0.3]){ const post = dioBox(2.2, cubeH + 1.2, 0.5, 0x39424f, 0x141a22); post.position.set(0, cubeBaseY + cubeH / 2 - CELLY * 0.5, uz); wall.add(post); }
+        for (let iy = 0; iy < FLOORS; iy++){ const shelf = dioBox(2.4, 0.2, modDepth + 1.0, 0x2a3442, 0x0e1620); shelf.position.set(0, cellY(iy) - CELLY * 0.42, 0); wall.add(shelf); }
+        for (const uz of [-modDepth / 2 - 0.3, modDepth / 2 + 0.3]){ const post = dioBox(2.4, cubeH + 1.2, 0.5, 0x39424f, 0x141a22); post.position.set(0, cubeBaseY + cubeH / 2 - CELLY * 0.5, uz); wall.add(post); }
         wallsArr.push({ group: wall, baseX }); }
       const nearZ = mz - modDepth / 2 - 1, farZ = mz + modDepth / 2 - 1;
       const p = whPicker(); p.grp.rotation.y = Math.PI / 2; p.grp.position.set(mx, 0, nearZ); cubeGroup.add(p.grp);
@@ -12125,7 +12128,8 @@
       const isSF = (section === 'smart-factory' || section === 'warehouse');
       const dist = (section === 'warehouse') ? 300 : (isSF ? 290 : stageCam.dist);   // the multi-bay DC is wide; the plant is tall
       const pivotY = stageCam.pivot.y + (isSF ? 16 : 0);   // raise the look-at so the tall racks/floors frame
-      orbitTo(stageCam.pivot.x, pivotY, stageCam.pivot.z, dist, ORBIT_DEFAULT.polar, sectionToYaw);
+      const polar = (section === 'warehouse') ? 0.72 : ORBIT_DEFAULT.polar;   // warehouse = higher, more top-down so the 3×4 grid of bays reads
+      orbitTo(stageCam.pivot.x, pivotY, stageCam.pivot.z, dist, polar, sectionToYaw);
       controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
     }
   }
