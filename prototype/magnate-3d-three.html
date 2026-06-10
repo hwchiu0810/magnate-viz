@@ -1464,10 +1464,10 @@
   // it focuses on. 'factory' = everything-in-one (KEPT byte-identical); the other three focus a slice:
   //   smart-city    -> economy district (firm towers + exchange + plaza) ONLY
   //   smart-factory -> streamed production chunks (machines/belts/goods/trucks + workers) ONLY
-  //   shopping-mall -> retail district (mall + storefronts + shoppers) ONLY
+  //   shopping-mall -> self-contained Retail-Operations shopper-flow MALL diorama (its own SCENE_POS corner)
   // The render-loop streamed-world + roam/orbit path runs for ALL FOUR (see WORLD_SECTIONS.includes
   // guards below); the market/finance/network/leaderboard DATA dioramas keep their own orbit-stage path.
-  const WORLD_SECTIONS = ['factory', 'smart-city', 'shopping-mall'];   // smart-factory is now its own OEE diorama (from-scratch rebuild)
+  const WORLD_SECTIONS = ['factory', 'smart-city'];   // smart-factory + shopping-mall are now their own diorama twins (from-scratch rebuilds); the streamed world stays reachable via factory/smart-city
   let worldTheme = 'factory';        // active world theme (one of WORLD_SECTIONS); drives applyThemeVisibility
   // Each diorama lives at its own world position (well outside the factory arena so it never
   // collides with streamed chunks). The camera orbits a pivot above each.
@@ -1482,6 +1482,7 @@
     crm:           { x: -1200, z: -1200 },   // CRM Sales-Pipeline process-flow theater — its own corner
     'smart-factory':{ x: 2400, z:    0 },    // Smart Factory OEE production-line diorama (from-scratch rebuild)
     warehouse:     { x: 2400, z:  2400 },    // Warehouse Automation WMS material-flow DC diorama (sibling of smart-factory)
+    'shopping-mall':{ x: 2400, z: -2400 },   // Retail-Operations shopper-flow mall diorama (sibling of smart-factory/warehouse) — its own free corner
   };
   const sceneGroups = {};            // section -> THREE.Group (the diorama root)
   const sceneState  = {};            // section -> per-scene plain-JS state (bars, monuments, nodes, podia)
@@ -1667,6 +1668,33 @@
   // and is tinted by a MOBILITY colourmap (speed/density) so the surface reads as a live mobility flow. We tint
   // a SEPARATE marker (NOT the shared vehicle material) so nothing leaks across themes/clones. View-only.
   let cityMobField = null;   // { pts, pos:Float32Array, col:Float32Array, recs:[plazaTraffic refs], vmax }
+  // ---- CITY-UTILITY DIGITAL TWIN (this story): detailed utility 3D (substations / data center / feeder lines /
+  //   rooftop solar / sensor nodes) + a POWER/ENERGY OPERATIONS layer (day/night load curve, energy heatmap
+  //   intensity, grid load %, peak, reserve margin, outage/cascade scenario, carbon). ALL parented to cityTwinGrp
+  //   (shows ONLY in twin-mode + smart-city; fully reversible) — VIEW-ONLY, nothing pickable, no userData.firmId,
+  //   never pushed to `pickables`, never touches the streamed economy / chunkSignature / its gate vectors.
+  //   DETERMINISTIC: the operations sim advances on accumulated dt/phase ONLY (no RNG, no wall-clock) — outage
+  //   roll uses seeded hashing (fr(Math.sin(seed)*43758.5453)). Built LAZILY (never in the harness probe).
+  let cityUtilGrp   = null;  // GROUP (child of cityTwinGrp) holding the detailed utility 3D + KPI dashboard
+  let cityUtilParts = null;  // { subs:[{mat,base}], dc:{mat,fans:[]}, solar:[{mat}], sensors:[{mat,ph}], feederFG, dashLoad, dashRsv, dashCarbon, peakBar, ringMat }
+  // POWER/ENERGY operations sim state — deterministic (dt/phase-driven), VIEW-ONLY. genMix: fraction of demand met
+  // by each source (renewable lifts carbon down + reserve up at fixed capacity); dr = demand-response shed fraction;
+  // outage = an injected feeder trip that cascades to neighbours then recovers on a clock.
+  const cityGrid = {
+    phase: 0,            // accumulated operations clock (drives the 24h day/night load curve)
+    dayLen: 48,          // seconds per simulated 24h cycle (a brisk day so the curve reads live)
+    loadPct: 55,         // live grid load % of capacity (0..~120)
+    peakPct: 55,         // running peak load % this session
+    reserve: 45,         // reserve margin % (capacity headroom after load)
+    outageRisk: 8,       // outage risk % (rises with load + low reserve + active cascade)
+    carbon: 420,         // carbon intensity gCO2/kWh (falls as the renewable mix rises)
+    renew: 0.35,         // renewable generation-mix fraction (lever 0..0.9)
+    dr: 0,               // demand-response shed fraction (lever 0..0.4) — trims peak load
+    cap: 1.0,            // total generation capacity scale (1.0 = nominal)
+    outageT: 0,          // remaining outage/cascade timer (sec); >0 ⇒ a feeder is tripped
+    cascade: 0,          // 0..1 cascade severity (decays); lifts risk + dims the affected feeders
+    outageSeed: 11       // seed advanced on each inject so successive outages differ deterministically
+  };
 
   // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
   // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
@@ -3532,6 +3560,254 @@
       root.add(pts);
       cityMobField = { pts, pos, col, recs, vmax };
     }
+
+    // ---- CITY-UTILITY 3D + POWER/ENERGY OPERATIONS (this story): detailed utility models + the ops dashboard,
+    //      built into their OWN sub-group under cityTwinGrp so they hide/show + reset with the twin. Guarded so a
+    //      partial THREE never aborts the rest of the twin. ----
+    try { buildCityUtility(root); } catch(_){ /* headless / partial THREE — skip the utility layer, keep the twin */ }
+  }
+
+  /* ============================================================
+   *  CITY-UTILITY DIGITAL TWIN (this story) — buildCityUtility(parent)
+   *  Detailed FUNCTION-SPECIFIC utility 3D (not plain boxes), all additive/holographic + VIEW-ONLY, parented to
+   *  cityTwinGrp so it shows ONLY in twin-mode + smart-city and is fully reversible. Built from r128-guaranteed
+   *  primitives (Box/Cylinder/Cone/Sphere) + dioBox + labelSpriteSafe. Bounded mesh counts. Contents:
+   *    SUBSTATIONS  — 3 ground substations (transformer tank + radiator fins + bushings + a lattice pylon) ringing
+   *                   the district; their transformer tanks glow by the live grid load (energy heatmap intensity).
+   *    DATA CENTER  — a hall with a rooftop chiller bank (spinning fans) + a status beacon: the city's compute/data
+   *                   load anchor (its fan spin + roof tint track the live load).
+   *    FEEDER LINES — a shared flow-graph: the central substation → the 3 district substations over catenary feeders
+   *                   carrying current pulses coloured by load; a TRIPPED feeder (outage) goes dark + stops flowing.
+   *    ROOFTOP SOLAR— tilted PV panel arrays on low rooftops feeding the renewable mix (their emissive tracks the
+   *                   day/night solar curve — bright at midday, dark at night).
+   *    SENSOR NODES — small glowing IoT poles seeded across the district that pulse (grid telemetry).
+   *    KPI DASHBOARD— floating sprite labels (GRID LOAD % · RESERVE % · CARBON g/kWh · PEAK %) + an energy ring.
+   *  Deterministic seeded placement (fr(Math.sin(seed)*43758.5453)); NO economy RNG, NO chunkSignature touch.
+   * ============================================================ */
+  function buildCityUtility(parent){
+    if (typeof THREE === 'undefined' || !parent || cityUtilGrp) return;
+    const ADD  = (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2);
+    const grp  = new THREE.Group(); parent.add(grp); cityUtilGrp = grp;
+    const fr   = (v) => v - Math.floor(v);                       // seeded fract — deterministic, NO RNG/clock
+    const hash = (s) => fr(Math.sin(s) * 43758.5453);            // the project's seeded hash literal
+    const parts = { subs: [], dc: null, solar: [], sensors: [], feederFG: null, dash: {}, ringMat: null };
+
+    // a thin additive cyan wire box helper (local frame), same recipe as the twin's wireBox.
+    const CYAN = 0x6fe9ff;
+    const wireBox = (par, sx,sy,sz, px,py,pz, op) => {
+      let geo;
+      if (typeof THREE.EdgesGeometry === 'function'){ try { geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)); } catch(_){ geo = new THREE.BoxGeometry(1,1,1); } }
+      else geo = new THREE.BoxGeometry(1,1,1);
+      const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity: (op !== undefined ? op : 0.6), blending: ADD, depthWrite: false }));
+      if (m.scale && m.scale.set) m.scale.set(sx,sy,sz);
+      if (m.position && m.position.set) m.position.set(px,py,pz);
+      par.add(m); return m;
+    };
+
+    // ---- SUBSTATIONS: 3 detailed ground substations ringing the district. Each = a transformer TANK (the glowing
+    //      energy-heatmap body) + cooling RADIATOR fins + HV BUSHING cones + a lattice PYLON beside it. Placed on a
+    //      ring well clear of the towers (radius ~ district span) at deterministic angles. ----
+    const SUB_POS = [ { x: -46, z: -38 }, { x: 46, z: -38 }, { x: 0, z: 46 } ];
+    for (let si = 0; si < SUB_POS.length; si++){
+      const sp = SUB_POS[si];
+      const sg = new THREE.Group(); if (sg.position && sg.position.set) sg.position.set(sp.x, 0, sp.z); grp.add(sg);
+      // transformer tank — the live energy body (its OWN emissive material; tinted each frame by grid load)
+      const tankMat = new THREE.MeshStandardMaterial({ color: 0x16364a, emissive: new THREE.Color(0x2a7fa0), emissiveIntensity: 0.4, roughness: 0.45, metalness: 0.6 });
+      const tank = new THREE.Mesh(new THREE.BoxGeometry(7, 6, 5), tankMat);
+      if (tank.position && tank.position.set) tank.position.set(0, 3, 0); sg.add(tank);
+      wireBox(sg, 7.2, 6.2, 5.2, 0, 3, 0, 0.5);
+      // radiator cooling fins (a row of thin slabs on the tank side)
+      for (let f = 0; f < 5; f++){
+        const fin = dioBox(0.5, 5, 4.4, 0x123043, 0x1c5c78);
+        if (fin.position && fin.position.set) fin.position.set(3.7 + f * 0.7, 3, 0); sg.add(fin);
+      }
+      // HV bushings — 3 cones on the tank lid
+      if (typeof THREE.ConeGeometry === 'function'){
+        for (let b = 0; b < 3; b++){
+          const bm = new THREE.MeshStandardMaterial({ color: 0x0e2533, emissive: new THREE.Color(0x6fe9ff), emissiveIntensity: 0.35, roughness: 0.4, metalness: 0.5 });
+          const bushing = new THREE.Mesh(new THREE.ConeGeometry(0.8, 3, 10), bm);
+          if (bushing.position && bushing.position.set) bushing.position.set(-2 + b * 2, 7.5, 1.4); sg.add(bushing);
+        }
+      }
+      // lattice pylon beside the substation (a tapered tower with two cross-arms)
+      const pg = new THREE.Group(); if (pg.position && pg.position.set) pg.position.set(-6.5, 0, -2); sg.add(pg);
+      wireBox(pg, 1.6, 22, 1.6, 0, 11, 0, 0.55);
+      wireBox(pg, 8, 0.5, 0.5, 0, 16, 0, 0.6);
+      wireBox(pg, 8, 0.5, 0.5, 0, 20, 0, 0.6);
+      parts.subs.push({ mat: tankMat, base: 0.2 + hash(si * 7.3 + 1.1) * 0.2 });
+    }
+
+    // ---- DATA CENTER: a long hall + a rooftop CHILLER bank (spinning fan discs) + a status beacon. The compute/
+    //      data anchor of the district; its roof tint + fan spin track live load. Sits to the side of the district. ----
+    {
+      const dg = new THREE.Group(); if (dg.position && dg.position.set) dg.position.set(-52, 0, 8); grp.add(dg);
+      const hallMat = new THREE.MeshStandardMaterial({ color: 0x13283a, emissive: new THREE.Color(0x1f5f7e), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.4 });
+      const hall = new THREE.Mesh(new THREE.BoxGeometry(16, 9, 11), hallMat);
+      if (hall.position && hall.position.set) hall.position.set(0, 4.5, 0); dg.add(hall);
+      wireBox(dg, 16.3, 9.3, 11.3, 0, 4.5, 0, 0.5);
+      // rooftop chiller fans (spinning discs) — each a thin cylinder we rotate by load each frame
+      const fans = [];
+      if (typeof THREE.CylinderGeometry === 'function'){
+        for (let r = 0; r < 3; r++){ for (let c = 0; c < 2; c++){
+          const fm = new THREE.MeshStandardMaterial({ color: 0x0c2030, emissive: new THREE.Color(0x6fe9ff), emissiveIntensity: 0.3, roughness: 0.4, metalness: 0.6 });
+          const fan = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 0.5, 8), fm);
+          if (fan.rotation) fan.rotation.x = Math.PI / 2;          // lie flat on the roof
+          if (fan.position && fan.position.set) fan.position.set(-4.5 + r * 4.5, 9.4, -2.6 + c * 5.2); dg.add(fan); fans.push(fan);
+        } }
+      }
+      // status beacon (a small bright sphere on a mast)
+      const beaconMat = new THREE.MeshBasicMaterial({ color: 0x9fe7ff, transparent: true, opacity: 0.9, blending: ADD, depthWrite: false });
+      const beacon = (typeof THREE.SphereGeometry === 'function') ? new THREE.Mesh(new THREE.SphereGeometry(0.9, 10, 10), beaconMat) : new THREE.Mesh(new THREE.BoxGeometry(1.4,1.4,1.4), beaconMat);
+      if (beacon.position && beacon.position.set) beacon.position.set(6.5, 11, 0); dg.add(beacon);
+      dg.add(labelSpriteSafe('🖥 DATA CENTER', '#8af5ff', 14, 0, 15, 0));
+      parts.dc = { hallMat, fans, beaconMat };
+    }
+
+    // ---- ROOFTOP SOLAR: tilted PV arrays on low rooftops feeding the renewable mix. Deterministic placement on a
+    //      seeded grid clear of the towers; each panel's emissive tracks the day/night SOLAR curve (bright midday). ----
+    if (typeof THREE.BoxGeometry === 'function'){
+      const SOLAR_N = 14;
+      for (let i = 0; i < SOLAR_N; i++){
+        const ang = hash(i * 3.7 + 0.5) * Math.PI * 2;
+        const rad = 30 + hash(i * 5.1 + 2.2) * 26;                 // ring radius 30..56 (outside the tower core)
+        const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
+        if (Math.abs(z) < 34 && Math.abs(x) < 14) continue;        // keep clear of the dense tower band
+        const pg = new THREE.Group(); if (pg.position && pg.position.set) pg.position.set(x, 0, z); grp.add(pg);
+        // a short plinth (the roof) + a tilted PV panel
+        const roof = dioBox(6, 1.4, 6, 0x0e1f2c, 0x14384a); if (roof.position && roof.position.set) roof.position.set(0, 0.7, 0); pg.add(roof);
+        const panelMat = new THREE.MeshStandardMaterial({ color: 0x0a1a2a, emissive: new THREE.Color(0x2f6fd0), emissiveIntensity: 0.25, roughness: 0.3, metalness: 0.7 });
+        const panel = new THREE.Mesh(new THREE.BoxGeometry(5, 0.25, 3.6), panelMat);
+        if (panel.rotation) panel.rotation.x = -0.5;               // tilt to the "sun"
+        if (panel.position && panel.position.set) panel.position.set(0, 2.4, 0); pg.add(panel);
+        parts.solar.push({ mat: panelMat, ph: hash(i * 9.3) });
+      }
+    }
+
+    // ---- SENSOR NODES: small glowing IoT poles seeded across the district (grid telemetry). Bounded; each pulses
+    //      on a deterministic per-node phase. ----
+    if (typeof THREE.SphereGeometry === 'function' || typeof THREE.BoxGeometry === 'function'){
+      const SENS_N = 18;
+      for (let i = 0; i < SENS_N; i++){
+        const ang = hash(i * 2.9 + 4.4) * Math.PI * 2;
+        const rad = 18 + hash(i * 6.7 + 1.3) * 40;
+        const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
+        const ng = new THREE.Group(); if (ng.position && ng.position.set) ng.position.set(x, 0, z); grp.add(ng);
+        const pole = dioBox(0.4, 5, 0.4, 0x0e2230, 0x1a4a60); if (pole.position && pole.position.set) pole.position.set(0, 2.5, 0); ng.add(pole);
+        const headMat = new THREE.MeshBasicMaterial({ color: 0x7fe9c8, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false });
+        const head = (typeof THREE.SphereGeometry === 'function') ? new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 8), headMat) : new THREE.Mesh(new THREE.BoxGeometry(1,1,1), headMat);
+        if (head.position && head.position.set) head.position.set(0, 5.4, 0); ng.add(head);
+        parts.sensors.push({ mat: headMat, ph: hash(i * 11.7) * Math.PI * 2 });
+      }
+    }
+
+    // ---- FEEDER LINES: central substation (the existing power source at 0,9,-44) → the 3 district substations over
+    //      catenary feeders carrying current pulses (twinHeatColor by load). Built on the shared flow-graph. A
+    //      tripped feeder (outage) is darkened + halted in cityGridStep. ----
+    if (typeof buildFlowGraph === 'function'){
+      const nodes = [{ id: '__GRID__', x: 0, y: 9, z: -44, kind: 'source' }];
+      const edges = [];
+      for (let si = 0; si < SUB_POS.length; si++){ nodes.push({ id: 'sub' + si, x: SUB_POS[si].x, y: 4, z: SUB_POS[si].z, kind: 'sub' });
+        edges.push({ a: 0, b: nodes.length - 1 }); }
+      if (edges.length){
+        const fg = buildFlowGraph(nodes, edges, { colormap: twinHeatColor, density: 5, speed: 0.34, unitSize: 2.2, nodeHue: CYAN, sag: 5, lineColor: 0x2f88b8 });
+        if (fg && fg.grp){ grp.add(fg.grp); parts.feederFG = fg; }
+      }
+    }
+
+    // ---- KPI DASHBOARD: floating sprite labels above the district + an ENERGY RING (a flat torus-less ring made of
+    //      a thin cylinder whose tint reads the live load). Mirrors the other sims' sprite dashboards. ----
+    const DASH_Y = H_MAX + PODIUM_H + 16;
+    grp.add(labelSpriteSafe('⚡ CITY GRID · power operations', '#8af5ff', 22, 0, DASH_Y + 9, 0));
+    parts.dash.load   = labelSpriteSafe('', '#bfeaff', 16, -26, DASH_Y, 0);   grp.add(parts.dash.load);
+    parts.dash.rsv    = labelSpriteSafe('', '#9fe7c0', 16,   0, DASH_Y, 0);   grp.add(parts.dash.rsv);
+    parts.dash.carbon = labelSpriteSafe('', '#ffd9a0', 16,  26, DASH_Y, 0);   grp.add(parts.dash.carbon);
+    parts.dash.peak   = labelSpriteSafe('', '#ff9c9c', 14,   0, DASH_Y - 6, 0); grp.add(parts.dash.peak);
+    if (typeof THREE.CylinderGeometry === 'function'){
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 0.6, 40, 1, true), ringMat);
+      if (ring.position && ring.position.set) ring.position.set(0, DASH_Y - 1, 0); grp.add(ring);
+      parts.ringMat = ringMat;
+    }
+
+    cityUtilParts = parts;
+  }
+
+  /* cityGridStep(dt) — the POWER/ENERGY OPERATIONS sim. Deterministic (advances on accumulated dt/phase ONLY; the
+   * outage roll uses seeded hashing, NO RNG, NO wall-clock). Computes the day/night load curve, grid load %, peak,
+   * reserve margin, carbon, outage risk + drives the outage/cascade, then tints the utility 3D + updates the KPI
+   * dashboard. VIEW-ONLY (reads cityTowerLoad for the demand base; never steps/mutates the economy). Called from
+   * animateSmartCityTwin (gated to twin-mode + smart-city + live + !reduceMotion). Alloc-light + bounded. */
+  function cityGridStep(dt){
+    const G = cityGrid; G.phase += dt;
+    // 24h DAY/NIGHT demand curve: a base diurnal sine (low pre-dawn, morning ramp, evening peak) in [0.45,1].
+    const day = (G.phase % G.dayLen) / G.dayLen;                  // 0..1 fraction of the simulated day
+    const diurnal = 0.72 + 0.28 * Math.sin((day - 0.30) * Math.PI * 2);   // ~0.44 pre-dawn → ~1.0 evening
+    // SOLAR availability — a daytime bell (peaks at midday ~day 0.5, zero at night). Lifts the *effective* renewable.
+    const solar = Math.max(0, Math.sin(day * Math.PI));           // 0 at night, 1 at midday
+    // DEMAND base from the live towers (the same read the energy shells use) blended with the diurnal curve.
+    let towerAvg = 0.5, n = 0;
+    try { for (let i = 0; i < cityTwinShells.length; i++){ towerAvg += cityTowerLoad(cityTwinShells[i].id); n++; } if (n) towerAvg /= n; } catch(_){}
+    // demand-response SHEDS a slice of the peak; capacity scales the denominator.
+    const demand = Math.max(0.2, (0.55 * diurnal + 0.45 * towerAvg) * (1 - G.dr * 0.5));
+    const loadFrac = Math.max(0, Math.min(1.25, demand / Math.max(0.4, G.cap)));
+    G.loadPct = +(loadFrac * 100).toFixed(0);
+    if (G.loadPct > G.peakPct) G.peakPct = G.loadPct;
+    // RESERVE margin — headroom after load (renewable + capacity lift it); clamps [0,80].
+    G.reserve = +Math.max(0, Math.min(80, (1 - loadFrac) * 100 + G.renew * 18 + G.cap * 6 - 6)).toFixed(0);
+    // CARBON intensity — falls as the *effective* renewable mix (lever + live solar) rises.
+    const effRenew = Math.max(0, Math.min(0.95, G.renew + solar * 0.22));
+    G.carbon = +Math.max(40, 620 - effRenew * 560).toFixed(0);
+    // OUTAGE / CASCADE — a tripped feeder (timer) cascades (severity decays); the cascade + high load + thin reserve
+    // raise the outage risk. NO RNG: the trip is operator-injected (lever); its decay is pure dt.
+    if (G.outageT > 0){ G.outageT = Math.max(0, G.outageT - dt); G.cascade = Math.max(G.cascade, 0.55 + 0.45 * (G.outageT > 0 ? 1 : 0)); }
+    G.cascade = Math.max(0, G.cascade - dt * 0.18);               // cascade severity decays
+    const stress = Math.max(0, loadFrac - 0.85) * 2.2;            // overload stress
+    G.outageRisk = +Math.max(0, Math.min(100, 4 + stress * 40 + G.cascade * 45 + Math.max(0, (35 - G.reserve)) * 0.6)).toFixed(0);
+
+    // ---- drive the 3D utility from these metrics ----
+    const P = cityUtilParts; if (!P) return;
+    const lf = Math.max(0, Math.min(1, loadFrac));
+    // substations: transformer tanks tint by load (energy-heatmap intensity), with a per-sub base offset.
+    for (let i = 0; i < P.subs.length; i++){ const s = P.subs[i];
+      const c = twinHeatColor(Math.max(0, Math.min(1, lf * 0.85 + s.base + G.cascade * 0.3)));
+      if (s.mat && s.mat.emissive){ s.mat.emissive.setRGB(c.r, c.g, c.b); s.mat.emissiveIntensity = 0.3 + lf * 0.5; }
+    }
+    // data center: roof tint by load + fans spin faster at higher load; beacon blinks on the operations phase.
+    if (P.dc){
+      const c = twinHeatColor(lf * 0.7 + 0.15);
+      if (P.dc.hallMat && P.dc.hallMat.emissive){ P.dc.hallMat.emissive.setRGB(c.r * 0.6, c.g * 0.7, c.b); P.dc.hallMat.emissiveIntensity = 0.25 + lf * 0.4; }
+      for (let f = 0; f < P.dc.fans.length; f++){ const fan = P.dc.fans[f]; if (fan && fan.rotation) fan.rotation.z += dt * (1.2 + lf * 5 + f * 0.1); }
+      if (P.dc.beaconMat) P.dc.beaconMat.opacity = 0.45 + 0.45 * (0.5 + 0.5 * Math.sin(G.phase * 3));
+    }
+    // rooftop solar: emissive tracks the solar bell (bright midday, dark at night) + a tiny per-panel shimmer.
+    for (let i = 0; i < P.solar.length; i++){ const s = P.solar[i];
+      if (s.mat && s.mat.emissive){ const g = solar * (0.85 + 0.15 * Math.sin(G.phase * 1.3 + s.ph * 6));
+        s.mat.emissive.setRGB(0.18 * g, 0.42 * g + 0.05, 0.9 * g + 0.08); s.mat.emissiveIntensity = 0.12 + solar * 0.85; }
+    }
+    // sensor nodes: pulse green on their own phase (telemetry heartbeat); warmer when grid stressed.
+    for (let i = 0; i < P.sensors.length; i++){ const s = P.sensors[i];
+      if (s.mat){ const p = 0.5 + 0.5 * Math.sin(G.phase * 2.2 + s.ph);
+        s.mat.opacity = 0.4 + 0.5 * p;
+        if (s.mat.color) s.mat.color.setRGB(0.2 + stress * 0.6, 0.9 - stress * 0.4, 0.65 - stress * 0.3); }
+    }
+    // feeder lines: current pulses coloured by load; a tripped feeder (outage active) is darkened + halted. Feeder 0
+    // (or a seeded pick) is the tripped one while outageT>0; the flow-graph advance is alloc-free.
+    if (P.feederFG && P.feederFG.animate){
+      const tripped = (G.outageT > 0) ? (Math.abs(Math.sin(G.outageSeed * 5.7)) * P.feederFG.edges.length | 0) % Math.max(1, P.feederFG.edges.length) : -1;
+      P.feederFG.animate(dt, true, (e) => (e === tripped) ? 0.02 : Math.max(0.05, Math.min(1, lf + G.cascade * 0.4)));
+    }
+    // energy ring: tint by load (cool→hot) + breathe opacity with the operations phase.
+    if (P.ringMat){ const c = twinHeatColor(lf);
+      if (P.ringMat.color) P.ringMat.color.setRGB(c.r, c.g, c.b);
+      P.ringMat.opacity = 0.3 + 0.3 * (0.5 + 0.5 * Math.sin(G.phase * 1.5)) + G.cascade * 0.2;
+    }
+    // KPI dashboard sprites
+    if (P.dash){
+      if (P.dash.load)   setSpriteText(P.dash.load,   'GRID LOAD  ' + G.loadPct + '%');
+      if (P.dash.rsv)    setSpriteText(P.dash.rsv,    'RESERVE  ' + G.reserve + '%');
+      if (P.dash.carbon) setSpriteText(P.dash.carbon, 'CARBON  ' + G.carbon + ' g/kWh');
+      if (P.dash.peak)   setSpriteText(P.dash.peak,   'PEAK ' + G.peakPct + '%  ·  RISK ' + G.outageRisk + '%');
+    }
   }
 
   /* applyCityTwin(on) — show/hide the smart-city digital-twin overlays. ON: build lazily on first reveal, then
@@ -3548,6 +3824,8 @@
       // reset energy tints to a calm idle so re-enabling looks fresh (no residual heat baked in)
       for (let i = 0; i < cityTwinShells.length; i++){ const s = cityTwinShells[i];
         if (s.shellMat && s.shellMat.color && s.shellMat.color.setHex){ s.shellMat.color.setHex(0x3fd6ff); s.shellMat.opacity = 0.16; } }
+      // reset the power/energy operations sim to a calm idle so a later ON starts fresh (no residual outage/peak).
+      cityGrid.outageT = 0; cityGrid.cascade = 0; cityGrid.peakPct = cityGrid.loadPct;
     }
   }
 
@@ -3615,6 +3893,12 @@
         if (f.pts.geometry.attributes.color)    f.pts.geometry.attributes.color.needsUpdate = true;
       }
     }
+    // CITY-UTILITY POWER/ENERGY OPERATIONS (this story) — advance the day/night load curve + grid metrics + the
+    //  outage/cascade, then tint the substations / data center / solar / sensors / feeders + refresh the KPI
+    //  dashboard. Deterministic (dt/phase only). Guarded so a partial build never throws in the frame loop.
+    try { cityGridStep(dt); } catch(_){}
+    // mirror the live grid KPIs into the DOM sim readout (if the panel is open on this section)
+    try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){}
   }
 
   /* animateSmartFactory(dt) — advance the ENCLOSED HALL's motion: loop goods circulate the CLOSED conveyor
@@ -5224,7 +5508,7 @@
     // The tower-HEIGHT ease itself is NOT gated (it must keep tracking net worth so towers are correctly
     // sized whenever economyGroup is shown again, and the city harness's heights-track-NW invariant holds).
     const econVisF   = !economyGroup || economyGroup.visible !== false;   // factory / smart-city
-    const retailVisF = !retailGroup  || retailGroup.visible  !== false;   // factory / shopping-mall
+    const retailVisF = !retailGroup  || retailGroup.visible  !== false;   // streamed retail district — shown only in the everything-on factory world now (the Mall is its own diorama twin)
 
     // ease central tower heights + glow
     for (const f of world.firms){
@@ -5452,9 +5736,10 @@
       // (tokens circulate the ring, pole-top objects spin, particles stream the ribbons). Frozen under reduced-motion.
       if (!reduceMotion){
         if (activeSection === 'erp'){ try { animateErpToc('erp', dt); } catch(_){} }
-        else if (activeSection === 'crm'){ try { animateRingSankey('crm', dt); } catch(_){} }
+        else if (activeSection === 'crm'){ try { animateCrmPipeline('crm', dt); } catch(_){} }
         else if (activeSection === 'smart-factory'){ try { animateSmartFactoryScene('smart-factory', dt); } catch(_){} }
         else if (activeSection === 'warehouse'){ try { animateWarehouseScene('warehouse', dt); } catch(_){} }
+        else if (activeSection === 'shopping-mall'){ try { animateMallScene('shopping-mall', dt); } catch(_){} }
       }
       // (VFXLab.retargetLive + Builder.update now run section-independently, just after VFX.update above.)
       // DATA → VIZ ANIMATE (P5.2-visible): drive the placed objects along the [t,n,f]
@@ -5983,8 +6268,9 @@
     'digital-twin': { title: 'Digital Twin · telemetry', cols: [{ label: 'Asset' }, { label: 'Load', num: true }, { label: 'Temp', num: true }],
       rows: (c) => vizTwinTelemetry(c) },
     'vfx-lab': { title: 'VFX Lab · authoring stage', cols: [{ label: 'Effect stage' }], rows: () => [] },
-    erp: { title: 'ERP · O2C (Theory of Constraints)', cols: [{ label: 'Stage' }, { label: 'WIP', num: true }, { label: 'Value', num: true }],
-      rows: () => vizFlowRows('erp') },
+    erp: { title: 'ERP · O2C (Theory of Constraints)', cols: [{ label: 'Station' }, { label: 'State' }, { label: 'WIP', num: true }],
+      rows: () => { const st = (typeof sceneState !== 'undefined') ? sceneState.erp : null;
+        if (!st || !st.machines) return []; return st.machines.map((m, i) => ({ cells: [(i + 1) + '. ' + (m.name || m.id).replace(/^⚠ /, ''), m.state || '—', String((m.buf || []).length + (m.holding ? 1 : 0))] })); } },
     crm: { title: 'CRM · Sales pipeline', cols: [{ label: 'Stage' }, { label: 'Deals', num: true }, { label: 'Value', num: true }],
       rows: () => vizFlowRows('crm') }
   };
@@ -8522,105 +8808,570 @@
       if (st.hubRing.material){ const load = Math.min(1, st.coreQ.length / ERP_CORE_CAP); st.hubRing.material.opacity = 0.45 + 0.45 * (0.5 + 0.5 * Math.sin(st.beltPhase * (2 + load * 3))); } }
   }
   /* ============================================================
-   *  📦 ERP · ORDER-TO-CASH PROCESS LINE (Theory of Constraints) — buildErpToc()  [FROM-SCRATCH BUILD]
-   *  A left→right line of 6 purpose-built WORKSTATIONS (desk · terminal+screen · server · ANDON stack-light) on a
-   *  conveyor. Orders are the recognizable O2C objects; they QUEUE on the belt before each station (visible WIP),
-   *  are SERVICED at the station's rate, then advance + MORPH to the next stage. One station is the CONSTRAINT
-   *  (slow) → its queue grows and backpressures upstream while downstream STARVES (drum-buffer-rope). The andon
-   *  lights read green=running · amber=blocked/constraint · dim=starved. VIEW-ONLY, pooled, headless-safe.
+   *  📦 ERP · ORDER-TO-CASH DIGITAL TWIN (Theory of Constraints) — buildErpToc()  [NODE-GRAPH REBUILD]
+   *  A left→right O2C line of 6 purpose-built, FUNCTION-SPECIFIC station cells — Order entry (sales desk +
+   *  terminal) · Credit check (risk/approval gate) · Pick (warehouse pick wall + tote rack) · Pack (boxing /
+   *  taping machine) · Invoice (billing printer + finance terminal) · Ship (loading dock + truck bay) — wired
+   *  on the SHARED node-graph flow engine (node()/seg() + oeeEmit/oeePlace/oeeFree + the machine-SERVICE loop).
+   *  Orders are the recognizable O2C objects (doc → signed doc → tote/package → taped box → invoice → coins)
+   *  that MORPH stage-to-stage as they pass each cell. ONE cell is the CONSTRAINT (slow service rate): its node
+   *  buffer fills (visible WIP backing up), backpressure BLOCKS upstream cells (amber andon), and the downstream
+   *  cells STARVE (dim) — the drum-buffer-rope lesson. Stations also break down/recover on a deterministic clock
+   *  (Reliability lever). Live KPI board: Throughput (orders/min) · WIP · Cycle time · On-time % · Constraint
+   *  utilisation. Levers: Arrival rate, Constraint capacity (elevate it), Reliability, Buffer, scoped Randomize,
+   *  Reset. VIEW-ONLY, pooled (INV-4), sub-white emissive (INV-3), deterministic (no RNG/clock), headless-safe.
    * ============================================================ */
-  function erpTocModel(st, o, stage){ const s = Math.max(0, Math.min(st.cfg.models.length - 1, stage));
-    if (o.stageBuilt !== s){ setFlowModel(o.grp, s, st.cfg); o.stageBuilt = s; } }
-  function erpTocSpawn(st){ let o = null; for (const x of st.orders){ if (!x.active){ o = x; break; } } if (!o) return;
-    o.active = true; o.station = 0; o.exit = 0; o.value = Math.round(st.cfg.valBase + flowFrac(Math.sin((st.spawned + 1) * 78.233) * 12543.1) * st.cfg.valSpan);
-    o.vx = st.stationX[0] - 34; o.lane = ((st.spawned % 3) - 1) * 1.5; o.stageBuilt = -1; erpTocModel(st, o, 0);
-    st.stations[0].queue.push(o); st.spawned++; }
-  function erpTocTargetX(st, o){ const stn = st.stations[o.station]; const slot = Math.max(0, stn.queue.indexOf(o));
-    return stn.x - st.C.qgap - slot * st.C.qsp; }
-  function erpTocPlace(st, o, dt){
-    if (o.exit > 0){ o.vx += 24 * dt; const s = Math.max(0, 1 - o.exit); o.grp.position.set(o.vx, st.beltTop + 0.4, o.lane);
-      o.grp.scale.setScalar(st.C.objScale * s); o.exit += dt * 1.6; if (o.exit >= 1){ o.active = false; o.grp.visible = false; } return; }
-    const tx = erpTocTargetX(st, o), k = dt > 0 ? Math.min(1, dt * 4) : 1; o.vx += (tx - o.vx) * k;
-    o.grp.position.set(o.vx, st.beltTop + 0.4, o.lane); o.grp.scale.setScalar(st.C.objScale); o.grp.visible = true;
+  const ERP_O2C = { bufCap: 6, rate: 1.3, spawn: 0.8, objN: 96, objScale: 1.7, mtbf: 20,
+    n: 6, spacing: 30, constraintIdx: 2, rateFast: 1.4, rateSlow: 0.42,
+    // station functional types + display names (the morph stage the cell emits is the column index)
+    types: ['order', 'credit', 'pick', 'pack', 'invoice', 'ship'],
+    names: ['Order Entry', 'Credit Check', 'Pick', 'Pack', 'Invoice', 'Ship'],
+    // ON-TIME SLA: an order is "late" if its end-to-end cycle time exceeds this (seconds). Scales with the
+    // line length so an order flowing through all 6 cells at a healthy pace counts as on-time.
+    otifTarget: () => 12 };
+  let erpRateSeed = 5;   // seed for the O2C line's RANDOMIZED initial service rates / reliability (deterministic, no wall-clock; 🎲 advances it)
+  // SEEDED-RANDOM service rate per station within FUNCTION-specific bands so the line stays balanced EXCEPT the
+  // designated CONSTRAINT (Pick) which is deliberately throttled. Mirrors sfRollRates exactly (no wall-clock).
+  // opts: { rate, avail, reject } booleans + filter(id,nd). Returns avg credit-hold (reject) rate.
+  function erpRollRates(N, S, C, seed, stations, opts){
+    opts = opts || {};
+    const doRate = opts.rate !== false, doAvail = opts.avail !== false, doReject = opts.reject !== false;
+    const inScope = opts.filter || (() => true);
+    let rc = 0; const fr = (v) => v - Math.floor(v);
+    const rnd = () => { rc++; return fr(Math.sin(rc * 12.9898 + seed * 19.73) * 43758.5453); };
+    const band = (id, nd) => {
+      if (nd.constraint) return [0.34, 0.5];          // the CONSTRAINT station = deliberate throughput bottleneck
+      if (nd.type === 'order')   return [1.5, 1.9];   // order entry is fast
+      if (nd.type === 'credit')  return [1.4, 1.8];   // credit-check gate
+      if (nd.type === 'pack')    return [1.2, 1.6];
+      if (nd.type === 'invoice') return [1.5, 1.9];   // billing prints fast
+      if (nd.type === 'ship')    return [1.3, 1.7];
+      return [1.3, 1.7];
+    };
+    for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink' || !inScope(id, nd)) continue;
+      if (doRate){ const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate; }
+      if (doReject && nd.qcGate) nd.failFrac = +(0.06 + rnd() * 0.10).toFixed(3); }
+    if (doRate) for (const s of S){ if (!s.spdAbs) s.spd = (N[s.a].rate || C.rate) / C.rate; }
+    if (doAvail && stations){ for (const m of stations){ if (!inScope(m.id, m)) continue; const mi = m.mi || 0;
+      m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 16;
+      m.downFrac = 0.04 + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.08;
+      m.offset = fr(Math.sin((mi + 1) * 12.9898 + seed * 5.0) * 43758.5); } }
+    let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac; qn++; } }
+    return qn ? qf / qn : 0.05;
   }
+  // O2C document/tote MORPH (reuses the recognizable ERP_FLOW_MODELS: doc→signed→package→taped box→invoice→coins).
+  const ERP_O2C_PART = ERP_FLOW_MODELS.map((fn) => ((g) => fn(g, 0)));
+  // build ONE detailed O2C station whose SILHOUETTE is SPECIFIC TO ITS FUNCTION — a sales/order-entry desk with
+  // terminal, a credit-approval gate (arch + risk screen + stamp), a warehouse pick wall (tote rack + reach arm),
+  // a boxing/packing machine (housing + sealing ram + outfeed rollers), a billing/invoice printer terminal, and a
+  // shipping loading-dock bay (dock door + truck + ramp). Common to all: base + hazard/accent stripe, an ANDON
+  // stack-light (R/A/G), a down beacon, and a name label. Returns { cg, tool, arms, lampR, lampA, lampG, beacon }.
+  function erpMakeCell(g, i, x, z, hex, type, name){
+    const cg = new THREE.Group(); cg.position.set(x, 0, z); g.add(cg);
+    const tool = {}, arms = []; let poleX = 4.6, poleZ = 3.2, beaconY = 8.0;
+    const feet = (w, d) => { for (const fx of [-w / 2 + 0.9, w / 2 - 0.9]) for (const fz of [-d / 2 + 0.9, d / 2 - 0.9]){ const ft = dioBox(0.9, 0.6, 0.9, 0x10161f, 0x05080c); ft.position.set(fx, 0.3, fz); cg.add(ft); } };
+    const ctrlScreen = (px, py, pz, w, h) => { const scr = new THREE.Mesh(new THREE.BoxGeometry(w || 1.9, h || 1.1, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 })); scr.position.set(px, py, pz); cg.add(scr); return scr; };
+    if (type === 'order'){
+      // SALES ORDER-ENTRY DESK: wide desk + monitor on a stand + keyboard tray + side filing pillar
+      const base = dioBox(10, 1.0, 7, 0x161e2a, 0x0a121c); base.position.set(0, 0.5, 0); cg.add(base); feet(10, 7);
+      const acc = dioBox(10.4, 0.3, 7.4, brightenHex(hex, 0.1), hex); acc.position.set(0, 1.05, 0); cg.add(acc);
+      const desk = dioBox(8.4, 0.5, 4.0, 0x33405a, 0x141c28); desk.position.set(0, 3.2, 0.6); cg.add(desk);
+      for (const dx of [-3.4, 3.4]){ const leg = dioBox(0.5, 2.0, 0.5, 0x2a3340, 0x0a0f18); leg.position.set(dx, 2.0, 0.6); cg.add(leg); }
+      const stand = dioBox(0.5, 1.6, 0.5, 0x2a3340, 0x0a0f18); stand.position.set(-1.6, 4.3, -0.8); cg.add(stand);
+      const mon = dioBox(4.2, 2.7, 0.3, 0x0c1622, 0x05151c); mon.position.set(-1.6, 5.6, -0.8); cg.add(mon);
+      ctrlScreen(-1.6, 5.6, -0.62, 3.7, 2.2);
+      const kbd = dioBox(2.6, 0.16, 1.0, 0x39424f, 0x141a22); kbd.position.set(-1.6, 3.5, 1.4); cg.add(kbd);
+      const tray = dioBox(2.0, 0.7, 2.0, brightenHex(hex, 0.05), 0x10202f); tray.position.set(2.6, 3.9, 0.6); cg.add(tray); tool.head = tray; tool.headBaseY = 3.9;
+      const cab = dioBox(2.2, 3.4, 3.2, 0x26303e, 0x101822); cab.position.set(4.0, 1.9, -1.6); cg.add(cab);
+      poleX = 5.0; poleZ = 2.4; beaconY = 7.2;
+    } else if (type === 'credit'){
+      // CREDIT-CHECK / APPROVAL GATE: a portal arch the order passes through + a risk-scoring screen tower + an
+      // approval STAMP head that punches down when running (this is the QC-style gate — some orders are HELD)
+      const deck = dioBox(9, 1.0, 7, 0x161e2a, 0x0a121c); deck.position.set(0, 0.5, 0); cg.add(deck); feet(9, 7);
+      const acc = dioBox(9.4, 0.3, 7.4, brightenHex(hex, 0.1), hex); acc.position.set(0, 1.05, 0); cg.add(acc);
+      for (const px of [-3.0, 3.0]){ const post = dioBox(0.85, 7.0, 0.85, brightenHex(hex, 0.04), 0x141c28); post.position.set(px, 4.2, 0); cg.add(post); }
+      const arch = dioBox(7.0, 0.9, 1.6, 0x4a586c, 0x16202c); arch.position.set(0, 7.6, 0); cg.add(arch);
+      const stampArm = dioBox(0.6, 2.4, 0.6, 0x9fb0c8, 0x2a3a4d); stampArm.position.set(0, 6.0, 0); cg.add(stampArm); tool.ram = stampArm; tool.ramBaseY = 6.0;
+      const tower = dioBox(1.6, 3.6, 1.3, 0x2a3442, 0x0e1620); tower.position.set(4.2, 2.3, 0); cg.add(tower);
+      ctrlScreen(4.2, 2.9, 0.68, 1.2, 1.9);
+      poleX = 4.5; poleZ = 3.0; beaconY = 8.2;
+    } else if (type === 'pick'){
+      // WAREHOUSE PICK WALL (the CONSTRAINT): tall multi-bin tote rack + a reach/pick robot arm + a pick cart.
+      // The bottleneck reads as a deep, slow rack the orders must wait at.
+      const base = dioBox(11, 1.2, 8, 0x161e2a, 0x0a121c); base.position.set(0, 0.6, 0); cg.add(base); feet(11, 8);
+      const haz = dioBox(11.5, 0.3, 8.5, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.25, 0); cg.add(haz);
+      const rack = new THREE.Group(); rack.position.set(-1.0, 0, -2.2); cg.add(rack);
+      for (const ux of [-4.0, 0, 4.0]){ const up = dioBox(0.5, 9.0, 1.0, 0x39424f, 0x141a22); up.position.set(ux, 5.4, 0); rack.add(up); }
+      for (let sy = 2.4; sy <= 8.4; sy += 2.0){ const sh = dioBox(8.6, 0.35, 1.4, 0x4a586c, 0x16202c); sh.position.set(0, sy, 0); rack.add(sh);
+        for (const bx of [-2.6, 0, 2.6]){ const bin = dioBox(2.0, 1.3, 1.1, brightenHex(hex, 0.05), 0x10202f); bin.position.set(bx, sy + 0.9, 0); rack.add(bin); } }
+      robotArmInto(cg, arms, i, 3.2, 2.0, 2.4);
+      const cart = dioBox(2.6, 1.4, 1.8, 0xc8975a, 0x3a2912); cart.position.set(3.6, 1.9, 2.6); cg.add(cart); tool.head = cart; tool.headBaseY = 1.9;
+      poleX = 5.2; poleZ = 3.2; beaconY = 9.4;
+    } else if (type === 'pack'){
+      // BOXING / PACKING MACHINE: enclosure + infeed chute + sealing RAM + outfeed rollers + a label/output pallet
+      const base = dioBox(9, 1.2, 7, 0x161e2a, 0x0a121c); base.position.set(0, 0.6, 0); cg.add(base); feet(9, 7);
+      const haz = dioBox(9.5, 0.3, 7.5, 0xd9ad28, 0x3a2c00); haz.position.set(0, 1.25, 0); cg.add(haz);
+      const housing = dioBox(6, 5.0, 5.2, 0x2a3442, 0x0e1620); housing.position.set(-0.5, 3.9, -0.4); cg.add(housing);
+      const roof = dioBox(6.4, 0.5, 5.6, brightenHex(hex, 0.05), 0x10202f); roof.position.set(-0.5, 6.6, -0.4); cg.add(roof);
+      const chute = dioBox(2.4, 0.4, 2.2, 0x4a586c, 0x16202c); chute.position.set(-4.0, 3.5, 0); chute.rotation.z = 0.5; cg.add(chute);
+      const ram = dioBox(2.4, 1.0, 2.4, 0x9fb0c8, 0x2a3a4d); ram.position.set(-0.5, 6.1, -0.4); cg.add(ram); tool.ram = ram; tool.ramBaseY = 6.1;
+      for (let r = 0; r < 4; r++){ const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 4.0, 12), FLOW_M.metal); roll.rotation.x = Math.PI / 2; roll.position.set(2.4 + r * 0.9, 1.9, 1.6); cg.add(roll); }
+      const pallet = dioBox(2.4, 1.6, 2.0, 0xc8975a, 0x3a2912); pallet.position.set(3.2, 1.7, 1.6); cg.add(pallet);
+      ctrlScreen(-0.5, 3.0, 2.22, 1.6, 1.0);
+      poleX = 4.5; poleZ = -3.0; beaconY = 8.4;
+    } else if (type === 'invoice'){
+      // INVOICE / BILLING: a finance terminal + a high-speed document PRINTER that ejects a printed page (the
+      // printed-invoice morph) + an output tray. The printer head sweeps when running.
+      const base = dioBox(9, 1.0, 7, 0x161e2a, 0x0a121c); base.position.set(0, 0.5, 0); cg.add(base); feet(9, 7);
+      const acc = dioBox(9.4, 0.3, 7.4, brightenHex(hex, 0.1), hex); acc.position.set(0, 1.05, 0); cg.add(acc);
+      const desk = dioBox(7.6, 0.5, 3.8, 0x33405a, 0x141c28); desk.position.set(0, 3.0, 0.4); cg.add(desk);
+      for (const dx of [-3.0, 3.0]){ const leg = dioBox(0.5, 1.9, 0.5, 0x2a3340, 0x0a0f18); leg.position.set(dx, 1.9, 0.4); cg.add(leg); }
+      const stand = dioBox(0.5, 1.5, 0.5, 0x2a3340, 0x0a0f18); stand.position.set(-2.2, 4.0, -0.9); cg.add(stand);
+      const mon = dioBox(3.6, 2.4, 0.3, 0x0c1622, 0x05151c); mon.position.set(-2.2, 5.2, -0.9); cg.add(mon);
+      ctrlScreen(-2.2, 5.2, -0.62, 3.1, 1.9);
+      const printer = dioBox(3.2, 2.2, 2.6, 0x2a3442, 0x0e1620); printer.position.set(2.4, 4.4, -0.4); cg.add(printer);
+      const phead = dioBox(2.8, 0.4, 0.6, 0x9fb0c8, 0x2a3a4d); phead.position.set(2.4, 5.0, 0.9); cg.add(phead); tool.scan = phead;
+      const page = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.08, 1.6), FLOW_M.paper); page.position.set(2.4, 3.55, 1.5); cg.add(page);
+      poleX = 4.6; poleZ = 2.8; beaconY = 7.4;
+    } else { // 'ship' — SHIPPING / LOADING-DOCK BAY: dock platform + roll-up door + a parked delivery truck + a ramp
+      const dock = dioBox(10, 2.0, 8, 0x161e2a, 0x0a121c); dock.position.set(-1.5, 1.0, 0); cg.add(dock); feet(10, 8);
+      const haz = dioBox(10.4, 0.3, 8.4, 0xd9ad28, 0x3a2c00); haz.position.set(-1.5, 2.05, 0); cg.add(haz);
+      const wall = dioBox(1.2, 8.0, 8.0, 0x2a3442, 0x0e1620); wall.position.set(-6.0, 4.0, 0); cg.add(wall);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.4, 6.0), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.3), transparent: true, opacity: 0.5, depthWrite: false })); door.position.set(-5.3, 4.4, 0); cg.add(door); tool.head = door; tool.headBaseY = 4.4;
+      const truckG = new THREE.Group(); truckG.position.set(3.2, 0, 0); cg.add(truckG);
+      const box = dioBox(5.2, 3.4, 4.4, 0xcfd8e4, 0x3a4150); box.position.set(0.6, 3.4, 0); truckG.add(box);
+      const cab = dioBox(2.2, 2.6, 4.0, brightenHex(hex, 0.1), 0x10202f); cab.position.set(-2.8, 2.9, 0); truckG.add(cab);
+      for (const wx of [-2.6, -0.2, 2.4]) for (const wz of [-2.1, 2.1]){ const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.6, 14), FLOW_M.tire); wh.rotation.x = Math.PI / 2; wh.position.set(wx, 0.9, wz); truckG.add(wh); }
+      const ramp = dioBox(3.0, 0.3, 5.0, 0x4a586c, 0x16202c); ramp.position.set(-1.4, 2.1, 0); ramp.rotation.z = 0.18; cg.add(ramp);
+      poleX = -5.4; poleZ = 3.6; beaconY = 8.6;
+    }
+    const pole = dioBox(0.32, 4, 0.32, 0x2a3340, 0x0a0f18); pole.position.set(poleX, beaconY + 1.4, poleZ); cg.add(pole);
+    const segGeo = new THREE.CylinderGeometry(0.7, 0.7, 1.0, 14);
+    const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(poleX, yy, poleZ); cg.add(m); return mt; };
+    const lampR = mkSeg(beaconY + 3.5, 0x20242c), lampA = mkSeg(beaconY + 2.4, 0x20242c), lampG = mkSeg(beaconY + 1.3, 0x3fe07a);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.95, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffb030, transparent: true, opacity: 0.0, depthWrite: false, blending: FLOW_ADD })); beacon.position.set(0, beaconY, 0); cg.add(beacon);
+    cg.add(labelSpriteSafe(name || 'Station', '#dbe8fb', 12, 0, beaconY + 6.0, 0));
+    return { cg, tool, arms, lampR, lampA, lampG, beacon };
+  }
+  // attach a pick/reach robot arm (headless-safe; makeRobotArm may be stubbed) onto a station cell.
+  function robotArmInto(cg, arms, i, ax, baseY, az){ try { const ag = new THREE.Group(); ag.position.set(ax, baseY, az);
+    const r = makeRobotArm(ag, 0, 0, 2.0, 0.5, -0.9); cg.add(ag);
+    if (r && r.seg1) arms.push({ seg1: r.seg1, seg2: r.seg2, bz1: r.seg1.rotation.z, bz2: r.seg2.rotation.z, phase: i * 0.7 }); } catch(_){} }
   function buildErpToc(section, cfg){
     const g = buildSceneRoot(section);
-    g.add(labelSpriteSafe('📦 ERP · Order-to-Cash — Theory of Constraints', '#cfe0ff', 24, 0, 64, 0));
-    const floor = dioBox(200, 0.5, 120, 0x2c3550, 0x141b28); floor.position.y = 0.15; g.add(floor);
-    g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.8));
-    const pl = new THREE.PointLight(0xeaf2ff, 0.5, 600, 2); pl.position.set(0, 120, 40); g.add(pl);
-    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(200, 40, 0x46557a, 0x2c3850); grid.position.y = 0.4;
+    g.add(labelSpriteSafe('📦 ERP · Order-to-Cash Twin — Order ▸ Credit ▸ Pick ▸ Pack ▸ Invoice ▸ Ship', '#cfe0ff', 22, 0, 70, 0));
+    const C = ERP_O2C, n = C.n, beltTop = ERP_BELT_TOP, fr = (v) => v - Math.floor(v);
+    const X0 = -((n - 1) / 2) * C.spacing, DOCK_Z = -10;
+    const floor = dioBox(240, 0.5, 130, 0x2c3550, 0x141b28); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xe6eeff, 0x1e2636, 0.85));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.55, 700, 2); pl.position.set(0, 130, 50); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(240, 48, 0x46557a, 0x2c3850); grid.position.y = 0.4;
       const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.2; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
-    const C = ERP_TOC, n = C.n, beltTop = ERP_BELT_TOP, X0 = -((n - 1) / 2) * C.spacing, DESK_Z = -7;
-    const stationX = []; for (let i = 0; i < n; i++) stationX.push(X0 + i * C.spacing);
-    const beltLen = (n - 1) * C.spacing + C.spacing * 1.8;
-    const belt = dioBox(beltLen, 0.6, 6.5, 0x202d40, 0x0c1622); belt.position.set(0, beltTop, 0); g.add(belt);
-    for (const zz of [3.4, -3.4]){ const rail = dioBox(beltLen, 0.9, 0.7, 0x2a3a52, 0x16243a); rail.position.set(0, beltTop + 0.6, zz); g.add(rail); }
-    const rollers = []; const NR = 22;
-    for (let r = 0; r < NR; r++){ const m = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 6.2, 12),
-      new THREE.MeshStandardMaterial({ color: 0x3a4a60, emissive: new THREE.Color(0x10202f), emissiveIntensity: 0.13, roughness: 0.5, metalness: 0.6 }));
-      m.rotation.x = Math.PI / 2; m.position.set(-beltLen / 2 + (r + 0.5) * (beltLen / NR), beltTop - 0.5, 0); g.add(m); rollers.push(m); }
-    const chev = []; const NC = 16;
-    for (let c = 0; c < NC; c++){ const a = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.5, 4),
-      new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD }));
-      a.rotation.z = -Math.PI / 2; a.position.set(-beltLen / 2 + c * (beltLen / NC), beltTop + 0.4, 0); g.add(a); chev.push(a); }
-    const stations = [];
-    for (let i = 0; i < n; i++){
-      const x = stationX[i], isC = (i === C.constraintIdx), hex = cfg.colors[i];
-      const sg = new THREE.Group(); sg.position.set(x, 0, DESK_Z); g.add(sg);
-      const base = dioBox(11, 3.2, 6.5, 0x1c2636, 0x0c141f); base.position.set(0, 1.6, 0); sg.add(base);
-      const top = dioBox(11, 0.4, 6.5, brightenHex(hex, 0.05), 0x10202f); top.position.set(0, 3.4, 0); sg.add(top);
-      const acc = dioBox(11, 0.5, 0.5, brightenHex(hex, 0.3), hex); acc.position.set(0, 3.85, -3.0); sg.add(acc);
-      const stand = dioBox(0.4, 2.2, 0.4, 0x2a3340, 0x0a0f18); stand.position.set(-2.8, 4.6, -2.2); sg.add(stand);
-      const mon = dioBox(4.4, 2.9, 0.3, 0x0c1622, 0x05151c); mon.position.set(-2.8, 6.3, -2.2); sg.add(mon);
-      const screen = new THREE.Mesh(new THREE.BoxGeometry(3.9, 2.5, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 }));
-      screen.position.set(-2.8, 6.3, -2.03); sg.add(screen);
-      const proc = dioBox(2.4, 2.6, 2.4, 0x26303e, 0x101822); proc.position.set(3.1, 4.9, -1.8); sg.add(proc);
-      const pole = dioBox(0.3, 5, 0.3, 0x2a3340, 0x0a0f18); pole.position.set(4.7, 6.0, 0.6); sg.add(pole);
-      const segGeo = new THREE.CylinderGeometry(0.72, 0.72, 1.0, 14);
-      const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(4.7, yy, 0.6); sg.add(m); return mt; };
-      const lampR = mkSeg(9.4, 0x20242c), lampA = mkSeg(8.3, 0x20242c), lampG = mkSeg(7.2, 0x3fe07a);
-      sg.add(labelSpriteSafe((isC ? '⚠ ' : (i + 1) + '. ') + cfg.stageNames[i] + (isC ? ' · CONSTRAINT' : ''), isC ? '#ffd0a0' : '#dbe8fb', isC ? 13 : 12, 0, 11.5, 0));
-      stations.push({ x, i, name: cfg.stageNames[i], rate: isC ? C.rateSlow : C.rateFast, isC, queue: [], busyT: 0, lampR, lampA, lampG, state: '' });
-    }
-    const orders = [];
-    for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
-      orders.push({ grp, active: false, station: -1, stageBuilt: -1, vx: 0, lane: 0, value: 0, exit: 0 }); }
-    const dashThru = labelSpriteSafe('', '#bfeaff', 15, 0, 52, -2); g.add(dashThru);
-    const dashWip = labelSpriteSafe('', '#ffd0a0', 13, 0, 46, -2); g.add(dashWip);
-    sceneState[section] = { g, cfg, C, stationX, stations, orders, chev, rollers, beltLen, beltTop, dashThru, dashWip,
-      spawnT: 0, spawned: 0, thruN: 0, thruT: 0, thruEMA: 0, count: new Array(n).fill(0), val: new Array(n).fill(0), phase: 0 };
+    // ===== NODE GRAPH: a single LINE — source → 6 station cells (in→out) → sink. The constraint cell is slow. =====
+    const N = {}, S = [];
+    const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, fy: 0, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: 1, state: '' });
+    node('SRC', X0 - 30, DOCK_Z, 'source', null, 'Order Intake', 0);
+    for (let i = 0; i < n; i++){ const isC = (i === C.constraintIdx);
+      const nd = node('ST' + i, X0 + i * C.spacing, DOCK_Z, 'machine', C.types[i], (isC ? '⚠ ' : '') + C.names[i] + (isC ? ' · CONSTRAINT' : ''), Math.min(i + 1, ERP_O2C_PART.length - 1), isC ? C.rateSlow : C.rateFast);
+      nd.constraint = isC; if (C.types[i] === 'credit'){ nd.qcGate = true; nd.failFrac = 0.1; } }
+    node('SNK', X0 + n * C.spacing, DOCK_Z, 'sink', null, 'Cash Received', ERP_O2C_PART.length - 1);
+    seg2('SRC', 'ST0', N, S, C, beltTop); for (let i = 0; i < n - 1; i++) seg2('ST' + i, 'ST' + (i + 1), N, S, C, beltTop); seg2('ST' + (n - 1), 'SNK', N, S, C, beltTop);
+    erpRollRates(N, S, C, erpRateSeed);   // seeded-random initial service rates + reliability (constraint stays slow)
+    N['ST' + C.constraintIdx].rate = N['ST' + C.constraintIdx].rate0 = C.rateSlow;   // pin the constraint slow regardless of roll
+    // ===== conveyor BELTS + travelling chevrons between stations (reuse the SF belt+chevron pattern) =====
+    const chev = [], belts = [];
+    S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, 0x202d40, 0x0c1622);
+      belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); g.add(belt);
+      belt.name = 'Belt ' + s.a + '→' + s.b; belt.userData = { sfSeg: si }; belts.push({ obj: belt, seg: si, label: belt.name });
+      for (const zz of [2.7, -2.7]){ const rail = dioBox(s.len, 0.7, 0.5, 0x2a3a52, 0x16243a); rail.position.set((s.ax + s.bx) / 2, beltTop + 0.5, (s.az + s.bz) / 2 + zz); g.add(rail); }
+      for (let c = 0; c < 3; c++){ const t0 = c / 3; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.42, depthWrite: false, blending: FLOW_ADD }));
+        cone.rotation.z = -Math.PI / 2; cone.position.set(s.ax + (s.bx - s.ax) * t0, beltTop + 0.45, s.az + (s.bz - s.az) * t0); g.add(cone); chev.push({ grp: cone, seg: si, t: t0 }); } });
+    // ===== detailed station cells + source/sink pads =====
+    const stations = []; let mi = 0;
+    for (const id in N){ const nd = N[id];
+      if (nd.kind === 'source' || nd.kind === 'sink'){ const pad = new THREE.Mesh(new THREE.CylinderGeometry(4, 4.6, 1, 20),
+          new THREE.MeshStandardMaterial({ color: 0x33414f, emissive: new THREE.Color(nd.kind === 'source' ? 0x1c4a36 : 0x4a3620), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3, nd.z); g.add(pad);
+        g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 12, nd.x, beltTop + 4.5, nd.z)); continue; }
+      const hex = FLOW_COL[nd.outStage % FLOW_COL.length]; const cell = erpMakeCell(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
+      nd.cg = cell.cg; nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
+      nd.mi = mi; nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + erpRateSeed * 3.1) * 1000) * 16; nd.downFrac = 0.04 + fr(Math.sin((mi + 1) * 3.3 + erpRateSeed * 1.7) * 500) * 0.08; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + erpRateSeed * 5.0) * 43758.5);
+      stations.push(nd); mi++; }
+    // ===== order pool (recognizable O2C objects that morph stage→stage) =====
+    const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1, morph: ERP_O2C_PART, born: 0 }); }
+    // ===== live KPI board (sprite labels) =====
+    const dashA = labelSpriteSafe('', '#9fe9c4', 16, 0, 58, -2); g.add(dashA);
+    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, -2); g.add(dashB);
+    const dashC = labelSpriteSafe('', '#ffd0a0', 13, 0, 46, -2); g.add(dashC);
+    sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, beltTop, constraintIdx: C.constraintIdx,
+      spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, thruEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
+      cycleEMA: 0, cycN: 0, cycSum: 0, lateN: 0, otifEMA: 1, conUtilEMA: 0, conBusy: 0, dashA, dashB, dashC,
+      count: new Array(ERP_O2C_PART.length).fill(0), val: new Array(ERP_O2C_PART.length).fill(0) };
     updateErpToc(section);
   }
-  // VIEW-ONLY refresh: per-station WIP counts + place orders at their queue slots (idempotent; stub-safe)
-  function updateErpToc(section){ const st = sceneState[section]; if (!st || !st.orders) return; const n = st.C.n;
-    st.count.fill(0); st.val.fill(0);
-    for (const o of st.orders){ if (!o.active) continue; if (o.station >= 0 && o.station < n){ st.count[o.station]++; st.val[o.station] += o.value; } erpTocPlace(st, o, 0); } }
-  // FREE-RUNNING (render loop only): spawn → service each station at its rate (constraint is slow) → advance + morph.
-  function animateErpToc(section, dt){ const st = sceneState[section]; if (!st || !st.orders) return; const C = st.C, n = C.n; st.phase += dt;
-    st.spawnT += dt; if (st.spawnT >= C.spawn && st.stations[0].queue.length < C.qcap){ st.spawnT = 0; erpTocSpawn(st); }
-    for (let i = 0; i < n; i++){ const stn = st.stations[i]; stn.busyT -= dt; const next = st.stations[i + 1];
-      const canPush = (i === n - 1) || (next && next.queue.length < C.qcap);
-      if (stn.busyT <= 0 && stn.queue.length && canPush){ const o = stn.queue.shift();
-        if (i === n - 1){ o.exit = 0.001; erpTocModel(st, o, n - 1); st.thruN++; }
-        else { o.station = i + 1; erpTocModel(st, o, i + 1); next.queue.push(o); }
-        stn.busyT = 1 / stn.rate; }
-      const blocked = stn.queue.length && !canPush, running = stn.queue.length && canPush;
-      const stt = stn.isC && stn.queue.length ? 'constraint' : (blocked ? 'blocked' : (running ? 'running' : 'starved'));
-      if (stt !== stn.state){ stn.state = stt;
-        const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
-        L(stn.lampG, stt === 'running', 0x3fe07a); L(stn.lampA, stt === 'constraint' || stt === 'blocked', 0xffb030); L(stn.lampR, false, 0xff4a4a); } }
-    for (const o of st.orders){ if (o.active) erpTocPlace(st, o, dt); }
-    for (const a of st.chev){ a.position.x += 7 * dt; if (a.position.x > st.beltLen / 2) a.position.x = -st.beltLen / 2; }
-    st.thruT += dt; if (st.thruT >= 1){ st.thruEMA = st.thruEMA * 0.6 + st.thruN * 0.4; st.thruN = 0; st.thruT -= 1;
-      let wip = 0; for (const stn of st.stations) wip += stn.queue.length;
-      if (st.dashThru) setSpriteText(st.dashThru, 'THROUGHPUT  ' + (Math.round(st.thruEMA * 60)) + '/min');
-      if (st.dashWip) setSpriteText(st.dashWip, 'WIP ' + wip + '   ·   CONSTRAINT: ' + st.cfg.stageNames[C.constraintIdx]);
+  // build ONE conveyor segment (linear O2C line; flat belts only — reuses the SF segment record shape).
+  function seg2(a, b, N, S, C, beltTop){ const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, say: beltTop, sby: beltTop, spd: (A.rate || C.rate) / C.rate, spdAbs: false };
+    s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); s.incline = false;
+    const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); }
+  // VIEW-ONLY refresh: per-stage counts + place every active order at its node slot / belt position (idempotent, stub-safe)
+  function updateErpToc(section){ const st = sceneState[section]; if (!st || !st.parts) return;
+    st.count.fill(0);
+    for (const p of st.parts){ if (!p.active) continue; const stg = (p.stageBuilt >= 0) ? p.stageBuilt : 0; if (stg < st.count.length) st.count[stg]++; oeePlace(st, p, 0); } }
+  // FREE-RUNNING (render loop only): spawn orders → service each cell at its rate (constraint slow + breakdown-gated)
+  // → orders advance + MORPH. The constraint's node buffer fills (WIP), backpressure BLOCKS upstream, downstream STARVES.
+  function animateErpToc(section, dt){ const st = sceneState[section]; if (!st || !st.parts) return; const C = st.C; st.phase += dt; const T = st.phase; const mul = st.mtbfMul || 1;
+    let up = 0, tot = 0;
+    for (const m of st.machines){ tot++; const ph = ((T / (m.period * mul)) + m.offset) % 1; m.down = ph < m.downFrac; if (!m.down) up++; }
+    st.availInst = tot ? up / tot : 1;
+    // SOURCE emits onto its out-segment (if the first cell has buffer room) — arrival rate = C.spawn
+    st.spawnT += dt; if (st.spawnT >= C.spawn){ st.spawnT = 0;
+      const src = st.N.SRC; if (src && src.outSegs.length){ const tgt = st.N[st.S[src.outSegs[0]].b];
+        if (!(tgt.buf && tgt.buf.length >= st.bufCap)){ const p = oeeFree(st); if (p){ oeeEmit(st, p, src.outSegs[0], 0); p.born = T; st.spawned++; } } } }
+    // moving orders advance + ARRIVE (join a cell buffer, or deliver at the cash sink → record cycle time + on-time)
+    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg];
+      p.t += (16 * (s.spd || 1) * dt) / s.len;
+      if (p.t >= 1){ const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++;
+          const ct = T - (p.born || T); st.cycN++; st.cycSum += ct; if (ct > C.otifTarget()) st.lateN++; }
+        else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); } } }
+    // cell SERVICE (breakdown-gated): start (consume from buffer) → finish (emit downstream + morph to next stage).
+    // credit cell is a GATE: a seeded share of orders is HELD (looped a beat — counts against on-time) but still passes.
+    st.conBusy = 0;
+    for (const m of st.machines){
+      const out = st.N[st.S[m.outSegs[0]].b]; const room = (out.kind === 'sink') || (out.buf.length < st.bufCap);
+      if (!m.down){
+        if (m.holding){ m.busyT -= dt; if (m.busyT <= 0 && room){ const carrier = m.holding; m.holding = null; setOeePart(carrier, m.outStage); oeeEmit(st, carrier, m.outSegs[0], m.outStage); } }
+        else if (m.buf.length && room){ const carrier = m.buf.shift(); carrier.state = 'holding'; carrier.node = m.id; m.holding = carrier; m.busyT = 1 / (m.rate || C.rate);
+          if (m.qcGate && flowFrac(Math.sin((T * 2.7 + (m.mi + 1) * 13.37) * 53.17)) < (m.failFrac || 0)){ carrier.born = (carrier.born || T) - 1.2; m.holdN = (m.holdN || 0) + 1; } } }
+      if (m.constraint && (m.holding || m.buf.length)) st.conBusy = 1;   // the constraint is "busy" whenever it has work (utilisation)
+      const blocked = (m.buf.length || m.holding) && !room;
+      const stt = m.down ? 'down' : (m.holding ? (m.constraint ? 'constraint' : 'running') : (m.buf.length && blocked ? 'blocked' : (m.buf.length ? 'running' : 'starved')));
+      if (stt !== m.state){ m.state = stt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
+        L(m.lampR, stt === 'down', 0xff4a4a); L(m.lampA, stt === 'blocked' || stt === 'constraint', 0xffb030); L(m.lampG, stt === 'running', 0x3fe07a); }
+      if (m.down && m.lampR && m.lampR.color && m.lampR.color.setHex) m.lampR.color.setHex(Math.abs(Math.sin(T * 4)) > 0.4 ? 0xff4a4a : 0x401015);
+      const run = (stt === 'running' || stt === 'constraint');
+      if (m.tool){ if (m.tool.ram) m.tool.ram.position.y = (m.tool.ramBaseY || 6.0) - (run ? (0.5 + 0.5 * Math.sin(T * 4)) * 1.1 : 0);
+        if (m.tool.scan) m.tool.scan.position.x = (m.type === 'invoice' ? 2.4 : 0) + (run ? Math.sin(T * 2.4) * 1.2 : 0);
+        if (m.tool.head) m.tool.head.position.y = (m.tool.headBaseY || 4.0) + (run ? (0.5 + 0.5 * Math.sin(T * 3)) * 0.7 : 0); }
+      if (m.arms){ for (const a of m.arms){ if (run && a.seg1 && a.seg1.visible){ a.seg1.rotation.z = a.bz1 + Math.sin(T * 1.7 + a.phase) * 0.3; a.seg2.rotation.z = a.bz2 + Math.sin(T * 2.0 + a.phase + 1) * 0.32; } } }
+      if (m.beacon && m.beacon.material) m.beacon.material.opacity = m.down ? (0.4 + 0.4 * Math.abs(Math.sin(T * 5))) : 0.0;
+    }
+    for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1;
+      c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    // KPI ROLL-UP (1 Hz): Throughput (orders/min) · WIP · Cycle time (s) · On-time % · Constraint utilisation
+    st.conUtilEMA = st.conUtilEMA * 0.85 + st.conBusy * 0.15;
+    st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.thruEMA = st.thruEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
+      if (st.cycN){ st.cycleEMA = st.cycleEMA ? st.cycleEMA * 0.6 + (st.cycSum / st.cycN) * 0.4 : st.cycSum / st.cycN;
+        const onTime = 1 - st.lateN / st.cycN; st.otifEMA = st.otifEMA * 0.6 + Math.max(0, Math.min(1, onTime)) * 0.4; st.cycN = 0; st.cycSum = 0; st.lateN = 0; }
+      let wip = 0; for (const m of st.machines) wip += m.buf.length + (m.holding ? 1 : 0);
+      const down = st.machines.filter((m) => m.down).length, cidx = st.constraintIdx, cName = (C.names[cidx] || 'Pick');
+      if (st.dashA) setSpriteText(st.dashA, 'THROUGHPUT ' + Math.round(st.thruEMA * 60) + ' orders/min   ·   WIP ' + wip);
+      if (st.dashB) setSpriteText(st.dashB, 'Cycle time ' + (st.cycleEMA || 0).toFixed(1) + 's   ·   On-time ' + Math.round(st.otifEMA * 100) + '%   ·   Down ' + down + '/' + st.machines.length);
+      if (st.dashC) setSpriteText(st.dashC, '⚠ CONSTRAINT: ' + cName + '   ·   Utilisation ' + Math.round(st.conUtilEMA * 100) + '%');
       try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
   function buildErpScene(){ buildErpToc('erp', ERP_FLOW_CFG); }
-  function buildCrmScene(){ buildRingSankey('crm', CRM_FLOW_CFG); }
   function updateErpScene(){ updateErpToc('erp'); }
-  function updateCrmScene(){ updateRingSankey('crm'); }
+
+  /* ============================================================
+   *  🤝 CRM · SALES-PIPELINE OPERATIONS TWIN — buildCrmPipeline()  [FROM-SCRATCH REBUILD]
+   *  A sales-floor digital twin: DEALS flow as 3D objects down ONE pipeline of detailed desk/gate stations —
+   *    Lead intake → LEAD DESK → ▲ QUALIFY GATE → PROPOSAL DESK → ▲ NEGOTIATION GATE → CLOSED-WON vault.
+   *  The two GATES (Qualify, Negotiation) are pass/reject splitters (reused qcGate machinery): a passed deal
+   *  advances to the next desk; a rejected deal is routed down a RED reject path to the CLOSED-LOST drain
+   *  (the split/reject topology the brief asks for). Each deal is colour/size-coded by VALUE (crmColor ramp +
+   *  per-deal scale) and MORPHS stage-to-stage (cold lead orb → contact card → proposal doc → handshake →
+   *  won trophy). SEEDED-RANDOM per-station service rates / gate win-rates (crmRollRates, deterministic — no
+   *  RNG/wall-clock). Reuses the SF flow engine (oeePlace/oeeFree + node graph + machine-service + qcGate),
+   *  the sim panel (Lead volume / Conversion rate / Deal-size mix / scoped 🎲 / Reset), sectionTargets, the
+   *  KPI dashboard sprites (Win rate / Pipeline value / Velocity / Conversion per stage / Stuck deals) and the
+   *  data board (vizFlowRows over st.count/st.val). VIEW-ONLY, pooled (INV-4), sub-white emissive (INV-3),
+   *  deterministic + headless-safe (THREE primitives + dioBox/labelSpriteSafe only; no canvas textures).
+   * ============================================================ */
+  const CRM_PIPE = { bufCap: 6, rate: 1.25, spawn: 0.62, objN: 150, objScale: 1.0, mtbf: 22 };
+  const CRM_VAL_BASE = 6, CRM_VAL_SPAN = 240;   // deal value in $k: 6k..246k (scales the deal model + the crmColor tint)
+  let crmRateSeed = 9;   // seed for the pipeline's RANDOMIZED initial service rates + gate win-rates (deterministic; 🎲 advances it)
+  // CRM "deal value" tint as a packed hex (cold blue → warm gold) for the desk/deal accent — mirrors crmColor.
+  function crmHexForT(t){ const c = crmColor(t); const q = (v) => Math.max(0, Math.min(255, Math.round(v * 255)));
+    return (q(c.r) << 16) | (q(c.g) << 8) | q(c.b); }
+  // SEEDED-RANDOM throughput per desk + win-rate per gate, within FUNCTION-specific bands so the funnel stays
+  // legible (the gates are the conversion bottleneck). Mirrors sfRollRates exactly (deterministic, no wall-clock).
+  // opts: { rate, avail, conv } booleans + filter(id,nd). Returns avg LOSS rate across the gates.
+  function crmRollRates(N, S, C, seed, machines, opts){
+    opts = opts || {};
+    const doRate = opts.rate !== false, doAvail = opts.avail !== false, doConv = opts.conv !== false;
+    const inScope = opts.filter || (() => true);
+    let rc = 0; const fr = (v) => v - Math.floor(v);
+    const rnd = () => { rc++; return fr(Math.sin(rc * 12.9898 + seed * 19.73) * 43758.5453); };
+    const band = (id, nd) => {
+      if (nd.type === 'gate') return [1.0, 1.35];      // gates throttle the funnel
+      if (nd.type === 'proposal') return [1.2, 1.6];
+      if (nd.type === 'lead') return [1.5, 2.0];        // intake desk is fast
+      return [1.3, 1.7];
+    };
+    for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink' || !inScope(id, nd)) continue;
+      if (doRate){ const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate; }
+      // gates carry a LOSS rate (failFrac): Qualify loses more (cold leads), Negotiation loses less (warm deals)
+      if (doConv && nd.qcGate){ const lo = (id === 'NEG') ? 0.10 : 0.22; nd.failFrac = +(lo + rnd() * 0.14).toFixed(3); } }
+    if (doRate) for (const s of S){ if (!s.spdAbs) s.spd = (N[s.a].rate || C.rate) / C.rate; }
+    if (doAvail && machines){ for (const m of machines){ if (!inScope(m.id, m)) continue; const mi = m.mi || 0;
+      m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 14;
+      m.downFrac = 0.04 + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.08;
+      m.offset = fr(Math.sin((mi + 1) * 12.9898 + seed * 5.0) * 43758.5); } }
+    let lf = 0, ln = 0; for (const id in N){ if (N[id].qcGate){ lf += N[id].failFrac; ln++; } }
+    return ln ? lf / ln : 0.15;
+  }
+  // ---- DEAL workpiece: 5 progressive looks. Built from primitives + flow geo; the ACCENT mesh is recoloured
+  //      per-deal by VALUE (crmColor) in animateCrmPipeline → deal objects "colour by value" + "morph by stage". ----
+  const CRM_DEAL_PART = [
+    // 0 Lead: a cold prospect orb on a tiny base
+    (g) => { sfP(g, FLOW_G.orb, FLOW_M.metal, [0, 0.95, 0]); sfP(g, FLOW_G.basep, SFX_M.dark, [0, 0.2, 0]); },
+    // 1 Qualified: a contact card with a head badge
+    (g) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0.55, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.head, FLOW_M.metal, [0, 1.0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[1], [0, 0.66, -1.0], [-1.0, 0, 0]); },
+    // 2 Proposal: a multi-line proposal document
+    (g) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0.55, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_ACCENT[2], [0, 0.66, -1.0], [-1.0, 0, 0]); [-0.4, 0.1, 0.6].forEach((z) => flowPart(g, FLOW_G.line, FLOW_M.ink, [0, 0.64, z], [-1.0, 0, 0])); },
+    // 3 Negotiation: a two-party handshake (two cones leaning toward a contract sheet)
+    (g) => { flowPart(g, FLOW_G.sheet, FLOW_M.paper, [0, 0.5, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.cone, FLOW_M.metal, [-1.0, 1.05, 0], [0, 0, 0.6]); flowPart(g, FLOW_G.cone, FLOW_ACCENT[3], [1.0, 1.05, 0], [0, 0, -0.6]); },
+    // 4 Closed-Won: a gold trophy
+    (g) => { flowPart(g, FLOW_G.basep, FLOW_M.gold, [0, 0.4, 0]); flowPart(g, FLOW_G.cup, FLOW_M.gold, [0, 1.35, 0]); flowPart(g, FLOW_G.coin, FLOW_M.gold, [0, 0.62, 0]); },
+    // 5 Closed-Lost: a greyed, struck-through card (reject look)
+    (g) => { flowPart(g, FLOW_G.sheet, FLOW_M.ink, [0, 0.5, 0], [-1.0, 0, 0]); flowPart(g, FLOW_G.bar, FLOW_M.ink, [0, 0.62, 0], [0, 0.9, 0]); },
+  ];
+  // set a deal's morph model (bounded; only on stage change) + tint its accent meshes by VALUE.
+  function crmSetDeal(p, stage){ const s = Math.max(0, Math.min(CRM_DEAL_PART.length - 1, stage)); if (p.stageBuilt === s) return;
+    const g = p.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); CRM_DEAL_PART[s](g); p.stageBuilt = s; }
+  // ---- ONE detailed CRM STATION whose silhouette is SPECIFIC to its function: a sales DESK (Lead/Proposal),
+  //      a decision GATE (Qualify/Negotiation = an arch portal with a pass/reject scan bar), or the WON VAULT /
+  //      LOST shredder (sinks). Common: a base + hazard strip + andon stack-light (R/A/G) + name label. ----
+  function crmMakeStation(g, i, x, z, hex, type, name){
+    const cg = new THREE.Group(); cg.position.set(x, 0, z); g.add(cg);
+    const tool = {}; let poleX = 4.4, poleZ = 3.2, beaconY = 8.4;
+    const feet = (w, d) => { for (const fx of [-w / 2 + 0.9, w / 2 - 0.9]) for (const fz of [-d / 2 + 0.9, d / 2 - 0.9]){ const ft = dioBox(0.9, 0.6, 0.9, 0x10161f, 0x05080c); ft.position.set(fx, 0.3, fz); cg.add(ft); } };
+    const ctrlPanel = (px, pz) => { const panel = dioBox(2.2, 1.9, 0.3, 0x101820, 0x070d14); panel.position.set(px, 2.5, pz); cg.add(panel);
+      const scr = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.0, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 })); scr.position.set(px, 2.8, pz + 0.18); cg.add(scr); };
+    if (type === 'lead'){
+      // SALES DESK: long desk + glowing CRM monitor + a chair + a stacked-leads inbox tray
+      const base = dioBox(11, 1.0, 8, 0x161e2a, 0x0a121c); base.position.set(0, 0.5, 0); cg.add(base); feet(11, 8);
+      const haz = dioBox(11.5, 0.3, 8.5, 0x2f6ab0, 0x06223a); haz.position.set(0, 1.05, 0); cg.add(haz);
+      const desk = dioBox(7.4, 0.5, 3.6, 0x6a5640, 0x1c150c); desk.position.set(0, 3.2, 0.6); cg.add(desk);
+      for (const lx of [-3.2, 3.2]){ const leg = dioBox(0.4, 2.6, 0.4, 0x4a3b28, 0x140d06); leg.position.set(lx, 1.9, 0.6); cg.add(leg); }
+      const mon = dioBox(3.0, 2.0, 0.25, 0x0e1c28, 0x123a52); mon.position.set(0, 4.7, -0.6); cg.add(mon);
+      const scr = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.8 })); scr.position.set(0, 4.7, -0.46); cg.add(scr); tool.screen = scr.material;
+      const seat = dioBox(1.9, 0.3, 1.9, 0x2a3142, 0x0a0f18); seat.position.set(0, 2.4, 3.4); cg.add(seat);
+      const back = dioBox(1.9, 1.9, 0.3, 0x2a3142, 0x0a0f18); back.position.set(0, 3.4, 4.2); cg.add(back);
+      // INBOX TRAY of unworked leads (a small stack that "bobs" while the desk works)
+      const tray = new THREE.Group(); tray.position.set(4.0, 3.55, 0.6); cg.add(tray); tool.tray = tray;
+      for (let s = 0; s < 4; s++){ const sh = dioBox(1.8, 0.1, 1.3, 0xe6ecf4, 0x24405e); sh.position.set(0, s * 0.16, 0); tray.add(sh); }
+      ctrlPanel(-4.2, 0.6); poleX = 4.6; poleZ = -2.6;
+    } else if (type === 'gate'){
+      // DECISION GATE: a portal arch the deal passes through; a SWEEPING scan bar grades it; a side score tower.
+      // Two posts (one green = PASS, one red = REJECT) flank a wide reject chute behind the arch.
+      const deck = dioBox(9, 0.9, 7.5, 0x161e2a, 0x0a121c); deck.position.set(0, 0.45, 0); cg.add(deck); feet(9, 7.5);
+      const haz = dioBox(9.5, 0.3, 8.0, 0xd9ad28, 0x3a2c00); haz.position.set(0, 0.95, 0); cg.add(haz);
+      for (const px of [-3.0, 3.0]){ const post = dioBox(0.9, 7.0, 0.9, brightenHex(hex, 0.04), 0x141c28); post.position.set(px, 4.2, 0); cg.add(post); }
+      const arch = dioBox(7.2, 1.0, 1.6, 0x4a586c, 0x16202c); arch.position.set(0, 7.6, 0); cg.add(arch);
+      const scan = new THREE.Mesh(new THREE.BoxGeometry(0.35, 5.4, 1.4), new THREE.MeshBasicMaterial({ color: 0x49e0ff, transparent: true, opacity: 0.6, depthWrite: false, blending: FLOW_ADD })); scan.position.set(0, 4.4, 0); cg.add(scan); tool.scan = scan;
+      // PASS (green) + REJECT (red) indicator lamps either side of the arch
+      const passL = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 8), new THREE.MeshBasicMaterial({ color: 0x163a24 })); passL.position.set(-3.0, 8.4, 0); cg.add(passL); tool.passL = passL.material;
+      const rejL = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 8), new THREE.MeshBasicMaterial({ color: 0x3a1414 })); rejL.position.set(3.0, 8.4, 0); cg.add(rejL); tool.rejL = rejL.material;
+      // SCORE tower with a screen (the lead/deal score readout)
+      const tower = dioBox(1.5, 3.2, 1.2, 0x2a3442, 0x0e1620); tower.position.set(4.2, 2.1, 0); cg.add(tower);
+      const tscr = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.7, 0.1), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.85 })); tscr.position.set(4.2, 2.7, 0.62); cg.add(tscr);
+      poleX = -4.2; poleZ = 3.0;
+    } else if (type === 'proposal'){
+      // PROPOSAL STUDIO: a drafting table + an upright easel board + a pen/quote stack; the board "glows" while working
+      const base = dioBox(10, 1.0, 8, 0x161e2a, 0x0a121c); base.position.set(0, 0.5, 0); cg.add(base); feet(10, 8);
+      const haz = dioBox(10.5, 0.3, 8.5, 0x6aa83f, 0x123a06); haz.position.set(0, 1.05, 0); cg.add(haz);
+      const table = dioBox(6.4, 0.5, 4.0, 0x6a5640, 0x1c150c); table.position.set(-0.6, 3.0, 0.8); table.rotation.x = -0.12; cg.add(table);
+      for (const lx of [-2.8, 2.6]){ const leg = dioBox(0.4, 2.4, 0.4, 0x4a3b28, 0x140d06); leg.position.set(lx - 0.6, 1.8, 0.8); cg.add(leg); }
+      const easel = dioBox(0.4, 5.6, 4.0, 0x39424f, 0x141a22); easel.position.set(3.8, 3.4, 0); cg.add(easel);
+      const board = new THREE.Mesh(new THREE.BoxGeometry(0.16, 4.4, 3.4), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.78 })); board.position.set(3.5, 3.8, 0); cg.add(board); tool.screen = board.material;
+      const stack = new THREE.Group(); stack.position.set(-2.6, 3.4, 0.8); cg.add(stack); tool.tray = stack;
+      for (let s = 0; s < 3; s++){ const sh = dioBox(1.6, 0.1, 1.1, 0xe6ecf4, 0x24405e); sh.position.set(0, s * 0.16, 0); stack.add(sh); }
+      ctrlPanel(-4.2, 0.8); poleX = 4.6; poleZ = -3.0;
+    } else if (type === 'won'){
+      // CLOSED-WON VAULT: a glowing gold trophy plinth + a ring + a banner — the deals "bank" here
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 6.0, 1.2, 28), new THREE.MeshStandardMaterial({ color: 0x2a2410, emissive: new THREE.Color(0x3a2c00), emissiveIntensity: 0.3, roughness: 0.5, metalness: 0.4 })); base.position.set(0, 0.6, 0); cg.add(base);
+      const plinth = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.8, 4.0, 22), new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.2), emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.6 })); plinth.position.set(0, 3.2, 0); cg.add(plinth);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(5.0, 0.4, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.65, depthWrite: false, blending: FLOW_ADD })); ring.rotation.x = Math.PI / 2; ring.position.set(0, 5.6, 0); cg.add(ring); tool.ring = ring;
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.45, depthWrite: false, blending: FLOW_ADD })); orb.position.set(0, 6.4, 0); cg.add(orb);
+      poleX = 5.4; poleZ = 3.2; beaconY = 7.2;
+    } else { // 'lost' — CLOSED-LOST DRAIN: a dark hopper/shredder the rejected deals fall into
+      const base = dioBox(8, 1.0, 7, 0x1a1014, 0x0a0608); base.position.set(0, 0.5, 0); cg.add(base); feet(8, 7);
+      const haz = dioBox(8.5, 0.3, 7.5, 0xb03030, 0x3a0a0a); haz.position.set(0, 1.05, 0); cg.add(haz);
+      const hopper = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 1.0, 3.4, 4), new THREE.MeshStandardMaterial({ color: 0x3a2024, emissive: new THREE.Color(0x1c0c0e), emissiveIntensity: 0.18, roughness: 0.7, metalness: 0.3 })); hopper.position.set(0, 3.0, 0); hopper.rotation.y = Math.PI / 4; cg.add(hopper);
+      const lip = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.3, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff5a5a, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD })); lip.rotation.x = Math.PI / 2; lip.rotation.z = Math.PI / 4; lip.position.set(0, 4.7, 0); cg.add(lip); tool.ring = lip;
+      poleX = 4.0; poleZ = 3.0; beaconY = 6.2;
+    }
+    // andon stack-light (R/A/G) + name label on every station (matches the SF/ERP read)
+    const pole = dioBox(0.32, 4, 0.32, 0x2a3340, 0x0a0f18); pole.position.set(poleX, beaconY + 1.4, poleZ); cg.add(pole);
+    const segGeo = new THREE.CylinderGeometry(0.65, 0.65, 1.0, 14);
+    const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(poleX, yy, poleZ); cg.add(m); return mt; };
+    const lampR = mkSeg(beaconY + 3.5, 0x20242c), lampA = mkSeg(beaconY + 2.4, 0x20242c), lampG = mkSeg(beaconY + 1.3, 0x3fe07a);
+    cg.add(labelSpriteSafe(name || 'Stage', '#dbe8fb', 13, 0, beaconY + 6.2, 0));
+    return { cg, tool, lampR, lampA, lampG };
+  }
+  function buildCrmPipeline(section){
+    const g = buildSceneRoot(section);
+    g.add(labelSpriteSafe('🤝 CRM · Sales-Pipeline Operations Twin — Lead → Qualify ▲ → Proposal → Negotiate ▲ → Closed-Won (▼ Closed-Lost drain)', '#cfe0ff', 22, 0, 70, 0));
+    // SALES FLOOR: a light office floor + grid + a couple of background desks (ambience)
+    const floor = dioBox(220, 0.5, 120, 0x2c3a52, 0x141d2a); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xe6eeff, 0x202a3c, 0.78));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.6, 700, 2); pl.position.set(0, 130, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(220, 44, 0x46557a, 0x2c3850); grid.position.y = 0.42;
+      const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.2; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
+    const C = CRM_PIPE, beltTop = 3.0, fr = (v) => v - Math.floor(v);
+    // NODE GRAPH — a SINGLE pipeline lane (z=0) with two GATES that branch to a Closed-Lost drain (z=-34):
+    //   IN → LEAD → QUAL(gate) → PROP → NEG(gate) → WON ;  QUAL/NEG reject → LOST
+    const N = {}, S = [];
+    const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, fy: 0, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: 1, state: '' });
+    node('IN',   -94, 0, 'source',  null,       'New Leads',        0);
+    node('LEAD', -64, 0, 'machine', 'lead',     'Lead Desk',        0);
+    node('QUAL', -30, 0, 'split',   'gate',     '▲ Qualify Gate',   1);
+    node('PROP',   4, 0, 'machine', 'proposal', 'Proposal Desk',    2);
+    node('NEG',   38, 0, 'split',   'gate',     '▲ Negotiation',    3);
+    node('WON',   74, 0, 'sink',    'won',      'Closed-Won',       4);
+    node('LOST',   4, -34, 'sink',  'lost',     '▼ Closed-Lost',    5);
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, say: beltTop, sby: beltTop, spd: (A.rate || C.rate) / C.rate, spdAbs: false };
+      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax);
+      const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
+    seg('IN', 'LEAD'); seg('LEAD', 'QUAL');
+    seg('QUAL', 'PROP'); seg('QUAL', 'LOST');   // QUAL: outSegs[0]=pass→PROP, outSegs[1]=reject→LOST
+    seg('PROP', 'NEG');
+    seg('NEG', 'WON'); seg('NEG', 'LOST');      // NEG:  outSegs[0]=pass→WON,  outSegs[1]=reject→LOST
+    // mark the two gates as pass/REJECT splitters (reuse the qcGate machinery): the LAST out-seg is the reject
+    // path to the Closed-Lost drain; failFrac = the loss rate (1 − stage conversion). lossY tags the reject belts.
+    [N.QUAL, N.NEG].forEach((q, i) => { q.qcGate = true; q.failFrac = (q.id === 'NEG') ? 0.16 : 0.30; q.reworkOut = q.outSegs.length - 1; q.rr = 0; q.qhash = (i + 1) * 17.31; q.passN = 0; q.failN = 0; });
+    for (const s of S){ if (s.b === 'LOST') s.lost = true; }
+    crmRollRates(N, S, C, crmRateSeed);   // seeded-random initial service rates + gate win-rates
+    // ---- belts (one per segment, oriented A→B) + scrolling flow chevrons (reject belts render RED) ----
+    const chev = [], belts = [];
+    S.forEach((s, si) => {
+      const belt = dioBox(s.len, 0.5, 5.0, s.lost ? 0x3a1418 : 0x202d40, s.lost ? 0x180608 : 0x0c1622);
+      belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
+      belt.name = (s.lost ? 'Lost path ' : 'Pipeline ') + s.a + '→' + s.b; belt.userData = { sfSeg: si }; belts.push({ obj: belt, seg: si, label: belt.name });
+      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang;
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.5, 4), new THREE.MeshBasicMaterial({ color: s.lost ? 0xff5a5a : 0x3fd6ff, transparent: true, opacity: 0.46, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
+        const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, beltTop + 0.45, s.az + (s.bz - s.az) * t0); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); }
+    });
+    // ---- stations (sources/sinks get a pad + label; desks/gates get a detailed station model) ----
+    const machines = []; let mi = 0;
+    for (const id in N){ const nd = N[id];
+      if (nd.kind === 'source'){ const pad = new THREE.Mesh(new THREE.CylinderGeometry(4, 4.6, 1, 20),
+          new THREE.MeshStandardMaterial({ color: 0x33414f, emissive: new THREE.Color(0x1c4a36), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3, nd.z); g.add(pad);
+        g.add(labelSpriteSafe('▼ ' + nd.name, '#9fe9c4', 12, nd.x, beltTop + 4.5, nd.z)); continue; }
+      const hex = (nd.type === 'lost') ? 0xff5a5a : (nd.type === 'won') ? 0xffd36a : FLOW_COL[nd.outStage % FLOW_COL.length];
+      const cell = crmMakeStation(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
+      nd.cg = cell.cg; nd.tool = cell.tool; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG;
+      nd.mi = mi; nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + crmRateSeed * 3.1) * 1000) * 14; nd.downFrac = 0.04 + fr(Math.sin((mi + 1) * 3.3 + crmRateSeed * 1.7) * 500) * 0.08; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + crmRateSeed * 5.0) * 43758.5);
+      if (nd.kind === 'sink') nd.isSink = true;     // WON/LOST vaults are banks, not service stations (no levers), but still andon-animated
+      machines.push(nd); mi++; }
+    // collect the sink nodes separately for andon/banking animation
+    const sinks = []; for (const id in N){ if (N[id].kind === 'sink') sinks.push(N[id]); }
+    // ---- bounded DEAL pool: each carries a per-deal VALUE ($k) that scales + tints its model ----
+    const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1, value: 0, vScale: 1 }); }
+    // ---- KPI dashboard sprites (live, sub-white): two stacked lines above the lane ----
+    const dashA = labelSpriteSafe('', '#9fe9c4', 16, 0, 56, 0); g.add(dashA);
+    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 50, 0); g.add(dashB);
+    // value-mix lever: 0 = mostly small deals, 1 = mostly whales (shifts the seeded per-deal value distribution)
+    sceneState[section] = { g, C, N, S, machines, sinks, parts, chev, belts, selBelt: null, beltTop,
+      spawnT: 0, spawned: 0, completed: 0, won: 0, lost: 0, compN: 0, compT: 0, velEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
+      sizeMix: 0.45, pipeVal: 0, lossRate: 0.23,
+      count: new Array(6).fill(0), val: new Array(6).fill(0),
+      stageIn: new Array(6).fill(0), stageOut: new Array(6).fill(0), stuck: 0 };
+    updateCrmPipeline(section);
+  }
+  // VIEW-ONLY refresh: per-stage deal COUNT + VALUE (drives the data board via vizFlowRows) + stuck-deal tally.
+  function updateCrmPipeline(section){ const st = sceneState[section]; if (!st || !st.parts) return;
+    st.count.fill(0); st.val.fill(0); let pv = 0, stuck = 0;
+    for (const p of st.parts){ if (!p.active) continue; const stg = (p.stageBuilt >= 0) ? p.stageBuilt : 0;
+      if (stg < st.count.length){ st.count[stg]++; st.val[stg] += (p.value || 0); }
+      if (stg <= 4) pv += (p.value || 0);   // open-pipeline value = everything not yet Won/Lost-banked + Won bank shown separately
+      if (p.state === 'queued' && p.node && st.N[p.node] && (st.N[p.node].buf || []).length > Math.max(3, st.bufCap - 1)) stuck++;
+      oeePlace(st, p, 0); }
+    st.pipeVal = pv; st.stuck = stuck;
+  }
+  function animateCrmPipeline(section, dt){ const st = sceneState[section]; if (!st || !st.parts) return; const C = st.C; st.phase += dt; const T = st.phase; const mul = st.mtbfMul || 1;
+    // service-station availability clocks (gates/desks can briefly go "down" = rep on a call) → andon read
+    let up = 0, tot = 0;
+    for (const m of st.machines){ if (m.isSink) continue; tot++; const ph = ((T / (m.period * mul)) + m.offset) % 1; m.down = ph < m.downFrac; if (!m.down) up++; }
+    st.availInst = tot ? up / tot : 1;
+    // INTAKE: the Lead source emits deals onto its out-segment (gated by downstream buffer room = Lead-volume lever)
+    st.spawnT += dt; if (st.spawnT >= C.spawn){ st.spawnT = 0;
+      for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
+        const tgt = st.N[st.S[nd.outSegs[0]].b]; if (tgt.buf && tgt.buf.length >= st.bufCap) continue; const p = oeeFree(st); if (p){
+          // seeded per-deal VALUE: a base log-ish spread, biased by the Deal-size mix lever toward whales
+          const r = flowFrac(Math.sin((st.spawned + 1) * 12.9898 + crmRateSeed * 4.2) * 43758.5);
+          const r2 = flowFrac(Math.sin((st.spawned + 1) * 3.71 + crmRateSeed * 7.7) * 9173.3);
+          const skew = Math.pow(r, 1 - (st.sizeMix || 0.45) * 0.85);   // higher mix → flatter exponent → more big deals
+          p.value = Math.round(CRM_VAL_BASE + skew * CRM_VAL_SPAN + r2 * 14);
+          p.vScale = 0.7 + Math.min(1.0, p.value / (CRM_VAL_BASE + CRM_VAL_SPAN)) * 1.4;   // size ∝ value
+          crmEmit(st, p, nd.outSegs[0], 0); st.spawned++; } } }
+    // moving deals advance + ARRIVE (join a desk buffer, bank at a sink)
+    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg];
+      p.t += (16 * (s.spd || 1) * dt) / s.len;
+      if (p.t >= 1){ const nd = st.N[s.b];
+        if (nd.kind === 'sink'){ const wonHere = (nd.id === 'WON'); crmSetDeal(p, wonHere ? 4 : 5); p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; if (wonHere){ st.won++; st.wonVal = (st.wonVal || 0) + (p.value || 0); } else st.lost++; nd.bankT = 0.3; }
+        else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); } } }
+    // station SERVICE (availability-gated): desks process 1→1; GATES pass→advance / reject→Closed-Lost drain
+    for (const m of st.machines){ if (m.isSink) continue;
+      const outs = m.outSegs.map((si) => st.N[st.S[si].b]);
+      const roomAny = outs.some((t) => t.kind === 'sink' || t.buf.length < st.bufCap);
+      if (!m.down){
+        if (m.holding){ m.busyT -= dt; if (m.busyT <= 0){ const carrier = m.holding; m.holding = null;
+          if (m.qcGate){
+            // DECIDE: pass → forward (outSegs[0]); reject → down the Closed-Lost path (the last out-seg)
+            const passSeg = m.outSegs[0], rwSeg = m.outSegs[m.reworkOut], rwNode = st.N[st.S[rwSeg].b];
+            const fail = flowFrac(Math.sin((T * 2.7 + (m.qhash || 0)) * 53.17)) < (m.failFrac || 0);
+            if (fail && rwNode){ crmSetDeal(carrier, 5); crmEmit(st, carrier, rwSeg, 5); m.failN = (m.failN || 0) + 1; }
+            else { crmEmit(st, carrier, passSeg, m.outStage); m.passN = (m.passN || 0) + 1; } }
+          else { crmEmit(st, carrier, m.outSegs[0], m.outStage); } } }
+        else if (m.buf.length >= m.need && roomAny){
+          const carrier = m.buf.shift(); carrier.state = 'holding'; carrier.node = m.id; m.holding = carrier; m.busyT = 1 / (m.rate || C.rate); } }
+      const blocked = (m.buf.length || m.holding) && !roomAny;
+      const stt = m.down ? 'down' : (m.holding ? 'running' : (m.buf.length && blocked ? 'blocked' : (m.buf.length ? 'running' : 'starved')));
+      if (stt !== m.state){ m.state = stt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
+        L(m.lampR, stt === 'down', 0xff4a4a); L(m.lampA, stt === 'blocked', 0xffb030); L(m.lampG, stt === 'running', 0x3fe07a); }
+      const run = (stt === 'running');
+      // animated tooling: gate scan bar sweeps; desk screens/trays pulse while working
+      if (m.tool){
+        if (m.tool.scan) m.tool.scan.position.x = run ? Math.sin(T * 2.4) * 2.2 : 0;
+        if (m.tool.screen) m.tool.screen.opacity = 0.55 + (run ? 0.3 * (0.5 + 0.5 * Math.sin(T * 4)) : 0);
+        if (m.tool.tray) m.tool.tray.position.y = (m.tool.trayY != null ? m.tool.trayY : (m.tool.trayY = m.tool.tray.position.y)) + (run ? Math.sin(T * 3) * 0.12 : 0);
+        if (m.tool.passL && m.tool.rejL){ const f = flowFrac(Math.sin((T * 2.7 + (m.qhash || 0)) * 53.17)) < (m.failFrac || 0);
+          m.tool.passL.color.setHex((run && !f) ? 0x3fe07a : 0x163a24); m.tool.rejL.color.setHex((run && f) ? 0xff5a5a : 0x3a1414); } } }
+    // place deals + scale each by VALUE (colour-by-value is baked into the morph accent at emit time)
+    for (const p of st.parts){ if (p.active){ oeePlace(st, p, dt); if (p.grp.visible) p.grp.scale.multiplyScalar(p.vScale || 1); } }
+    // scroll chevrons; spin/pulse the WON ring + LOST hopper lip; bank flashes on arrival
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    for (const nd of (st.sinks || [])){ if (nd.tool && nd.tool.ring) nd.tool.ring.rotation.z += dt * (nd.id === 'WON' ? 0.7 : -0.5);
+      if (nd.bankT > 0){ nd.bankT -= dt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
+        L(nd.lampG, nd.id === 'WON', 0x3fe07a); L(nd.lampR, nd.id === 'LOST', 0xff4a4a); }
+      else { const L = (mt) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(0x20242c); }; L(nd.lampG); L(nd.lampR); } }
+    // KPI rollup once per second (EMA-smoothed velocity; win-rate from banked outcomes; conversion per gate)
+    st.compT += dt; if (st.compT >= 1){ st.velEMA = st.velEMA * 0.6 + (st.won === st.lastWon ? 0 : (st.won - (st.lastWon || 0))) * 0.4; st.lastWon = st.won; st.compT -= 1;
+      const closed = st.won + st.lost, winRate = closed ? st.won / closed : 0;
+      let openPV = 0; for (const p of st.parts){ if (p.active && (p.stageBuilt == null || p.stageBuilt <= 4) && p.state !== 'exit') openPV += (p.value || 0); }
+      st.pipeVal = openPV;
+      // conversion per gate (pass / (pass+fail)) — the funnel read
+      const cvQ = (st.N.QUAL.passN + st.N.QUAL.failN) ? st.N.QUAL.passN / (st.N.QUAL.passN + st.N.QUAL.failN) : 0;
+      const cvN = (st.N.NEG.passN + st.N.NEG.failN) ? st.N.NEG.passN / (st.N.NEG.passN + st.N.NEG.failN) : 0;
+      let wip = 0, stuck = 0; for (const m of st.machines){ if (m.isSink) continue; const b = (m.buf || []).length; wip += b + (m.holding ? 1 : 0); if (b >= Math.max(3, st.bufCap - 1)) stuck += b; }
+      st.stuck = stuck;
+      if (st.dashA) setSpriteText(st.dashA, 'Win rate ' + Math.round(winRate * 100) + '%   ·   Open pipeline ' + crmK(openPV) + '   ·   Velocity ' + (st.velEMA * 60).toFixed(0) + ' won/min');
+      if (st.dashB) setSpriteText(st.dashB, 'Conv  Qualify ' + Math.round(cvQ * 100) + '%  ·  Negotiate ' + Math.round(cvN * 100) + '%   ·   WIP ' + wip + '   ·   Stuck ' + stuck + '   ·   Won bank ' + crmK(st.wonVal || 0));
+      try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
+  // emit one deal onto a segment at a stage (reuses a free pooled deal; bounded). Tints its accent by value.
+  function crmEmit(st, p, segIdx, stage){ p.active = true; p.state = 'moving'; p.seg = segIdx; p.t = 0; p.node = null; crmSetDeal(p, stage);
+    // recolour the deal's ACCENT meshes (the FLOW_ACCENT mesh) by VALUE so deals glow by size
+    try { const t = Math.min(1, (p.value || 0) / (CRM_VAL_BASE + CRM_VAL_SPAN)); const hex = crmHexForT(t);
+      p.grp.traverse((o) => { if (o.material && o.material.emissive && o !== p.grp && o.material.metalness >= 0.35 && o.material.metalness <= 0.45){ o.material = o.material.clone(); o.material.color.setHex(hex); o.material.emissive.setHex(hex); } }); } catch(_){}
+    const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.vy = s.say != null ? s.say : st.beltTop; p.grp.visible = true; }
+  // compact $k/$M formatter for the pipeline KPI sprites (values are in $k)
+  function crmK(k){ k = k || 0; if (k >= 1000) return '$' + (k / 1000).toFixed(1) + 'M'; return '$' + Math.round(k) + 'k'; }
+  function buildCrmScene(){ buildCrmPipeline('crm'); }
+  function updateCrmScene(){ updateCrmPipeline('crm'); }
 
   /* ============================================================
    *  🏭 SMART FACTORY · AVAILABILITY / OEE PRODUCTION LINE — buildSmartFactoryScene()  [FROM-SCRATCH BUILD]
@@ -8688,8 +9439,8 @@
     (g) => { sfP(g, SFX_G.cube, SFX_M.steel, [0, 0.55, 0]); sfP(g, SFX_G.nub, SFX_M.dark, [0, 1.35, 0]); sfP(g, SFX_G.nub, SFX_M.dark, [0.55, 0.85, 0.4], [0, 0.6, 0]); },
     (g) => { sfP(g, SFX_G.crate, SFX_M.card, [0, 0.85, 0]); sfP(g, SFX_G.tape, FLOW_ACCENT[2], [0, 1.72, 0]); },
   ];
-  function setOeePart(p, stage){ const s = Math.max(0, Math.min(OEE_PART.length - 1, stage)); if (p.stageBuilt === s) return;
-    const g = p.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); OEE_PART[s](g); p.stageBuilt = s; }
+  function setOeePart(p, stage){ const morph = p.morph || OEE_PART; const s = Math.max(0, Math.min(morph.length - 1, stage)); if (p.stageBuilt === s) return;
+    const g = p.grp; for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]); morph[s](g); p.stageBuilt = s; }
   // build ONE detailed machine cell whose SILHOUETTE is SPECIFIC TO ITS FUNCTION (a vertical CNC mill reads
   // differently from a horizontal lathe, a robotic weld cell, a big assembly hub, an inspection scanner gate,
   // and a boxing/palletizing packer) — recognizable machines, not identical enclosures. Common to all: a base
@@ -9480,6 +10231,332 @@
       try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
 
   /* ============================================================
+   *  🛍 SHOPPING MALL · RETAIL-OPERATIONS DIGITAL TWIN — buildMallScene()  [SIBLING OF SMART FACTORY / WAREHOUSE]
+   *  A self-contained retail-operations diorama: a SHOPPER-FLOW network on the same node/flow engine the plant
+   *  + DC use. Topology:
+   *    Entrances (sources) → Concourse / Anchor stores (browse — the dwell stations) → Food Court (merge — a
+   *    rest/dwell hub) → CHECKOUTS (machines; service = the till, queues = buffers = checkout lines) → Exit (sink).
+   *  Shoppers are the FLOW UNITS — they MORPH browsing → cart (picked up goods) → bagged (checked-out). Each
+   *  store/till runs a SEEDED-RANDOM service rate (shoppers/min); a till can close (deterministic clock — break/
+   *  shift) which lengthens its queue + back-pressures the concourse. Detailed multi-level mall 3D: a two-level
+   *  concourse with storefront units (varied signage colours), escalators (incline ramps), a food-court cluster,
+   *  planters + benches. Live KPI dashboard: Footfall / Occupancy / Avg queue / Checkout utilisation / Conversion.
+   *  Levers: Footfall (demand), open checkouts (capacity), Promotion (conversion/dwell), Reliability, scoped
+   *  Randomize, Reset. VIEW-ONLY, pooled, deterministic (no RNG / no wall-clock), headless-safe.
+   * ============================================================ */
+  const MALL_OPS = { bufCap: 7, rate: 1.2, spawn: 0.5, objN: 260, objScale: 1.15, mtbf: 20 };
+  const MALL_L2 = 34;   // upper-concourse mezzanine deck height (world units) — the multi-level layer
+  let mallRateSeed = 5; // seed for the mall's RANDOMIZED initial service rates / open-hours / conversion
+  // SHOPPER MORPH — the flow-unit look at each stage: browsing (empty-handed) → cart (holding goods) → bagged
+  // (carrying shopping bags after checkout). A small low-poly person (body + head) + the stage prop. Built from
+  // r128 primitives only; mirrors the OEE_PART table contract so the shared flow engine drives it via p.morph.
+  const MALL_BODY = new THREE.MeshStandardMaterial({ color: 0x6f8bbf, emissive: new THREE.Color(0x141d2c), emissiveIntensity: 0.18, roughness: 0.7, metalness: 0.1 });
+  const MALL_HEAD = new THREE.MeshStandardMaterial({ color: 0xd9b48a, emissive: new THREE.Color(0x241a10), emissiveIntensity: 0.15, roughness: 0.8, metalness: 0.05 });
+  const MALL_CART = new THREE.MeshStandardMaterial({ color: 0xb8c2d0, emissive: new THREE.Color(0x1a2230), emissiveIntensity: 0.2, roughness: 0.5, metalness: 0.4 });
+  const MALL_BAG  = new THREE.MeshStandardMaterial({ color: 0xe6a23a, emissive: new THREE.Color(0x3a2606), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.1 });
+  const MALL_G = { torso: new THREE.CylinderGeometry(0.42, 0.5, 1.5, 8), head: new THREE.SphereGeometry(0.36, 10, 8),
+    basket: new THREE.BoxGeometry(0.9, 0.5, 0.6), bag: new THREE.BoxGeometry(0.5, 0.7, 0.36) };
+  const mallP = (g, geo, m, pos) => { const e = new THREE.Mesh(geo, m); if (pos) e.position.set(pos[0], pos[1], pos[2]); g.add(e); };
+  const MALL_PART = [
+    // 0 browsing — just a shopper
+    (g) => { mallP(g, MALL_G.torso, MALL_BODY, [0, 0.85, 0]); mallP(g, MALL_G.head, MALL_HEAD, [0, 1.95, 0]); },
+    // 1 cart/basket — shopper with a basket of goods (converted: picked items)
+    (g) => { mallP(g, MALL_G.torso, MALL_BODY, [0, 0.85, 0]); mallP(g, MALL_G.head, MALL_HEAD, [0, 1.95, 0]); mallP(g, MALL_G.basket, MALL_CART, [0.55, 1.0, 0.2]); },
+    // 2 bagged — shopper carrying shopping bags (checked out)
+    (g) => { mallP(g, MALL_G.torso, MALL_BODY, [0, 0.85, 0]); mallP(g, MALL_G.head, MALL_HEAD, [0, 1.95, 0]); mallP(g, MALL_G.bag, MALL_BAG, [-0.55, 0.7, 0]); mallP(g, MALL_G.bag, MALL_BAG, [0.55, 0.7, 0]); },
+  ];
+  // SEEDED-RANDOM service rate per node within FUNCTION bands so the mall stays balanced (anchor stores dwell
+  // long = the deliberate bottleneck; the food court is a slow rest hub; checkouts are the throughput gate).
+  // Mirrors sfRollRates/whRollRates exactly (deterministic, no wall-clock). Returns avg "browse-only" (no-buy) rate.
+  function mallRollRates(N, S, C, seed, stations, opts){
+    opts = opts || {};
+    const doRate = opts.rate !== false, doAvail = opts.avail !== false, doReject = opts.reject !== false;
+    const inScope = opts.filter || (() => true);
+    let rc = 0; const fr = (v) => v - Math.floor(v);
+    const rnd = () => { rc++; return fr(Math.sin(rc * 12.9898 + seed * 19.73) * 43758.5453); };
+    const promo = (opts.promo != null) ? opts.promo : 0;   // 0..1 promotion boost — speeds dwell + lifts conversion
+    const band = (id, nd) => {
+      if (nd.type === 'anchor') return [0.85, 1.15];   // anchor/concourse stores = the long-dwell bottleneck
+      if (nd.type === 'food')   return [1.0, 1.35];     // food court = slow rest hub (the merge)
+      if (nd.type === 'till')   return [1.6, 2.1];      // checkouts = the throughput gate (kept faster)
+      return [1.2, 1.6];
+    };
+    for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink' || !inScope(id, nd)) continue;
+      if (doRate){ const b = band(id, nd); let r = b[0] + rnd() * (b[1] - b[0]); if (nd.type === 'anchor' || nd.type === 'food') r *= (1 + promo * 0.5); nd.rate = +r.toFixed(3); nd.rate0 = nd.rate; }
+      // conversion: an anchor store's qcGate "fail" = a shopper LEAVES WITHOUT BUYING (loops to Exit-without-checkout)
+      if (doReject && nd.qcGate){ let nb = 0.22 + rnd() * 0.16; nb = Math.max(0.04, nb - promo * 0.16); nd.failFrac = +nb.toFixed(3); } }
+    if (doRate) for (const s of S){ if (!s.spdAbs) s.spd = (N[s.a].rate || C.rate) / C.rate; }
+    if (doAvail && stations){ for (const m of stations){ if (!inScope(m.id, m)) continue; const mi = m.mi || 0;
+      m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 18;
+      m.downFrac = (m.type === 'till' ? 0.04 : 0.03) + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.07;
+      m.offset = fr(Math.sin((mi + 1) * 12.9898 + seed * 5.0) * 43758.5); } }
+    let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac; qn++; } }
+    return qn ? qf / qn : 0.2;
+  }
+  // build ONE detailed mall NODE whose SILHOUETTE is SPECIFIC TO ITS FUNCTION — a storefront UNIT (glass front +
+  // signage fascia in a varied colour + interior racks), a food-court STALL cluster (counter + canopy + stools),
+  // or a CHECKOUT lane (till desk + scanner + bagging shelf + a queue rail). Common: a status stack-light (R/A/G),
+  // a "closed" beacon, and a name label. Returns { cg, tool, arms, lampR, lampA, lampG, beacon }.
+  function mallMakeNode(g, i, x, z, hex, type, name){
+    const cg = new THREE.Group(); cg.position.set(x, 0, z); g.add(cg);
+    const tool = {}, arms = []; let poleX = 4.6, poleZ = 3.2, beaconY = 8.0;
+    if (type === 'anchor'){
+      // STOREFRONT UNIT: a glazed shop-front, a coloured signage fascia (the varied storefront colour), interior
+      // shelving racks (browsable goods), and a tinted glass door. The signage colour = the store's brand hue.
+      const deck = dioBox(13, 0.6, 11, 0x222c3a, 0x0c131d); deck.position.set(0, 0.3, 0); cg.add(deck);
+      const box = dioBox(13, 9, 11, 0x2a3344, 0x0e151f); box.position.set(0, 5.0, -0.5); cg.add(box);
+      // SIGNAGE FASCIA — the bright varied-colour brand band across the storefront top
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(12.4, 1.8, 0.5), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.45), transparent: true, opacity: 0.95 })); sign.position.set(0, 9.0, 5.1); cg.add(sign); tool.sign = sign; tool.signHex = brightenHex(hex, 0.45);
+      // glass shop-front + door
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(12, 6.6, 0.3), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.18), transparent: true, opacity: 0.22, depthWrite: false })); glass.position.set(0, 4.0, 5.05); cg.add(glass);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(3.0, 5.4, 0.2), new THREE.MeshBasicMaterial({ color: 0x9fd0e8, transparent: true, opacity: 0.32, depthWrite: false })); door.position.set(0, 3.0, 5.2); cg.add(door);
+      // interior racks of goods (recede inward), in the brand hue
+      for (let r = 0; r < 3; r++) for (const rx of [-3.6, 0, 3.6]){ const rack = dioBox(2.4, 3.0, 1.2, 0x39424f, 0x141a22); rack.position.set(rx, 1.9, -2.5 + r * 1.1); cg.add(rack);
+        const goods = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.4, 0.9), new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.1), emissive: new THREE.Color(hex).multiplyScalar(0.18), emissiveIntensity: 0.5, roughness: 0.6, metalness: 0.2 })); goods.position.set(rx, 2.0, -2.5 + r * 1.1); cg.add(goods); }
+      poleX = 5.2; poleZ = -4.4; beaconY = 10.5;
+    } else if (type === 'food'){
+      // FOOD-COURT STALL CLUSTER: a service counter + a peaked canopy + stools, with a steam/aroma puff plate.
+      const deck = dioBox(12, 0.6, 10, 0x222c3a, 0x0c131d); deck.position.set(0, 0.3, 0); cg.add(deck);
+      const counter = dioBox(8.0, 2.4, 3.0, 0x3a4658, 0x141c28); counter.position.set(0, 1.5, -1.8); cg.add(counter);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.3, 3.4), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.9 })); top.position.set(0, 2.85, -1.8); cg.add(top); tool.sign = top; tool.signHex = brightenHex(hex, 0.4);
+      // canopy (peaked roof) on posts
+      for (const px of [-4.2, 4.2]){ const post = dioBox(0.6, 6.0, 0.6, brightenHex(hex, 0.05), 0x141c28); post.position.set(px, 3.0, -1.8); cg.add(post); }
+      const canopy = new THREE.Mesh(new THREE.ConeGeometry(6.4, 2.4, 4), new THREE.MeshStandardMaterial({ color: brightenHex(hex, 0.25), emissive: new THREE.Color(hex).multiplyScalar(0.2), emissiveIntensity: 0.4, roughness: 0.7, metalness: 0.2 })); canopy.rotation.y = Math.PI / 4; canopy.position.set(0, 7.2, -1.8); cg.add(canopy);
+      // dining stools + small tables in front
+      for (const tx of [-3, 0, 3]) for (const tz of [2.2, 4.2]){ const tbl = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.3, 12), SFX_M.dark); tbl.position.set(tx, 1.5, tz); cg.add(tbl);
+        const leg = dioBox(0.3, 1.4, 0.3, 0x2a3340, 0x0a0f18); leg.position.set(tx, 0.7, tz); cg.add(leg); }
+      // a "steam" puff over the counter (additive, drives slowly)
+      const steam = new THREE.Mesh(new THREE.SphereGeometry(1.0, 10, 8), new THREE.MeshBasicMaterial({ color: 0xeaf2ff, transparent: true, opacity: 0.18, depthWrite: false, blending: FLOW_ADD })); steam.position.set(0, 3.6, -1.8); cg.add(steam); tool.steam = steam;
+      poleX = 5.0; poleZ = 3.0; beaconY = 8.2;
+    } else { // 'till' — CHECKOUT LANE: a till desk + scanner light + a bagging shelf + an overhead lane number + a queue rail
+      const deck = dioBox(8, 0.6, 9, 0x222c3a, 0x0c131d); deck.position.set(0, 0.3, 0); cg.add(deck);
+      const desk = dioBox(3.6, 1.8, 2.4, 0x39424f, 0x141a22); desk.position.set(0, 1.5, -1.0); cg.add(desk);
+      const scr = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 0.12), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.35), transparent: true, opacity: 0.85 })); scr.position.set(0, 2.9, -1.0); cg.add(scr);
+      // scanner glass on the desk (the "service" point — pulses while serving)
+      const scan = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.2, 1.6), new THREE.MeshBasicMaterial({ color: 0x49e0ff, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD })); scan.position.set(0, 2.5, -0.6); cg.add(scan); tool.scan = scan;
+      const bagShelf = dioBox(2.8, 0.3, 1.6, 0x4a586c, 0x16202c); bagShelf.position.set(0, 2.6, 0.6); cg.add(bagShelf);
+      // overhead lane-number sign (varied colour)
+      for (const px of [-2.0, 2.0]){ const post = dioBox(0.4, 6.4, 0.4, 0x39424f, 0x141a22); post.position.set(px, 3.2, -1.0); cg.add(post); }
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.3, 0.3), new THREE.MeshBasicMaterial({ color: brightenHex(hex, 0.4), transparent: true, opacity: 0.92 })); sign.position.set(0, 6.6, -1.0); cg.add(sign); tool.sign = sign; tool.signHex = brightenHex(hex, 0.4);
+      // a QUEUE RAIL guiding the line in front of the till (where buffered shoppers stand)
+      for (const rx of [-1.4, 1.4]){ const rail = dioBox(0.18, 1.0, 7.0, 0x5a6678, 0x1a2430); rail.position.set(rx, 1.0, 4.0); cg.add(rail); }
+      poleX = 3.2; poleZ = -2.8; beaconY = 8.4;
+    }
+    const pole = dioBox(0.32, 4, 0.32, 0x2a3340, 0x0a0f18); pole.position.set(poleX, beaconY + 1.4, poleZ); cg.add(pole);
+    const segGeo = new THREE.CylinderGeometry(0.7, 0.7, 1.0, 14);
+    const mkSeg = (yy, col) => { const mt = new THREE.MeshBasicMaterial({ color: col }); const m = new THREE.Mesh(segGeo, mt); m.position.set(poleX, yy, poleZ); cg.add(m); return mt; };
+    const lampR = mkSeg(beaconY + 3.5, 0x20242c), lampA = mkSeg(beaconY + 2.4, 0x20242c), lampG = mkSeg(beaconY + 1.3, 0x3fe07a);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.95, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffb030, transparent: true, opacity: 0.0, depthWrite: false, blending: FLOW_ADD })); beacon.position.set(0, beaconY, 0); cg.add(beacon);
+    cg.add(labelSpriteSafe(name || 'Unit', '#dbe8fb', 12, 0, beaconY + 6.0, 0));
+    return { cg, tool, arms, lampR, lampA, lampG, beacon };
+  }
+  // mall ENVIRONMENT: the concourse floor, support columns, an UPPER CONCOURSE mezzanine deck with a railing +
+  // upper storefront fascias, a skylight truss roof, planters + benches lining the concourse, and a feature
+  // fountain at the centre. The escalators are built as incline conveyor segments by the scene (reused ramp idea).
+  function mallBuildEnv(g, mpos, beltTop){
+    let xmin = 1e9, xmax = -1e9, zmax = 1;
+    for (const p of mpos){ if (p.x < xmin) xmin = p.x; if (p.x > xmax) xmax = p.x; zmax = Math.max(zmax, Math.abs(p.z)); }
+    if (!isFinite(xmin)){ xmin = -60; xmax = 60; }
+    const cx = (xmin + xmax) / 2, span = (xmax - xmin) + 64;
+    // polished concourse tiles under each node
+    for (const p of mpos){ const zone = dioBox(13, 0.05, 11, 0x33384a, 0x14161f); zone.position.set(p.x, 0.42, p.z); g.add(zone); }
+    // support columns at the floor corners
+    for (const px of [xmin - 18, xmax + 18]) for (const pz of [-(zmax + 16), zmax + 16]){ const pil = dioBox(2.4, MALL_L2 + 14, 2.4, 0x3a4252, 0x141a22); pil.position.set(px, (MALL_L2 + 14) / 2, pz); g.add(pil); }
+    // UPPER CONCOURSE mezzanine deck (the second level) — a balcony walkway around the back with a railing +
+    // a row of upper storefront fascias in varied colours, so the mall reads as multi-level.
+    const upZ = -(zmax + 10);
+    const deck = dioBox(span - 10, 0.7, 14, 0x2c3344, 0x10151f); deck.position.set(cx, MALL_L2, upZ); g.add(deck);
+    for (let i = 0; i < 24; i++){ const post = dioBox(0.18, 2.0, 0.18, 0x6577a0, 0x1a2230); post.position.set(cx - (span - 14) / 2 + i * ((span - 14) / 23), MALL_L2 + 1.4, upZ + 6.8); g.add(post); }
+    const rail = dioBox(span - 12, 0.25, 0.25, 0x8a98ac, 0x1a2230); rail.position.set(cx, MALL_L2 + 2.4, upZ + 6.8); g.add(rail);
+    const upHues = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a];
+    for (let i = 0; i < 6; i++){ const ux = cx - (span - 30) / 2 + i * ((span - 30) / 5);
+      const unit = dioBox(span / 9, 7, 8, 0x2a3344, 0x0e151f); unit.position.set(ux, MALL_L2 + 4.0, upZ - 3); g.add(unit);
+      const fascia = new THREE.Mesh(new THREE.BoxGeometry(span / 9 - 1, 1.6, 0.5), new THREE.MeshBasicMaterial({ color: brightenHex(upHues[i % upHues.length], 0.42), transparent: true, opacity: 0.95 })); fascia.position.set(ux, MALL_L2 + 7.0, upZ + 1.1); g.add(fascia); }
+    // SKYLIGHT TRUSS ROOF (open lattice) over the concourse
+    const roofY = MALL_L2 + 18; for (const rz of [-(zmax + 4), 0, zmax + 4]){ const beam = dioBox(span, 0.5, 0.6, 0x46566c, 0x141c28); beam.position.set(cx, roofY, rz); g.add(beam); }
+    for (let i = 0; i <= 10; i++){ const xb = xmin - 16 + i * ((xmax - xmin + 32) / 10); const beam = dioBox(0.5, 0.5, (zmax + 4) * 2, 0x46566c, 0x141c28); beam.position.set(xb, roofY, 0); g.add(beam); }
+    // PLANTERS + BENCHES lining the concourse centre line
+    const greens = [];
+    for (let i = 0; i < mpos.length + 2; i++){ const px = xmin - 8 + i * ((xmax - xmin + 16) / (mpos.length + 1)); const pz = (i % 2 === 0) ? -2 : 2;
+      const planter = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 1.4, 12), new THREE.MeshStandardMaterial({ color: 0x3a4252, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.1, roughness: 0.8, metalness: 0.2 })); planter.position.set(px, 1.1, pz); g.add(planter);
+      const foliage = new THREE.Mesh(new THREE.SphereGeometry(2.0, 10, 8), new THREE.MeshStandardMaterial({ color: 0x3fa05a, emissive: new THREE.Color(0x0e2a16), emissiveIntensity: 0.35, roughness: 0.8, metalness: 0.05 })); foliage.position.set(px, 3.2, pz); g.add(foliage); greens.push(foliage);
+      const bench = dioBox(3.0, 0.5, 1.0, 0x5a4a36, 0x1a140c); bench.position.set(px + 4, 0.9, -pz); g.add(bench);
+      const bl = dioBox(0.3, 0.9, 1.0, 0x2a3340, 0x0a0f18); bl.position.set(px + 2.7, 0.6, -pz); g.add(bl); const br = dioBox(0.3, 0.9, 1.0, 0x2a3340, 0x0a0f18); br.position.set(px + 5.3, 0.6, -pz); g.add(br); }
+    // CENTRE FEATURE FOUNTAIN
+    const fountain = new THREE.Group(); fountain.position.set(cx, 0, zmax + 2);
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(4.0, 4.4, 1.0, 24), new THREE.MeshStandardMaterial({ color: 0x3a4252, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.1, roughness: 0.7, metalness: 0.3 })); basin.position.y = 0.5; fountain.add(basin);
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.6, 0.3, 24), new THREE.MeshBasicMaterial({ color: 0x49b6ff, transparent: true, opacity: 0.45, depthWrite: false, blending: FLOW_ADD })); water.position.y = 1.0; fountain.add(water);
+    const jet = new THREE.Mesh(new THREE.ConeGeometry(0.8, 4.0, 10), new THREE.MeshBasicMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.35, depthWrite: false, blending: FLOW_ADD })); jet.position.y = 3.0; fountain.add(jet); g.add(fountain);
+    return { cx, span, greens, fountain, jet };
+  }
+  function buildMallScene(section){
+    const g = buildSceneRoot(section);
+    g.add(labelSpriteSafe('🛍 Shopping Mall · Retail-Operations Twin — entrances · concourse/anchor stores · food court · checkouts · exit', '#cfe0ff', 22, 0, 80, 0));
+    const floor = dioBox(330, 0.5, 200, 0x2b3142, 0x12161f); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xeef3ff, 0x202838, 0.9));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.6, 980, 2); pl.position.set(0, 175, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(330, 66, 0x4a5a82, 0x303c56); grid.position.y = 0.4;
+      const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.18; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
+    const C = MALL_OPS, beltTop = 3.0, fr = (v) => v - Math.floor(v);
+    // NODE GRAPH: 2 ENTRANCES (sources) → 3 ANCHOR/concourse stores (browse — one on the UPPER level via escalator)
+    // → FOOD COURT (merge — rest/dwell hub) → 4 CHECKOUTS (machines; queues=buffers=checkout lines) → EXIT (sink).
+    // An anchor store's conversion gate routes no-buy shoppers straight to the exit (skip checkout).
+    const N = {}, S = [];
+    const node = (id, x, z, kind, type, name, outStage, rate, fy) => (N[id] = { id, x, z, fy: fy || 0, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
+    // ENTRANCES
+    node('ENT0', -118, -22, 'source', null, 'North Entrance', 0);
+    node('ENT1', -118,  22, 'source', null, 'West Entrance', 0);
+    // ANCHOR / CONCOURSE STORES — browse stations (stage 0→1 morph: pick up goods). A0 sits on the UPPER concourse.
+    node('A0', -64,   0, 'machine', 'anchor', 'Anchor Store · Dept (L2)', 1, C.rate, MALL_L2); N.A0.qcGate = true;
+    node('A1', -64, -34, 'machine', 'anchor', 'Concourse · Fashion', 1, C.rate);              N.A1.qcGate = true;
+    node('A2', -64,  34, 'machine', 'anchor', 'Concourse · Electronics', 1, C.rate);          N.A2.qcGate = true;
+    // FOOD COURT — a rest/dwell hub that GATHERS the concourse flows then dispatches to the tills (pass-through;
+    // it does NOT consume shoppers, so footfall is conserved). kind is set to 'split' below for the 1→many dispatch.
+    node('FC', 6, 0, 'machine', 'food', 'Food Court', 1);
+    // CHECKOUTS — the till lanes (service = till; queue = buffer = the checkout line)
+    node('CK0', 74, -36, 'machine', 'till', 'Checkout 1', 2);
+    node('CK1', 74, -12, 'machine', 'till', 'Checkout 2', 2);
+    node('CK2', 74,  12, 'machine', 'till', 'Checkout 3', 2);
+    node('CK3', 74,  36, 'machine', 'till', 'Checkout 4', 2);
+    // EXIT
+    node('EXIT', 122, 0, 'sink', null, 'Exit / Car Park', 2);
+    const seg = (a, b, rework) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, say: beltTop + (A.fy || 0), sby: beltTop + (B.fy || 0), spd: (A.rate || C.rate) / C.rate, spdAbs: false, rework: !!rework };
+      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); s.incline = Math.abs(s.sby - s.say) > 1.5;
+      const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); return idx; };
+    // entrances → anchors (ENT0 → A0 upper [escalator/incline] + A1 ; ENT1 → A0 + A2)
+    seg('ENT0', 'A1'); seg('ENT0', 'A0'); seg('ENT1', 'A2'); seg('ENT1', 'A0');
+    // anchors → food court (merge). Each anchor's qc routes index 0 = onward (food court), index 1 (reworkOut) = exit (no-buy)
+    N.A0.outStage = 1; N.A1.outStage = 1; N.A2.outStage = 1;
+    seg('A0', 'FC'); seg('A0', 'EXIT', true);     // A0: buy→FC, no-buy→EXIT
+    seg('A1', 'FC'); seg('A1', 'EXIT', true);
+    seg('A2', 'FC'); seg('A2', 'EXIT', true);
+    // food court → checkouts (split/dispatch 1→many across the open tills)
+    N.FC.kind = 'split'; N.FC.outStage = 2;
+    seg('FC', 'CK0'); seg('FC', 'CK1'); seg('FC', 'CK2'); seg('FC', 'CK3');
+    // checkouts → exit
+    seg('CK0', 'EXIT'); seg('CK1', 'EXIT'); seg('CK2', 'EXIT'); seg('CK3', 'EXIT');
+    // tag the qc gates: outSeg[0]=onward, reworkOut index = the no-buy→exit branch (mirrors the SF qc-gate machinery)
+    for (const id of ['A0', 'A1', 'A2']){ const nd = N[id]; nd.reworkOut = 1; nd.rr = 0; nd.qhash = (id.charCodeAt(1) * 17 + 3); }
+    mallRollRates(N, S, C, mallRateSeed);   // assign the RANDOMIZED initial service rates + open-hours + conversion
+    const XAX = (typeof THREE !== 'undefined' && THREE.Vector3) ? new THREE.Vector3(1, 0, 0) : null;
+    const orient3 = (obj, ax, ay, az, bx, by, bz) => { try { const d = new THREE.Vector3(bx - ax, by - ay, bz - az); if (d.length()) { d.normalize(); if (obj.quaternion && obj.quaternion.setFromUnitVectors) obj.quaternion.setFromUnitVectors(XAX, d); } } catch(_){} };
+    const chev = [], belts = [];
+    // WALKWAYS / TRAVELATORS: the flow segments are concourse walkways; inclines are ESCALATORS (stepped guide).
+    S.forEach((s, si) => { const len3 = Math.hypot(s.len, s.sby - s.say);
+      const belt = dioBox(len3, 0.4, 4.6, s.rework ? 0x3a2233 : (s.incline ? 0x24405a : 0x28324a), s.rework ? 0x140c18 : 0x0c1622);
+      belt.position.set((s.ax + s.bx) / 2, (s.say + s.sby) / 2, (s.az + s.bz) / 2); orient3(belt, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(belt);
+      belt.name = (s.incline ? 'Escalator ' : (s.rework ? 'Exit lane ' : 'Walkway ')) + s.a + '→' + s.b; belt.userData = { mallSeg: si }; belts.push({ obj: belt, seg: si, label: belt.name });
+      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: s.rework ? 0xff8ac0 : (s.incline ? 0xffd36a : 0x6ad0ff), transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
+        const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, s.say + (s.sby - s.say) * t0 + 0.4, s.az + (s.bz - s.az) * t0); orient3(cg, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); }
+      // ESCALATOR structure: balustrade rails on each side (the incline ramp idea, reused from the WH lift)
+      if (s.incline){ for (const off of [-2.6, 2.6]){ const px = -Math.sin(s.ang) * off, pz = Math.cos(s.ang) * off; const rl = dioBox(len3, 1.6, 0.4, 0x5a6678, 0x1a2430);
+          rl.position.set((s.ax + s.bx) / 2 + px, (s.say + s.sby) / 2 + 1.1, (s.az + s.bz) / 2 + pz); orient3(rl, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(rl); } } });
+    // STORE BRAND HUES — varied signage colours per anchor + food + till
+    const BRAND = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a];
+    const stations = []; let mi = 0;
+    for (const id in N){ const nd = N[id];
+      if (nd.kind === 'source' || nd.kind === 'sink'){ const pad = new THREE.Mesh(new THREE.CylinderGeometry(4, 4.6, 1, 20),
+          new THREE.MeshStandardMaterial({ color: 0x3a4250, emissive: new THREE.Color(nd.kind === 'source' ? 0x1c4a36 : 0x4a3620), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3 + (nd.fy || 0), nd.z); g.add(pad);
+        // an entrance arch / exit portal frame
+        for (const ax of [-4.5, 4.5]){ const post = dioBox(1.0, 8, 1.0, 0x3a4252, 0x141a22); post.position.set(nd.x + ax, 4 + (nd.fy || 0), nd.z); g.add(post); }
+        const lintel = new THREE.Mesh(new THREE.BoxGeometry(11, 1.6, 1.4), new THREE.MeshBasicMaterial({ color: brightenHex(nd.kind === 'source' ? 0x49e0ff : 0xffb347, 0.3), transparent: true, opacity: 0.9 })); lintel.position.set(nd.x, 8 + (nd.fy || 0), nd.z); g.add(lintel);
+        g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 11, nd.x, 11 + (nd.fy || 0), nd.z)); continue; }
+      const hex = BRAND[mi % BRAND.length]; const cell = mallMakeNode(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
+      if (nd.fy) cell.cg.position.y = nd.fy;   // lift the upper-level anchor onto the mezzanine
+      nd.cg = cell.cg; nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
+      nd.mi = mi;
+      nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + mallRateSeed * 3.1) * 1000) * 18; nd.downFrac = 0.03 + fr(Math.sin((mi + 1) * 3.3 + mallRateSeed * 1.7) * 500) * 0.07; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + mallRateSeed * 5.0) * 43758.5);
+      stations.push(nd); mi++; }
+    const env = mallBuildEnv(g, stations.map((m) => ({ x: m.x, z: m.z })), beltTop);
+    // SHOPPER POOL — each part carries the MALL_PART morph table so the shared flow engine renders shoppers
+    // (browsing → cart → bagged) instead of OEE workpieces.
+    const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
+      parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1, morph: MALL_PART }); }
+    const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 62, 0); g.add(dashA);
+    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 56, 0); g.add(dashB);
+    let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
+    let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
+    const tills = stations.filter((m) => m.type === 'till');
+    sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, beltTop, env, tills,
+      spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
+      perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 1), noBuyFrac: qn ? qf / qn : 0.2, qcFail: qn ? qf / qn : 0.2,
+      count: new Array(MALL_PART.length).fill(0), val: new Array(MALL_PART.length).fill(0),
+      openTills: tills.length, promo: 0, footfall: 0, isMall: true };
+    updateMallScene(section);
+  }
+  function updateMallScene(section){ const st = sceneState[section]; if (!st || !st.parts) return;
+    st.count.fill(0);
+    for (const p of st.parts){ if (!p.active) continue; const stg = (p.stageBuilt >= 0) ? p.stageBuilt : 0; if (stg < st.count.length) st.count[stg]++; oeePlace(st, p, 0); } }
+  // The shopper-flow step REUSES the Smart-Factory networked-flow engine (entrances spawn = footfall, shoppers
+  // queue + are serviced gated by store/till availability, the food-court merges 2→1, the dispatch splits 1→many
+  // tills, an anchor's conversion gate routes no-buy shoppers straight to the exit). Then mall-specific animation:
+  // signage pulse, scanner/steam shimmer, foliage sway, fountain jet, the retail-ops KPI dashboard.
+  function animateMallScene(section, dt){ const st = sceneState[section]; if (!st || !st.parts) return; const C = st.C; st.phase += dt; const T = st.phase; const mul = st.mtbfMul || 1;
+    // OPEN-CHECKOUTS lever: only the first `openTills` till lanes are staffed; closed lanes are forced "down"
+    // (their queue can't drain) — fewer open tills ⇒ longer queues + lower utilisation.
+    if (st.tills){ for (let i = 0; i < st.tills.length; i++) st.tills[i].closedLane = (i >= (st.openTills || st.tills.length)); }
+    let up = 0, tot = 0;
+    for (const m of st.machines){ tot++; const forced = m.closedLane; const ph = ((T / (m.period * mul)) + m.offset) % 1; m.down = forced || (ph < m.downFrac); if (!m.down && !forced) up++; }
+    st.availInst = tot ? up / tot : 1;
+    st.spawnT += dt; if (st.spawnT >= C.spawn){ st.spawnT = 0;
+      for (const id in st.N){ const nd = st.N[id]; if (nd.kind !== 'source' || !nd.outSegs.length) continue;
+        // FOOTFALL/demand: pick the source's least-loaded outbound store so footfall spreads across the concourse
+        let best = -1, bestLoad = 1e9; for (const si of nd.outSegs){ const tgt = st.N[st.S[si].b]; const load = tgt.buf ? tgt.buf.length : 0; if (load < bestLoad && (!tgt.buf || tgt.buf.length < st.bufCap)){ bestLoad = load; best = si; } }
+        if (best < 0) continue; const p = oeeFree(st); if (p){ oeeEmit(st, p, best, 0); st.spawned++; st.footfall++; } } }
+    for (const p of st.parts){ if (!p.active || p.state !== 'moving') continue; const s = st.S[p.seg];
+      p.t += (16 * (s.spd || 1) * dt) / s.len;
+      if (p.t >= 1){ const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; } else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); } } }
+    for (const m of st.machines){
+      const outs = m.outSegs.map((si) => st.N[st.S[si].b]);
+      const roomAny = outs.some((t) => t.kind === 'sink' || t.buf.length < st.bufCap);
+      if (!m.down){
+        if (m.holding){ m.busyT -= dt; if (m.busyT <= 0){ const carrier = m.holding; m.holding = null;
+          if (m.qcGate){
+            // CONVERSION GATE: a shopper either CONVERTS (buys → onward to food court / checkout) or LEAVES
+            // WITHOUT BUYING (no-buy → straight to the exit lane). failFrac = the no-buy (browse-only) rate.
+            const rwSeg = m.outSegs[m.reworkOut], rwNode = st.N[st.S[rwSeg].b];
+            const noBuy = flowFrac(Math.sin((T * 2.7 + (m.qhash || 0)) * 53.17)) < (m.failFrac || 0);
+            if (noBuy && rwNode && (rwNode.kind === 'sink' || rwNode.buf.length < st.bufCap)){ oeeEmit(st, carrier, rwSeg, 0); m.noBuyN = (m.noBuyN || 0) + 1; }   // stays at stage 0 (empty-handed) to the exit
+            else { const t0 = st.N[st.S[m.outSegs[0]].b]; if (t0.kind === 'sink' || t0.buf.length < st.bufCap) oeeEmit(st, carrier, m.outSegs[0], m.outStage); else { m.holding = carrier; m.busyT = 0.001; } } }   // converts → onward to the food court (back-pressure if it's full)
+          else if (m.kind === 'split'){ // dispatch to the shortest open till (load-balance the checkout lines)
+            let bi = -1, bl = 1e9; for (let oi = 0; oi < m.outSegs.length; oi++){ const t = outs[oi]; if (t.closedLane) continue; if (t.kind !== 'sink' && t.buf.length >= st.bufCap) continue; const load = t.buf ? t.buf.length : 0; if (load < bl){ bl = load; bi = oi; } }
+            if (bi >= 0) oeeEmit(st, carrier, m.outSegs[bi], m.outStage); else { m.holding = carrier; m.busyT = 0.001; } }
+          else { oeeEmit(st, carrier, m.outSegs[0], m.outStage); } } }
+        else if (m.buf.length >= m.need && roomAny){
+          const carrier = m.buf.shift(); for (let e = 1; e < m.need; e++){ const ex = m.buf.shift(); if (ex){ ex.active = false; ex.grp.visible = false; } }
+          carrier.state = 'holding'; carrier.node = m.id; m.holding = carrier; m.busyT = 1 / (m.rate || C.rate); } }
+      const blocked = (m.buf.length || m.holding) && !roomAny;
+      const stt = m.down ? (m.closedLane ? 'closed' : 'down') : (m.holding ? 'running' : (m.buf.length && blocked ? 'blocked' : (m.buf.length ? 'running' : 'starved')));
+      if (stt !== m.state){ m.state = stt; const L = (mt, on, hex) => { if (mt && mt.color && mt.color.setHex) mt.color.setHex(on ? hex : 0x20242c); };
+        L(m.lampR, stt === 'down' || stt === 'closed', stt === 'closed' ? 0x556070 : 0xff4a4a); L(m.lampA, stt === 'blocked', 0xffb030); L(m.lampG, stt === 'running', 0x3fe07a); }
+      const run = (stt === 'running');
+      if (m.tool){
+        if (m.tool.scan) m.tool.scan.material.opacity = run ? 0.35 + 0.35 * Math.abs(Math.sin(T * 5)) : 0.12;   // scanner pulses while serving
+        if (m.tool.steam){ m.tool.steam.position.y = 3.6 + Math.sin(T * 1.1 + (m.mi || 0)) * 0.5; m.tool.steam.material.opacity = 0.12 + 0.08 * (0.5 + 0.5 * Math.sin(T * 0.9)); }
+        if (m.tool.sign && m.tool.sign.material && m.tool.signHex != null){ const lit = (m.down && m.closedLane) ? 0.25 : (0.7 + 0.3 * (0.5 + 0.5 * Math.sin(T * 2.2 + (m.mi || 0)))); m.tool.sign.material.opacity = lit; }
+      }
+      if (m.beacon && m.beacon.material) m.beacon.material.opacity = (m.down && !m.closedLane) ? (0.4 + 0.4 * Math.abs(Math.sin(T * 5))) : 0.0;
+    }
+    for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1; const cy = (s.say != null ? s.say : st.beltTop) + ((s.sby != null ? s.sby : st.beltTop) - (s.say != null ? s.say : st.beltTop)) * c.t; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, cy + 0.45, s.az + (s.bz - s.az) * c.t); }
+    // ENVIRONMENT motion: foliage sway, fountain jet bob
+    if (st.env){ if (st.env.greens) for (let i = 0; i < st.env.greens.length; i++){ const f = st.env.greens[i]; f.rotation.y = Math.sin(T * 0.4 + i) * 0.12; }
+      if (st.env.jet){ st.env.jet.scale.y = 1 + 0.18 * Math.sin(T * 3.0); st.env.jet.material.opacity = 0.3 + 0.12 * (0.5 + 0.5 * Math.sin(T * 3.0)); } }
+    st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
+      // KPIs: Footfall (visitors/min from the spawn EMA), Occupancy (shoppers in the mall / capacity), Avg queue
+      // (mean checkout-line length), Checkout utilisation (running tills / open tills), Conversion % (bought / footfall).
+      st.ffEMA = (st.ffEMA || 0) * 0.6 + st.footfall * 0.4; st.footfall = 0;
+      let occ = 0; for (const p of st.parts) if (p.active) occ++;
+      let qsum = 0, qn2 = 0, served = 0, openN = 0, busyTill = 0; for (const m of st.tills){ openN += m.closedLane ? 0 : 1; qsum += m.buf.length; qn2++; if (!m.closedLane && (m.holding || m.buf.length)) busyTill++; }
+      const avgQ = qn2 ? qsum / qn2 : 0; const util = openN ? busyTill / openN : 0;
+      const conv = Math.max(0, Math.min(1, 1 - (st.noBuyFrac || 0.2) + (st.promo || 0) * 0.16));
+      const capacity = st.C.objN;
+      if (st.dashA) setSpriteText(st.dashA, 'Footfall ' + Math.round((st.ffEMA || 0) * 60) + '/min   ·   Occupancy ' + Math.round((occ / capacity) * 100) + '%   ·   Conversion ' + Math.round(conv * 100) + '%');
+      if (st.dashB) setSpriteText(st.dashB, 'Avg queue ' + avgQ.toFixed(1) + '   ·   Checkout util ' + Math.round(util * 100) + '%   ·   Open tills ' + openN + '/' + st.tills.length + '   ·   Thru ' + Math.round(st.perfEMA * 60) + '/min');
+      try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
+
+  /* ============================================================
    *  SMART CITY II — TRAFFIC & SIGNAL-CONTROL TWIN. A fixed grid of intersections + roads (stable network for a
    *  real micro-sim) sitting at the city centre while the boundaryless city-grid blocks stream around it. Cars
    *  spawn (demand), flow the roads (speed drops with density), QUEUE at red lights (signal = the lamp), turn at
@@ -9821,6 +10898,9 @@
             for (const fid in buildings){ const b = buildings[fid]; if (b && b.grp) add('firm:' + fid, firmLabel(fid), b.grp); }
           }
           if (typeof exchange !== 'undefined' && exchange && exchange.grp) add('desk', firmLabel('NPC_DESK'), exchange.grp);
+          // the CITY-UTILITY digital twin (substations / data center / solar / sensors / feeders) — one group target
+          // for smart-city, available only once the twin overlay is built (lazily on first reveal). VIEW-ONLY.
+          if (section === 'smart-city' && typeof cityUtilGrp !== 'undefined' && cityUtilGrp) add('grp:city-util', '▦ City utility twin (group)', cityUtilGrp, true);
         } else if (section === 'network'){
           const st = sceneState.network;
           const nodeGrps = [];
@@ -9863,7 +10943,13 @@
           // conveyors are pickable but kept OUT of the dropdown (noList) — selecting one drives the Belt-speed slider.
           if (st && st.belts){ for (const b of st.belts){ if (b && b.obj) add('whbelt:' + b.seg, b.label, b.obj, false, null, true); } }
         } else if (section === 'shopping-mall'){
-          if (typeof retailGroup !== 'undefined' && retailGroup) add('grp:retail', '▦ Mall (group)', retailGroup, true);
+          const st = sceneState['shopping-mall'];
+          const cellGrps = [];
+          if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) cellGrps.push(m.cg); } }
+          if (st && st.g && cellGrps.length) add('grp:mall', glabel('▦ All units', cellGrps.length), st.g, true, cellGrps);
+          if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) add('mall:' + m.id, m.name || m.id, m.cg); } }
+          // walkways/escalators are pickable but kept OUT of the dropdown (noList) — selecting one drives the speed slider.
+          if (st && st.belts){ for (const b of st.belts){ if (b && b.obj) add('mallbelt:' + b.seg, b.label, b.obj, false, null, true); } }
         } else if (section === 'market' || section === 'finance'){
           const st = sceneState[section];
           if (st && st.pillars){ for (const id in st.pillars){ const p = st.pillars[id]; if (p && p.grp) add('pil:' + id, String(id), p.grp); } }
@@ -9872,7 +10958,12 @@
           if (st && st.N){ for (const id in st.N){ const nd = st.N[id]; if (nd && nd.grp) add('erp:' + id, nd.grp.name || nd.label || id, nd.grp); } }
         } else if (section === 'crm'){
           const st = sceneState.crm;
-          if (st && st.nodes){ st.nodes.forEach((nd, i) => { if (nd && nd.obj) add('crm:' + i, (st.cfg && st.cfg.stageNames && st.cfg.stageNames[i]) || ('Stage ' + (i + 1)), nd.obj); }); }
+          const cellGrps = [];
+          if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) cellGrps.push(m.cg); } }
+          if (st && st.g && cellGrps.length) add('grp:crm', glabel('▦ All stations', cellGrps.length), st.g, true, cellGrps);
+          if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) add('crm:' + m.id, m.name || m.id, m.cg); } }
+          // pipeline/lost belts are pickable (drive the Belt-speed slider) but kept OUT of the dropdown (noList).
+          if (st && st.belts){ for (const b of st.belts){ if (b && b.obj) add('crmbelt:' + b.seg, b.label, b.obj, false, null, true); } }
         }
       } catch(_){}
       return out;
@@ -10962,7 +12053,6 @@
     function sectionAnchor(section){
       section = section || (typeof activeSection !== 'undefined' ? activeSection : 'vfx-lab');
       if (section === 'smart-factory') return [600, 14, 0];
-      if (section === 'shopping-mall') return [48, 16, (typeof ROW_Z !== 'undefined' && ROW_Z) ? ROW_Z[3] : 0];
       if (section === 'factory' || section === 'smart-city') return [0, 26, 0];
       const p = (typeof SCENE_POS !== 'undefined' && SCENE_POS[section]) ? SCENE_POS[section] : { x: 0, z: 0 };
       return [p.x, 14, p.z];
@@ -12271,6 +13361,7 @@
     buildCrmScene();
     buildSmartFactoryScene('smart-factory');
     buildWarehouseScene('warehouse');
+    buildMallScene('shopping-mall');
     buildDigitalTwinScene();
     buildVfxLabScene();
     // dioramas hidden until their section is active (factory is the default visible world)
@@ -12289,6 +13380,7 @@
     try { updateCrmScene(); } catch(_){}
     try { updateSmartFactoryScene('smart-factory'); } catch(_){}
     try { updateWarehouseScene('warehouse'); } catch(_){}
+    try { updateMallScene('shopping-mall'); } catch(_){}
     try { updateDigitalTwinScene(); } catch(_){}
     try { updateVfxLabScene(); } catch(_){}
   }
@@ -12304,10 +13396,10 @@
     // OrbitControls path: retarget controls to the diorama center + place the orbit camera. The
     // rotate-to flourish runs as controls.autoRotate (frame loop disables it under reduced-motion).
     if (useOrbit && controls){
-      const isSF = (section === 'smart-factory' || section === 'warehouse');
-      const dist = (section === 'warehouse') ? 300 : (isSF ? 290 : stageCam.dist);   // the multi-bay DC is wide; the plant is tall
-      const pivotY = stageCam.pivot.y + (isSF ? 16 : 0);   // raise the look-at so the tall racks/floors frame
-      const polar = (section === 'warehouse') ? 0.72 : ORBIT_DEFAULT.polar;   // warehouse = higher, more top-down so the 3×4 grid of bays reads
+      const isSF = (section === 'smart-factory' || section === 'warehouse' || section === 'shopping-mall');
+      const dist = (section === 'warehouse') ? 300 : (section === 'shopping-mall') ? 310 : (isSF ? 290 : (section === 'erp') ? 230 : (section === 'crm') ? 240 : stageCam.dist);   // the multi-bay DC + concourse are broad; the plant is tall; the O2C + sales-pipeline lines are wide
+      const pivotY = stageCam.pivot.y + (isSF ? 16 : (section === 'erp') ? 6 : (section === 'crm') ? 4 : 0);   // raise the look-at so the tall racks/floors/concourse/desks frame
+      const polar = (section === 'warehouse') ? 0.72 : (section === 'shopping-mall') ? 0.74 : (section === 'erp') ? 0.88 : (section === 'crm') ? 0.86 : ORBIT_DEFAULT.polar;   // warehouse + mall = higher, more top-down so the layout reads; erp + crm slightly raised
       orbitTo(stageCam.pivot.x, pivotY, stageCam.pivot.z, dist, polar, sectionToYaw);
       controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
     }
@@ -12319,8 +13411,8 @@
   // 'factory' theme shows the streamed production chunks. Slice → group table:
   //   factory       : streamed chunks ON, economy ON , retail ON , hall OFF  (everything-in-one; BYTE-IDENTICAL)
   //   smart-city    : economy ON only     (firm towers + exchange + plaza)
-  //   smart-factory : HALL ON only        (the enclosed bounded factory building — no streamed chunks)
-  //   shopping-mall : retail ON only      (retail district)
+  //   smart-factory : HALL ON only        (the enclosed bounded factory building — no streamed chunks) [own diorama now]
+  //   (shopping-mall is no longer a world theme — it is a self-contained Retail-Operations diorama at its SCENE_POS)
   // The streamed chunks STREAM only for 'factory' now (the render-loop streamChunks() call is gated to it);
   // leaving 'factory' clears the live chunks (closeStreaming) so the bounded themes show no open world.
   // `chunksVisible` flips per-frame onto each LIVE chunk group's `.visible` (and onto any chunk streamed in).
@@ -12339,7 +13431,7 @@
   }
   function applyThemeVisibility(theme){
     const econ   = (theme === 'smart-city');              // the live economy district lives in Smart City now
-    const retail = (theme === 'shopping-mall');
+    const retail = (theme === 'factory');                 // the streamed retail district shows only in the everything-on factory world now (the Mall is its own diorama twin)
     const prod   = (theme === 'factory');                 // streamed CITY-GRID world ONLY for the factory (Smart City II) theme
     const hall   = (theme === 'smart-factory');           // the enclosed bounded factory hall ONLY for smart-factory
     const traffic = (theme === 'factory');                // Smart City II traffic twin overlays the streamed grid
@@ -12389,9 +13481,9 @@
       applyTwinMode(twinMode);                   // not auto, manual twin may be on → hide the factory twin off-section
     }
     const isWorld = WORLD_SECTIONS.includes(section);
-    // visibility: the four WORLD sections (factory + smart-city/-factory + shopping-mall) all reveal the
-    // ONE streamed origin world (central economy + streamed chunks + sky floor); the data dioramas are
-    // shown only when their own section is active. Toggling visibility does NOT touch the economy.
+    // visibility: the WORLD sections (factory + smart-city) reveal the ONE streamed origin world (central
+    // economy + streamed chunks + sky floor); the self-contained dioramas (incl. smart-factory / warehouse /
+    // shopping-mall) are shown only when their own section is active. Toggling visibility does NOT touch the economy.
     if (typeof THREE !== 'undefined'){
       for (const s in sceneGroups) sceneGroups[s].visible = (s === section);
       // master world visibility: ON for ANY world section (factory keeps everything; the focused themes
@@ -12429,7 +13521,7 @@
   //   smart-factory : the ENCLOSED HALL at (600,0) — a 3/4 orbit looking down INTO the open-truss-roof
   //                   building so the closed-loop lines / robots / AGVs / AMRs / workers fill the frame; the
   //                   map/roam rig is bounded to the hall area.
-  //   shopping-mall : the RETAIL district near the consumer skyline (~x48, ROW_Z[3])
+  //   (shopping-mall is no longer a world theme — it is framed by aimStageAt as a diorama at its SCENE_POS)
   // VIEW-ONLY: only camera/orbit-target/roam-start writes; never the economy.
   function frameWorldTheme(section){
     if (section === 'factory'){
@@ -12443,10 +13535,7 @@
     }
     // focus point per FOCUSED theme (world-space x,z + a pleasant look-at height + orbit distance + polar)
     let fx = 0, fz = 0, fy = 26, dist = ORBIT_DEFAULT.dist, polar = ORBIT_DEFAULT.polar;
-    if (section === 'shopping-mall'){
-      // the retail district: mall + storefronts sit by the consumer skyline endpoint (see makeRetailDistrict)
-      fx = 48; fz = ROW_Z[3]; fy = 14; dist = 110;
-    } else if (section === 'smart-factory'){
+    if (section === 'smart-factory'){
       // the ENCLOSED HALL: orbit its centre (600,0) at a steeper 3/4 angle so the camera looks DOWN through
       // the open truss roof and the bounded interior (lines/robots/AGVs/AMRs/workers) fills the view.
       fx = 600; fz = 0; fy = 8; dist = 165; polar = 0.78;
@@ -12524,41 +13613,98 @@
   function setSimCapV(v){ const e = $('sim-cap-v'); if (e) e.textContent = v + '/min'; }
   function updateSimReadout(){
     const r = $('sim-read'); if (!r) return; const S = (typeof sceneState !== 'undefined') ? sceneState : {};
-    if (activeSection === 'erp'){ const st = S.erp; if (st && st.stations){ let wip = 0; for (const s of st.stations) wip += s.queue.length;
-      r.textContent = 'Throughput ' + Math.round((st.thruEMA || 0) * 60) + '/min  ·  WIP ' + wip; } }
+    if (activeSection === 'erp'){ const st = S.erp; if (st && st.machines){ let wip = 0; for (const m of st.machines) wip += m.buf.length + (m.holding ? 1 : 0);
+      r.textContent = 'Throughput ' + Math.round((st.thruEMA || 0) * 60) + ' orders/min  ·  WIP ' + wip + '  ·  Cycle ' + (st.cycleEMA || 0).toFixed(1) + 's  ·  On-time ' + Math.round((st.otifEMA || 1) * 100) + '%  ·  Constraint ' + Math.round((st.conUtilEMA || 0) * 100) + '%'; } }
     else if (activeSection === 'smart-factory'){ const st = S['smart-factory']; if (st){
       r.textContent = 'Availability ' + Math.round((st.availInst || 1) * 100) + '%  ·  Throughput ' + Math.round((st.perfEMA || 0) * 60) + '/min'; } }
     else if (activeSection === 'warehouse'){ const st = S.warehouse; if (st){ const occ = Math.round(((st.slotOcc || 0) / (st.slotTot || 1)) * 100);
       r.textContent = 'Storage ' + occ + '%  ·  Dock util ' + Math.round((st.availInst || 1) * 100) + '%  ·  Throughput ' + Math.round((st.perfEMA || 0) * 60) + ' lines/min'; } }
+    else if (activeSection === 'shopping-mall'){ const st = S['shopping-mall']; if (st){ let occ = 0; for (const p of st.parts) if (p.active) occ++;
+      const conv = Math.max(0, Math.min(1, 1 - (st.noBuyFrac || 0.2) + (st.promo || 0) * 0.16));
+      r.textContent = 'Footfall ' + Math.round((st.ffEMA || 0) * 60) + '/min  ·  Occupancy ' + Math.round((occ / st.C.objN) * 100) + '%  ·  Conversion ' + Math.round(conv * 100) + '%'; } }
     else if (activeSection === 'factory'){ const tw = (typeof trafficTwin !== 'undefined') ? trafficTwin : null; if (tw){
       r.textContent = 'Trips ' + Math.round((tw.throughEMA || 0) * 60) + '/min  ·  Congestion ' + (tw.congPct || 0) + '%  ·  Avg speed ' + (tw.flowPct || 100) + '%'; } else r.textContent = ''; }
+    else if (activeSection === 'crm'){ const st = S.crm; if (st){ const closed = (st.won || 0) + (st.lost || 0); const winRate = closed ? (st.won || 0) / closed : 0;
+      let wip = 0, stuck = 0; if (st.machines){ for (const m of st.machines){ if (m.isSink) continue; const b = (m.buf || []).length; wip += b + (m.holding ? 1 : 0); if (b >= Math.max(3, (st.bufCap || 6) - 1)) stuck += b; } }
+      r.textContent = 'Win rate ' + Math.round(winRate * 100) + '%  ·  Open pipeline ' + crmK(st.pipeVal || 0) + '  ·  Velocity ' + ((st.velEMA || 0) * 60).toFixed(0) + ' won/min  ·  WIP ' + wip + '  ·  Stuck ' + stuck; } }
+    else if (activeSection === 'smart-city'){ const G = cityGrid;
+      r.textContent = 'Grid load ' + G.loadPct + '%  ·  Reserve ' + G.reserve + '%  ·  Risk ' + G.outageRisk + '%  ·  Carbon ' + G.carbon + ' g/kWh' + (G.outageT > 0 ? '  ·  ⚠ OUTAGE' : ''); }
     else r.textContent = '';   // generic Scene-randomize sections have no live readout
   }
   function buildSimPanel(sec){
     const title = $('sim-title'), body = $('sim-body'); if (!body) return;
     if (sec === 'erp'){
+      // ORDER-TO-CASH digital twin levers: Arrival rate · Constraint capacity (elevate the constraint) ·
+      // Reliability (MTBF) · Buffer size · per-belt speed · scoped 🎲 Randomize · Reset.
       if (title) title.textContent = 'ERP · Order-to-Cash (Theory of Constraints)';
+      const st = sceneState.erp;
+      const opts = (st && st.machines) ? st.machines.map((m) => '<option value="' + m.id + '">' + (m.name || m.id).replace(/^⚠ /, '') + '</option>').join('') : '';
       body.innerHTML =
-        '<div class="simctl"><label>Arrival rate <b id="sim-arr-v"></b></label><input type="range" id="sim-arr" min="12" max="80" step="2" aria-label="Order arrival rate per minute"></div>' +
-        '<div class="simctl"><label>⚠ Bottleneck capacity <b id="sim-cap-v"></b></label><input type="range" id="sim-cap" min="18" max="110" step="2" aria-label="Constraint station capacity per minute"></div>' +
-        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="sc-rnd-pos" checked> Position</label>' +
-          '<label class="chk"><input type="checkbox" id="sc-rnd-rot"> Rotation</label>' +
-          '<label class="chk"><input type="checkbox" id="sc-rnd-scl"> Scale</label>' +
-          '<label class="chk"><input type="checkbox" id="sc-rnd-col" checked> Color</label></div>' +
-        '<button class="simbtn" id="sc-rnd-go" type="button">🎲 Randomize scene</button>' +
-        '<button class="simbtn" id="sc-rnd-restore" type="button">↺ Restore</button>' +
+        '<div class="simctl"><label>Arrival rate <b id="sim-arr-v"></b></label><input type="range" id="sim-arr" min="20" max="120" step="2" aria-label="Order arrival rate per minute"></div>' +
+        '<div class="simctl"><label>⚠ Constraint capacity <b id="sim-cap-v"></b></label><input type="range" id="sim-cap" min="18" max="120" step="2" aria-label="Constraint station capacity per minute — elevate the constraint"></div>' +
+        '<div class="simctl"><label>Station <b id="sim-site-v"></b></label><select id="sim-site" aria-label="Choose a station">' + opts + '</select></div>' +
+        '<div class="simctl"><label>↳ Service rate <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="18" max="150" step="3" aria-label="Selected station service rate per minute"></div>' +
+        '<div class="simctl"><label>🛞 Belt speed <b id="sim-belt-v">— pick a belt —</b></label><input type="range" id="sim-belt" min="20" max="400" step="5" disabled aria-label="Selected conveyor belt speed (percent of nominal)"></div>' +
+        '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between station breakdowns"></div>' +
+        '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="10" step="1" aria-label="Inter-station WIP buffer capacity"></div>' +
+        '<div class="simctl"><label>🎲 Randomize — stations</label><select id="sim-rnd-scope" aria-label="Which stations to randomize">' +
+          '<option value="all">All stations</option><option value="sel">Selected in scene</option>' +
+          '<option value="order">Order entry</option><option value="credit">Credit check</option>' +
+          '<option value="pick">Pick</option><option value="pack">Pack</option>' +
+          '<option value="invoice">Invoice</option><option value="ship">Ship</option></select></div>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="rnd-thru" checked> Service rate</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-avail" checked> Reliability</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-rej" checked> Credit-hold rate</label></div>' +
+        '<button class="simbtn" id="sim-roll" type="button">🎲 Randomize</button>' +
         '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
-      { const go = $('sc-rnd-go'); if (go) go.onclick = () => { try { if (typeof VFXLab !== 'undefined' && VFXLab.randomizeSection)
-          VFXLab.randomizeSection({ pos: !!($('sc-rnd-pos') || {}).checked, rot: !!($('sc-rnd-rot') || {}).checked, scl: !!($('sc-rnd-scl') || {}).checked, col: !!($('sc-rnd-col') || {}).checked }); } catch(_){} };
-        const rs = $('sc-rnd-restore'); if (rs) rs.onclick = () => { try { if (typeof VFXLab !== 'undefined' && VFXLab.restoreRandom) VFXLab.restoreRandom(); } catch(_){} }; }
-      const st = sceneState.erp, arr = $('sim-arr'), cap = $('sim-cap');
-      const arrMin = st ? Math.round(60 / st.C.spawn) : 57;
-      const capMin = (st && st.stations[st.C.constraintIdx]) ? Math.round(st.stations[st.C.constraintIdx].rate * 60) : 25;
-      if (arr){ arr.value = arrMin; arr.oninput = () => { const v = +arr.value || 1; if (st) st.C.spawn = 60 / v; setSimArrV(v); }; }
-      if (cap){ cap.value = capMin; cap.oninput = () => { const v = +cap.value || 1; if (st && st.stations[st.C.constraintIdx]) st.stations[st.C.constraintIdx].rate = v / 60; setSimCapV(v); }; }
-      setSimArrV(arrMin); setSimCapV(capMin);
-      const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.C.spawn = 1.05; if (st.stations[st.C.constraintIdx]) st.stations[st.C.constraintIdx].rate = ERP_TOC.rateSlow;
-        if (arr){ arr.value = Math.round(60 / st.C.spawn); setSimArrV(+arr.value); } if (cap){ cap.value = Math.round(st.stations[st.C.constraintIdx].rate * 60); setSimCapV(+cap.value); } };
+      const mt = $('sim-mtbf'), bf = $('sim-buf'), site = $('sim-site'), rate = $('sim-rate'), arr = $('sim-arr'), cap = $('sim-cap');
+      const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
+      const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
+      const setArr = (v) => { const e = $('sim-arr-v'); if (e) e.textContent = v + '/min'; };
+      const findM = (id) => (st && st.machines) ? st.machines.find((m) => m.id === id) : null;
+      const conM = () => (st && st.machines) ? st.machines.find((m) => m.constraint) : null;
+      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si] && !st.S[si].spdAbs) st.S[si].spd = m.rate / base; } };
+      const belt = $('sim-belt'); if (belt) belt.oninput = () => { const si = st.selBelt; if (si == null || !st.S[si]) return; const seg = st.S[si]; const v = (+belt.value || 100) / 100; seg.spd = v; seg.spdAbs = true; const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + ' abs  (' + seg.a + '→' + seg.b + ')'; };
+      const setRate = (m) => { const e = $('sim-rate-v'); const perMin = Math.round((m ? m.rate : 1) * 60); if (e) e.textContent = perMin + '/min'; if (rate) rate.value = perMin; };
+      const setSiteLabel = (m) => { const e = $('sim-site-v'); if (e) e.textContent = m ? ('⟲ ' + Math.round(m.rate * 60) + '/min') : ''; };
+      const setCap = () => { const m = conM(); const e = $('sim-cap-v'); if (e) e.textContent = m ? (Math.round(m.rate * 60) + '/min') : ''; if (cap && m) cap.value = Math.round(m.rate * 60); };
+      let cur = (st && st.machines && st.machines[0]) ? st.machines[0] : null;
+      if (site){ site.value = cur ? cur.id : ''; site.onchange = () => { cur = findM(site.value); setRate(cur); setSiteLabel(cur); }; }
+      if (rate){ rate.oninput = () => { const v = +rate.value || 60; if (cur){ cur.rate = v / 60; applyRate(cur); if (cur.constraint) setCap(); } const e = $('sim-rate-v'); if (e) e.textContent = v + '/min'; setSiteLabel(cur); }; }
+      setRate(cur); setSiteLabel(cur);
+      // ARRIVAL RATE: shorter spawn interval = more orders/min entering the line
+      const arrMin = st ? Math.round(60 / st.C.spawn) : 75;
+      if (arr){ arr.value = arrMin; arr.oninput = () => { const v = +arr.value || 60; if (st) st.C.spawn = 60 / v; setArr(v); }; }
+      setArr(arrMin);
+      // CONSTRAINT CAPACITY (elevate the constraint): drives the constraint station's service rate directly
+      if (cap){ cap.oninput = () => { const v = +cap.value || 60; const m = conM(); if (m){ m.rate = v / 60; applyRate(m); if (cur && cur.constraint) setRate(cur); } setCap(); }; }
+      setCap();
+      const mtv = st ? Math.round((st.mtbfMul || 1) * 10) : 10, bfv = st ? (st.bufCap || ERP_O2C.bufCap) : ERP_O2C.bufCap;
+      if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
+      if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || ERP_O2C.bufCap; if (st) st.bufCap = v; setBf(v); }; }
+      setMt(mtv); setBf(bfv);
+      const rl = $('sim-roll'); if (rl) rl.onclick = () => { if (!st) return; erpRateSeed = (erpRateSeed % 9000) + 1;
+        const scope = ($('sim-rnd-scope') || {}).value || 'all', selId = site ? site.value : null;
+        let selIds = null;
+        if (scope === 'sel'){ selIds = new Set();
+          try { const objs = (typeof VFXLab !== 'undefined' && VFXLab.selectedObjects) ? VFXLab.selectedObjects() : []; for (const o of objs){ const mm = sfMachineForObject(st, o); if (mm) selIds.add(mm.id); } } catch(_){}
+          if (!selIds.size && selId) selIds.add(selId); }
+        const filter = scope === 'all' ? null
+          : scope === 'sel' ? ((id) => selIds.has(id))
+          : ((id, nd) => nd.type === scope);
+        const opts2 = { rate: !!($('rnd-thru') || {}).checked, avail: !!($('rnd-avail') || {}).checked, reject: !!($('rnd-rej') || {}).checked, filter };
+        if (!opts2.rate && !opts2.avail && !opts2.reject) return;
+        erpRollRates(st.N, st.S, st.C, erpRateSeed, st.machines, opts2);
+        const cm = conM(); if (cm){ cm.rate = cm.rate0 = ERP_O2C.rateSlow; applyRate(cm); }   // keep the constraint slow on a roll (it's a lever, not random)
+        cur = findM(selId) || cur; setRate(cur); setSiteLabel(cur); setCap(); };
+      const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = ERP_O2C.bufCap; st.C.spawn = ERP_O2C.spawn;
+        for (const s of st.S) s.spdAbs = false;
+        if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
+        const cm = conM(); if (cm){ cm.rate = cm.rate0 = ERP_O2C.rateSlow; applyRate(cm); }
+        if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = ERP_O2C.bufCap; setBf(ERP_O2C.bufCap); }
+        if (arr){ arr.value = Math.round(60 / st.C.spawn); setArr(+arr.value); }
+        if (belt && st.selBelt != null && st.S[st.selBelt]){ const v = st.S[st.selBelt].spd || 1; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + '  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
+        cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); setCap(); };
     } else if (sec === 'smart-factory'){
       if (title) title.textContent = 'Smart Factory · Availability / OEE';
       const st = sceneState['smart-factory'];
@@ -12674,6 +13820,190 @@
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = WH_WMS.bufCap; setBf(WH_WMS.bufCap); }
         if (belt && st.selBelt != null && st.S[st.selBelt]){ const v = st.S[st.selBelt].spd || 1; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + '  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
         cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
+    } else if (sec === 'shopping-mall'){
+      if (title) title.textContent = 'Shopping Mall · Retail Operations';
+      const st = sceneState['shopping-mall'];
+      const opts = (st && st.machines) ? st.machines.map((m) => '<option value="' + m.id + '">' + (m.name || m.id) + '</option>').join('') : '';
+      const nTill = (st && st.tills) ? st.tills.length : 4;
+      body.innerHTML =
+        '<div class="simctl"><label>👣 Footfall (demand) <b id="sim-foot-v"></b></label><input type="range" id="sim-foot" min="20" max="300" step="5" aria-label="Footfall demand percent"></div>' +
+        '<div class="simctl"><label>🛒 Open checkouts <b id="sim-till-v"></b></label><input type="range" id="sim-till" min="1" max="' + nTill + '" step="1" aria-label="Number of open checkout lanes"></div>' +
+        '<div class="simctl"><label>🏷 Promotion <b id="sim-promo-v"></b></label><input type="range" id="sim-promo" min="0" max="100" step="5" aria-label="Promotion intensity percent (boosts conversion + dwell)"></div>' +
+        '<div class="simctl"><label>Store <b id="sim-site-v"></b></label><select id="sim-site" aria-label="Choose a store / till">' + opts + '</select></div>' +
+        '<div class="simctl"><label>↳ Service rate <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="24" max="200" step="3" aria-label="Selected store/till service rate per minute"></div>' +
+        '<div class="simctl"><label>🛞 Walkway speed <b id="sim-belt-v">— pick a walkway —</b></label><input type="range" id="sim-belt" min="20" max="400" step="5" disabled aria-label="Selected walkway/escalator speed (percent of nominal)"></div>' +
+        '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between till/store stalls"></div>' +
+        '<div class="simctl"><label>Queue capacity <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="2" max="12" step="1" aria-label="Checkout-line / store buffer capacity"></div>' +
+        '<div class="simctl"><label>🎲 Randomize — units</label><select id="sim-rnd-scope" aria-label="Which units to randomize">' +
+          '<option value="all">All units</option><option value="sel">Selected in scene</option>' +
+          '<option value="anchor">All anchor stores</option><option value="food">Food court</option>' +
+          '<option value="till">All checkouts</option></select></div>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="rnd-thru" checked> Service rate</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-avail" checked> Open-hours/availability</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-rej" checked> Conversion</label></div>' +
+        '<button class="simbtn" id="sim-roll" type="button">🎲 Randomize</button>' +
+        '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
+      const mt = $('sim-mtbf'), bf = $('sim-buf'), site = $('sim-site'), rate = $('sim-rate');
+      const foot = $('sim-foot'), till = $('sim-till'), promo = $('sim-promo');
+      const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
+      const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
+      const setFoot = (v) => { const e = $('sim-foot-v'); if (e) e.textContent = v + '%'; };
+      const setTill = (v) => { const e = $('sim-till-v'); if (e) e.textContent = v + '/' + nTill; };
+      const setPromo = (v) => { const e = $('sim-promo-v'); if (e) e.textContent = v + '%'; };
+      const findM = (id) => (st && st.machines) ? st.machines.find((m) => m.id === id) : null;
+      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si] && !st.S[si].spdAbs) st.S[si].spd = m.rate / base; } };
+      const belt = $('sim-belt'); if (belt) belt.oninput = () => { const si = st.selBelt; if (si == null || !st.S[si]) return; const seg = st.S[si]; const v = (+belt.value || 100) / 100; seg.spd = v; seg.spdAbs = true; const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + ' abs  (' + seg.a + '→' + seg.b + ')'; };
+      const setRate = (m) => { const e = $('sim-rate-v'); const perMin = Math.round((m ? m.rate : 1) * 60); if (e) e.textContent = perMin + '/min'; if (rate) rate.value = perMin; };
+      const setSiteLabel = (m) => { const e = $('sim-site-v'); if (e) e.textContent = m ? ('⟲ ' + Math.round(m.rate * 60) + '/min') : ''; };
+      let cur = (st && st.machines && st.machines[0]) ? st.machines[0] : null;
+      if (site){ site.value = cur ? cur.id : ''; site.onchange = () => { cur = findM(site.value); setRate(cur); setSiteLabel(cur); }; }
+      if (rate){ rate.oninput = () => { const v = +rate.value || 60; if (cur){ cur.rate = v / 60; applyRate(cur); } const e = $('sim-rate-v'); if (e) e.textContent = v + '/min'; setSiteLabel(cur); }; }
+      setRate(cur); setSiteLabel(cur);
+      // FOOTFALL (demand): scale the spawn interval — more footfall = shoppers arrive faster (shorter interval)
+      const footv = st ? Math.round((MALL_OPS.spawn / Math.max(0.05, st.C.spawn)) * 100) : 100;
+      if (foot){ foot.value = footv; foot.oninput = () => { const v = +foot.value || 100; if (st) st.C.spawn = MALL_OPS.spawn / (v / 100); setFoot(v); }; }
+      setFoot(footv);
+      // OPEN CHECKOUTS (capacity): how many till lanes are staffed (closed lanes can't drain)
+      const tillv = st ? (st.openTills || nTill) : nTill;
+      if (till){ till.value = tillv; till.oninput = () => { const v = +till.value || nTill; if (st) st.openTills = v; setTill(v); }; }
+      setTill(tillv);
+      // PROMOTION: boosts conversion + dwell. Re-rolls the conversion/dwell bands at the current promo level.
+      const promov = st ? Math.round((st.promo || 0) * 100) : 0;
+      if (promo){ promo.value = promov; promo.oninput = () => { const v = +promo.value || 0; if (st){ st.promo = v / 100;
+        st.qcFail = st.noBuyFrac = mallRollRates(st.N, st.S, st.C, mallRateSeed, st.machines, { avail: false, promo: st.promo }); cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); } setPromo(v); }; }
+      setPromo(promov);
+      const mtv = st ? Math.round((st.mtbfMul || 1) * 10) : 10, bfv = st ? (st.bufCap || 7) : 7;
+      if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
+      if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || 7; if (st) st.bufCap = v; setBf(v); }; }
+      setMt(mtv); setBf(bfv);
+      const rl = $('sim-roll'); if (rl) rl.onclick = () => { if (!st) return; mallRateSeed = (mallRateSeed % 9000) + 1;
+        const scope = ($('sim-rnd-scope') || {}).value || 'all', selId = site ? site.value : null;
+        let selIds = null;
+        if (scope === 'sel'){ selIds = new Set();
+          try { const objs = (typeof VFXLab !== 'undefined' && VFXLab.selectedObjects) ? VFXLab.selectedObjects() : []; for (const o of objs){ const mm = sfMachineForObject(st, o); if (mm) selIds.add(mm.id); } } catch(_){}
+          if (!selIds.size && selId) selIds.add(selId); }
+        const filter = scope === 'all' ? null
+          : scope === 'sel' ? ((id) => selIds.has(id))
+          : ((id, nd) => nd.type === scope);   // anchor / food / till
+        const opts = { rate: !!($('rnd-thru') || {}).checked, avail: !!($('rnd-avail') || {}).checked, reject: !!($('rnd-rej') || {}).checked, filter, promo: st.promo || 0 };
+        if (!opts.rate && !opts.avail && !opts.reject) return;
+        st.qcFail = st.noBuyFrac = mallRollRates(st.N, st.S, st.C, mallRateSeed, st.machines, opts);
+        cur = findM(selId) || cur; setRate(cur); setSiteLabel(cur); };
+      const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = MALL_OPS.bufCap; st.C.spawn = MALL_OPS.spawn; st.promo = 0; st.openTills = nTill;
+        for (const s of st.S) s.spdAbs = false;
+        if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
+        st.qcFail = st.noBuyFrac = mallRollRates(st.N, st.S, st.C, mallRateSeed, st.machines, { avail: false, promo: 0 });
+        if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = MALL_OPS.bufCap; setBf(MALL_OPS.bufCap); }
+        if (foot){ foot.value = 100; setFoot(100); } if (till){ till.value = nTill; setTill(nTill); } if (promo){ promo.value = 0; setPromo(0); }
+        if (belt && st.selBelt != null && st.S[st.selBelt]){ const v = st.S[st.selBelt].spd || 1; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + '  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
+        cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
+    } else if (sec === 'crm'){
+      // SALES-PIPELINE OPERATIONS levers: Lead volume (intake rate) · Conversion rate (gate win-rate boost) ·
+      // Deal-size mix (small ↔ whales) · per-station service rate · per-belt speed · buffer · scoped 🎲 · Reset.
+      if (title) title.textContent = 'CRM · Sales-Pipeline Operations';
+      const st = sceneState.crm;
+      // service stations only (the WON/LOST banks have no service-rate lever)
+      const svc = (st && st.machines) ? st.machines.filter((m) => !m.isSink) : [];
+      const opts = svc.map((m) => '<option value="' + m.id + '">' + (m.name || m.id) + '</option>').join('');
+      body.innerHTML =
+        '<div class="simctl"><label>📥 Lead volume <b id="sim-lead-v"></b></label><input type="range" id="sim-lead" min="20" max="320" step="5" aria-label="Inbound lead volume per minute"></div>' +
+        '<div class="simctl"><label>🎯 Conversion rate <b id="sim-conv-v"></b></label><input type="range" id="sim-conv" min="40" max="160" step="5" aria-label="Gate conversion / win-rate multiplier percent"></div>' +
+        '<div class="simctl"><label>💰 Deal-size mix <b id="sim-mix-v"></b></label><input type="range" id="sim-mix" min="0" max="100" step="5" aria-label="Deal-size mix — low favours small deals, high favours large deals"></div>' +
+        '<div class="simctl"><label>Station <b id="sim-site-v"></b></label><select id="sim-site" aria-label="Choose a pipeline station">' + opts + '</select></div>' +
+        '<div class="simctl"><label>↳ Service rate <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="24" max="180" step="3" aria-label="Selected station service rate per minute"></div>' +
+        '<div class="simctl"><label>🛞 Lane speed <b id="sim-belt-v">— pick a lane —</b></label><input type="range" id="sim-belt" min="20" max="400" step="5" disabled aria-label="Selected pipeline lane speed (percent of nominal)"></div>' +
+        '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between rep-unavailable stalls"></div>' +
+        '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="10" step="1" aria-label="Per-stage deal buffer capacity"></div>' +
+        '<div class="simctl"><label>🎲 Randomize — stations</label><select id="sim-rnd-scope" aria-label="Which stations to randomize">' +
+          '<option value="all">All stations</option><option value="sel">Selected in scene</option>' +
+          '<option value="lead">Lead desk</option><option value="gate">All gates</option>' +
+          '<option value="proposal">Proposal desk</option></select></div>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="rnd-thru" checked> Service rate</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-avail" checked> Reliability</label>' +
+          '<label class="chk"><input type="checkbox" id="rnd-rej" checked> Win rate</label></div>' +
+        '<button class="simbtn" id="sim-roll" type="button">🎲 Randomize</button>' +
+        '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
+      const mt = $('sim-mtbf'), bf = $('sim-buf'), site = $('sim-site'), rate = $('sim-rate');
+      const lead = $('sim-lead'), conv = $('sim-conv'), mix = $('sim-mix');
+      const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
+      const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
+      const setLead = (v) => { const e = $('sim-lead-v'); if (e) e.textContent = v + '/min'; };
+      const setConv = (v) => { const e = $('sim-conv-v'); if (e) e.textContent = v + '%'; };
+      const setMix = (v) => { const e = $('sim-mix-v'); if (e) e.textContent = (v < 34 ? 'small ' : v > 66 ? 'whales ' : 'mixed ') + v + '%'; };
+      const findM = (id) => svc.find((m) => m.id === id) || null;
+      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si] && !st.S[si].spdAbs) st.S[si].spd = m.rate / base; } };
+      const belt = $('sim-belt'); if (belt) belt.oninput = () => { const si = st.selBelt; if (si == null || !st.S[si]) return; const seg = st.S[si]; const v = (+belt.value || 100) / 100; seg.spd = v; seg.spdAbs = true; const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + ' abs  (' + seg.a + '→' + seg.b + ')'; };
+      const setRate = (m) => { const e = $('sim-rate-v'); const perMin = Math.round((m ? m.rate : 1) * 60); if (e) e.textContent = perMin + '/min'; if (rate) rate.value = perMin; };
+      const setSiteLabel = (m) => { const e = $('sim-site-v'); if (e) e.textContent = m ? ('⟲ ' + Math.round(m.rate * 60) + '/min') : ''; };
+      let cur = svc[0] || null;
+      if (site){ site.value = cur ? cur.id : ''; site.onchange = () => { cur = findM(site.value); setRate(cur); setSiteLabel(cur); }; }
+      if (rate){ rate.oninput = () => { const v = +rate.value || 60; if (cur){ cur.rate = v / 60; applyRate(cur); } const e = $('sim-rate-v'); if (e) e.textContent = v + '/min'; setSiteLabel(cur); }; }
+      setRate(cur); setSiteLabel(cur);
+      // LEAD VOLUME (intake): shorter spawn interval = more leads/min entering the pipeline
+      const leadMin = st ? Math.round(60 / st.C.spawn) : 97;
+      if (lead){ lead.value = leadMin; lead.oninput = () => { const v = +lead.value || 97; if (st) st.C.spawn = 60 / v; setLead(v); }; }
+      setLead(leadMin);
+      // CONVERSION RATE (the win-rate lever): scale the gate LOSS rates by the inverse of the slider so 100% = the
+      // seeded baseline, >100% raises win-rate (loss ↓), <100% lowers it. Stored as st.convMul; applied to failFrac.
+      const setGateLoss = () => { if (!st) return; const mulC = st.convMul || 1; for (const id in st.N){ const nd = st.N[id]; if (nd.qcGate){ nd.failFrac = Math.max(0.02, Math.min(0.85, (nd.failBase != null ? nd.failBase : nd.failFrac) * (2 - mulC))); } } };
+      for (const id in (st && st.N) || {}){ const nd = st.N[id]; if (nd.qcGate && nd.failBase == null) nd.failBase = nd.failFrac; }
+      const convv = st ? Math.round((st.convMul || 1) * 100) : 100;
+      if (conv){ conv.value = convv; conv.oninput = () => { const v = +conv.value || 100; if (st){ st.convMul = v / 100; setGateLoss(); } setConv(v); }; }
+      setConv(convv);
+      // DEAL-SIZE MIX: bias new deals toward small (0) or whales (100). Drives st.sizeMix used at spawn.
+      const mixv = st ? Math.round((st.sizeMix != null ? st.sizeMix : 0.45) * 100) : 45;
+      if (mix){ mix.value = mixv; mix.oninput = () => { const v = +mix.value || 0; if (st) st.sizeMix = v / 100; setMix(v); }; }
+      setMix(mixv);
+      const mtv = st ? Math.round((st.mtbfMul || 1) * 10) : 10, bfv = st ? (st.bufCap || CRM_PIPE.bufCap) : CRM_PIPE.bufCap;
+      if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
+      if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || CRM_PIPE.bufCap; if (st) st.bufCap = v; setBf(v); }; }
+      setMt(mtv); setBf(bfv);
+      const rl = $('sim-roll'); if (rl) rl.onclick = () => { if (!st) return; crmRateSeed = (crmRateSeed % 9000) + 1;
+        const scope = ($('sim-rnd-scope') || {}).value || 'all', selId = site ? site.value : null;
+        let selIds = null;
+        if (scope === 'sel'){ selIds = new Set();
+          try { const objs = (typeof VFXLab !== 'undefined' && VFXLab.selectedObjects) ? VFXLab.selectedObjects() : []; for (const o of objs){ const mm = sfMachineForObject(st, o); if (mm) selIds.add(mm.id); } } catch(_){}
+          if (!selIds.size && selId) selIds.add(selId); }
+        const filter = scope === 'all' ? null
+          : scope === 'sel' ? ((id) => selIds.has(id))
+          : ((id, nd) => nd.type === scope);   // lead / gate / proposal
+        const opts2 = { rate: !!($('rnd-thru') || {}).checked, avail: !!($('rnd-avail') || {}).checked, conv: !!($('rnd-rej') || {}).checked, filter };
+        if (!opts2.rate && !opts2.avail && !opts2.conv) return;
+        st.lossRate = crmRollRates(st.N, st.S, st.C, crmRateSeed, st.machines, opts2);
+        for (const id in st.N){ const nd = st.N[id]; if (nd.qcGate){ nd.failBase = nd.failFrac; } } setGateLoss();   // a roll resets the gate baselines; the Conversion lever re-applies on top
+        cur = findM(selId) || cur; setRate(cur); setSiteLabel(cur); };
+      const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = CRM_PIPE.bufCap; st.C.spawn = CRM_PIPE.spawn; st.convMul = 1; st.sizeMix = 0.45;
+        for (const s of st.S) s.spdAbs = false;
+        if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
+        for (const id in st.N){ const nd = st.N[id]; if (nd.qcGate && nd.failBase != null) nd.failFrac = nd.failBase; }
+        if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = CRM_PIPE.bufCap; setBf(CRM_PIPE.bufCap); }
+        if (lead){ lead.value = Math.round(60 / st.C.spawn); setLead(+lead.value); } if (conv){ conv.value = 100; setConv(100); } if (mix){ mix.value = 45; setMix(45); }
+        if (belt && st.selBelt != null && st.S[st.selBelt]){ const v = st.S[st.selBelt].spd || 1; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + '  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
+        cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
+    } else if (sec === 'smart-city'){
+      // CITY GRID — POWER / ENERGY OPERATIONS levers (generation mix · demand-response · capacity · inject outage).
+      // KPIs (grid load % · reserve margin · outage risk · carbon) come from the live cityGrid sim via the readout.
+      if (title) title.textContent = 'Smart City · Power & Energy Operations';
+      const G = cityGrid;
+      body.innerHTML =
+        '<div class="simctl"><label>🌱 Renewable mix <b id="cg-ren-v"></b></label><input type="range" id="cg-ren" min="0" max="90" step="5" aria-label="Renewable generation mix percent"></div>' +
+        '<div class="simctl"><label>📉 Demand-response shed <b id="cg-dr-v"></b></label><input type="range" id="cg-dr" min="0" max="40" step="2" aria-label="Demand-response peak shed percent"></div>' +
+        '<div class="simctl"><label>🏭 Generation capacity <b id="cg-cap-v"></b></label><input type="range" id="cg-cap" min="70" max="140" step="5" aria-label="Total generation capacity percent of nominal"></div>' +
+        '<div class="simctl"><label>🕑 Day speed <b id="cg-day-v"></b></label><input type="range" id="cg-day" min="16" max="120" step="4" aria-label="Seconds per simulated 24 hour day"></div>' +
+        '<button class="simbtn" id="cg-outage" type="button">⚠ Inject outage (cascade)</button>' +
+        '<button class="simbtn" id="cg-reset" type="button">↺ Reset</button>';
+      const ren = $('cg-ren'), dr = $('cg-dr'), cap = $('cg-cap'), day = $('cg-day');
+      const setRen = (v) => { const e = $('cg-ren-v'); if (e) e.textContent = v + '%'; };
+      const setDr  = (v) => { const e = $('cg-dr-v');  if (e) e.textContent = v + '%'; };
+      const setCap = (v) => { const e = $('cg-cap-v'); if (e) e.textContent = v + '%'; };
+      const setDay = (v) => { const e = $('cg-day-v'); if (e) e.textContent = v + 's/day'; };
+      if (ren){ ren.value = Math.round(G.renew * 100); ren.oninput = () => { const v = +ren.value || 0; G.renew = v / 100; setRen(v); }; setRen(+ren.value); }
+      if (dr){  dr.value  = Math.round(G.dr * 100);    dr.oninput  = () => { const v = +dr.value  || 0; G.dr = v / 100; setDr(v); }; setDr(+dr.value); }
+      if (cap){ cap.value = Math.round(G.cap * 100);   cap.oninput = () => { const v = +cap.value || 100; G.cap = v / 100; setCap(v); }; setCap(+cap.value); }
+      if (day){ day.value = Math.round(G.dayLen);      day.oninput = () => { const v = +day.value || 48; G.dayLen = v; setDay(v); }; setDay(+day.value); }
+      const og = $('cg-outage'); if (og) og.onclick = () => { G.outageSeed = (G.outageSeed % 9000) + 1; G.outageT = 11; G.cascade = 1; };
+      const rb = $('cg-reset'); if (rb) rb.onclick = () => { G.renew = 0.35; G.dr = 0; G.cap = 1.0; G.dayLen = 48; G.outageT = 0; G.cascade = 0; G.peakPct = G.loadPct;
+        if (ren){ ren.value = 35; setRen(35); } if (dr){ dr.value = 0; setDr(0); } if (cap){ cap.value = 100; setCap(100); } if (day){ day.value = 48; setDay(48); } };
     } else if (sec === 'factory'){
       // SMART CITY II — TRAFFIC & SIGNAL CONTROL levers (demand · signal cycle · green split · green-wave offset · incident)
       if (title) title.textContent = 'Smart City II · Traffic & Signal Control';
@@ -12740,8 +14070,8 @@
   function syncSimPanelSelection(){
     try {
       const sec = (typeof activeSection !== 'undefined') ? activeSection : '';
-      if (sec !== 'smart-factory' && sec !== 'warehouse') return;
-      const segKey = (sec === 'warehouse') ? 'whSeg' : 'sfSeg';
+      if (sec !== 'smart-factory' && sec !== 'warehouse' && sec !== 'shopping-mall' && sec !== 'erp' && sec !== 'crm') return;
+      const segKey = (sec === 'warehouse') ? 'whSeg' : (sec === 'shopping-mall') ? 'mallSeg' : 'sfSeg';   // erp + crm belts also carry sfSeg
       const st = sceneState[sec]; if (!st) return;
       const sel = (typeof VFXLab !== 'undefined' && VFXLab.primarySelected) ? VFXLab.primarySelected() : null;
       // a BELT/conveyor? (the mesh, or any ancestor, carries userData[segKey]) → drive the Belt-speed slider
