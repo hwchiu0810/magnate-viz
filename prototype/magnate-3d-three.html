@@ -3777,6 +3777,7 @@
       const Mc = 9, lots = 3, pitch = (CHUNK - 2 * Mc) / lots, tierH = Math.max(7, 64 - ring * 9);
       for (let a = 0; a < lots; a++) for (let bb = 0; bb < lots; bb++){
         const bx = ox - HALF + Mc + (a + 0.5) * pitch, bz = oz - HALF + Mc + (bb + 0.5) * pitch;
+        if (Math.hypot(bx, bz) < 124){ r(); continue; }   // leave the downtown core clear for the traffic-grid twin (keep the RNG draw for determinism)
         if (r() < 0.16){ const pk = new THREE.Mesh(chunkAssets.box, chunkAssets.cityParkMat); pk.scale.set(pitch * 0.72, 0.3, pitch * 0.72); pk.position.set(bx, 0.15, bz); g.add(pk); continue; }   // plaza/park
         const h = 7 + r() * tierH, w = pitch * (0.5 + r() * 0.26), d = pitch * (0.5 + r() * 0.26);
         const mat = chunkAssets.cityMats[(r() * chunkAssets.cityMats.length) | 0];
@@ -5417,6 +5418,9 @@
         // block too → all city-twin motion freezes under reduced-motion (the wireframe + static thermal still
         // render; only the animation stops). The loads it reads are the eased tower heights — view-only.
         if (activeSection === 'smart-city' && cityTwinOn) animateSmartCityTwin(dt);
+        // SMART CITY II — the traffic micro-sim (cars flowing the fixed central grid). Factory is a WORLD theme,
+        // so it's driven here in the world-animate block (not the diorama block above). Frozen under reduced-motion.
+        if (activeSection === 'factory'){ try { animateTrafficTwin(dt); } catch(_){} }
       }
     }
 
@@ -9476,6 +9480,87 @@
       try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} } }
 
   /* ============================================================
+   *  SMART CITY II — TRAFFIC & SIGNAL-CONTROL TWIN. A fixed grid of intersections + roads (stable network for a
+   *  real micro-sim) sitting at the city centre while the boundaryless city-grid blocks stream around it. Cars
+   *  spawn (demand), flow the roads (speed drops with density), QUEUE at red lights (signal = the lamp), turn at
+   *  intersections, and complete trips. Roads recolour green→amber→red by congestion. Levers: demand, signal
+   *  cycle, green split, green-wave offset, incident (close a road). View-only; seeded/deterministic; pooled.
+   * ============================================================ */
+  let trafficTwin = null;
+  const tfFr = (v) => v - Math.floor(v);
+  function ensureTrafficTwin(){ if (!trafficTwin && typeof scene !== 'undefined' && scene && scene.add){ try { buildTrafficTwin(); } catch(_){} } return trafficTwin; }
+  function buildTrafficTwin(){
+    const G = new THREE.Group(); G.visible = false; scene.add(G);
+    const N = 6, SP = 40, x0 = -(N - 1) / 2 * SP;
+    const carGeo = new THREE.BoxGeometry(2.2, 1.3, 4.2);
+    const carMats = [0x49e0ff, 0xffb347, 0x6ee7a8, 0xff8aa0, 0xc89bf0, 0xe6e6ea].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.12), emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.2 }));
+    const lampGeo = new THREE.SphereGeometry(0.7, 8, 6);
+    const nodes = [];
+    for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){ const x = x0 + ix * SP, z = x0 + iy * SP;
+      const plate = dioBox(11, 0.3, 11, 0x202833, 0x0a0f16); plate.position.set(x, 0.32, z); G.add(plate);
+      const mast = dioBox(0.5, 6, 0.5, 0x2a3340, 0x0a0f18); mast.position.set(x + 5.5, 3, z + 5.5); G.add(mast);
+      const lampH = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: 0x3fe07a })); lampH.position.set(x + 5.5, 6.2, z + 5.5); G.add(lampH);
+      const lampV = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: 0x401015 })); lampV.position.set(x + 5.5, 4.9, z + 5.5); G.add(lampV);
+      nodes.push({ ix, iy, x, z, edges: [], green: 'H', offIdx: ix + iy, lampH: lampH.material, lampV: lampV.material }); }
+    const nodeAt = (ix, iy) => (ix >= 0 && ix < N && iy >= 0 && iy < N) ? nodes[iy * N + ix] : null;
+    const segs = [];
+    const addSeg = (a, b, axis) => { const s = { a, b, ax: a.x, az: a.z, bx: b.x, bz: b.z, axis, closed: false, count: 0 };
+      s.len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const mat = new THREE.MeshStandardMaterial({ color: 0x2f5e3a, roughness: 0.95, emissive: new THREE.Color(0x0a120c), emissiveIntensity: 0.4 });
+      const rd = new THREE.Mesh(new THREE.BoxGeometry(s.len, 0.2, 7), mat); rd.position.set((a.x + b.x) / 2, 0.26, (a.z + b.z) / 2); if (axis === 'V') rd.rotation.y = Math.PI / 2; G.add(rd);
+      for (let d = -s.len / 2 + 4; d < s.len / 2 - 2; d += 8){ const dash = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.3), new THREE.MeshBasicMaterial({ color: 0xffd35a })); dash.rotation.x = -Math.PI / 2; if (axis === 'H'){ dash.position.set((a.x + b.x) / 2 + d, 0.4, (a.z + b.z) / 2); } else { dash.rotation.z = Math.PI / 2; dash.position.set((a.x + b.x) / 2, 0.4, (a.z + b.z) / 2 + d); } G.add(dash); }
+      s.mat = mat; const idx = segs.push(s) - 1; a.edges.push(idx); b.edges.push(idx); s.road = rd; s.label = 'Road ' + a.ix + ',' + a.iy + (axis === 'H' ? '→E' : '→S'); return idx; };
+    for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){ const nd = nodeAt(ix, iy);
+      if (ix < N - 1) addSeg(nd, nodeAt(ix + 1, iy), 'H'); if (iy < N - 1) addSeg(nd, nodeAt(ix, iy + 1), 'V'); }
+    const vehicles = []; for (let k = 0; k < 160; k++){ const m = new THREE.Mesh(carGeo, carMats[k % carMats.length]); m.visible = false; G.add(m); vehicles.push({ mesh: m, active: false, seg: -1, dir: 1, t: 0, hops: 0, waitT: 0 }); }
+    const dashT = labelSpriteSafe('🚦 Smart City II · Traffic & Signal Control', '#cfe0ff', 20, 0, 42, 0); G.add(dashT);
+    const dashA = labelSpriteSafe('', '#bfe6ff', 16, 0, 34, 0); G.add(dashA);
+    trafficTwin = { G, N, SP, nodes, segs, nodeAt, vehicles, dashA,
+      cfg: { demand: 1.0, cycle: 7, split: 0.5, offset: 0, capacity: 6, baseSpeed: 30 },
+      phase: 0, spawnT: 0, spawnSeed: 0, throughEMA: 0, compN: 0, compT: 0, completed: 0, congPct: 0, flowPct: 100 };
+    return trafficTwin;
+  }
+  function tfFreeVeh(tw){ for (const v of tw.vehicles){ if (!v.active) return v; } return null; }
+  function animateTrafficTwin(dt){
+    const tw = trafficTwin; if (!tw) return; const c = tw.cfg; tw.phase += dt; const T = tw.phase;
+    for (const nd of tw.nodes){ const ph = tfFr((T + nd.offIdx * c.offset) / c.cycle); const hGreen = ph < c.split; nd.green = hGreen ? 'H' : 'V';
+      if (nd.lampH && nd.lampH.color) nd.lampH.color.setHex(hGreen ? 0x3fe07a : 0x401015); if (nd.lampV && nd.lampV.color) nd.lampV.color.setHex(hGreen ? 0x401015 : 0x3fe07a); }
+    for (const s of tw.segs) s.count = 0;
+    tw.spawnT += dt; const spawnEvery = 0.4 / Math.max(0.05, c.demand);
+    if (tw.spawnT >= spawnEvery){ tw.spawnT = 0; const v = tfFreeVeh(tw); if (v){
+      const nd = tw.nodes[(tfFr(Math.sin((tw.spawnSeed = tw.spawnSeed + 1) * 12.9898) * 4137.2) * tw.nodes.length) | 0];
+      if (nd && nd.edges.length){ const ei = nd.edges[(tfFr(Math.sin(tw.spawnSeed * 7.31) * 913.1) * nd.edges.length) | 0]; const s = tw.segs[ei];
+        if (s && !s.closed){ v.active = true; v.seg = ei; v.dir = (s.a === nd) ? 1 : -1; v.t = 0; v.hops = 0; v.waitT = 0; v.mesh.visible = true; } } } }
+    for (const v of tw.vehicles){ if (!v.active) continue; const s = tw.segs[v.seg]; s.count++;
+      const dens = Math.min(1, s.count / c.capacity); const sp = c.baseSpeed * (1 - 0.78 * dens);
+      const toNode = v.dir > 0 ? s.b : s.a;
+      const blocked = (v.t > 0.9) && (s.closed || toNode.green !== s.axis);
+      if (blocked){ v.waitT += dt; } else { v.t += sp * dt / s.len; }
+      if (v.t >= 1){ v.hops++;
+        if (v.hops >= 8){ v.active = false; v.mesh.visible = false; tw.compN++; tw.completed++; continue; }   // trip complete (reached destination)
+        const opts = toNode.edges.filter((ei) => ei !== v.seg && !tw.segs[ei].closed);
+        if (!opts.length){ v.active = false; v.mesh.visible = false; tw.compN++; tw.completed++; continue; }   // exited the network — also a completed trip
+        const r = tfFr(Math.sin((v.hops * 3.1 + toNode.ix * 7.7 + toNode.iy * 13.3 + v.seg * 1.7) ) * 4137.7);
+        const straight = opts.filter((ei) => tw.segs[ei].axis === s.axis);
+        const pool = (r < 0.62 && straight.length) ? straight : opts;
+        const pick = pool[(r * pool.length) | 0]; const ns = tw.segs[pick];
+        v.seg = pick; v.dir = (ns.a === toNode) ? 1 : -1; v.t = 0; }
+      const s2 = tw.segs[v.seg]; const fx = v.dir > 0 ? s2.ax : s2.bx, fz = v.dir > 0 ? s2.az : s2.bz;
+      const ex = v.dir > 0 ? s2.bx : s2.ax, ez = v.dir > 0 ? s2.bz : s2.az;
+      const px = fx + (ex - fx) * v.t, pz = fz + (ez - fz) * v.t; const ang = Math.atan2(ez - fz, ex - fx);
+      v.mesh.position.set(px + Math.sin(ang) * 1.8, 1.05, pz - Math.cos(ang) * 1.8); v.mesh.rotation.y = -ang; }
+    let cong = 0; for (const s of tw.segs){ const dens = Math.min(1, s.count / c.capacity); let col;
+      if (s.closed) col = 0x6a2a2a; else if (dens < 0.4) col = 0x2f5e3a; else if (dens < 0.7) col = 0x7a6a2a; else { col = 0x7a2a2a; }
+      if (dens > 0.65 && !s.closed) cong++; if (s.mat && s.mat.color && s.mat.color.setHex) s.mat.color.setHex(col); }
+    tw.compT += dt; if (tw.compT >= 1){ tw.throughEMA = tw.throughEMA * 0.6 + tw.compN * 0.4; tw.compN = 0; tw.compT -= 1;
+      let act = 0, flow = 0; for (const v of tw.vehicles) if (v.active) act++;
+      for (const s of tw.segs) flow += (1 - Math.min(1, s.count / c.capacity)); tw.flowPct = Math.round(100 * flow / tw.segs.length);
+      tw.congPct = Math.round(100 * cong / tw.segs.length);
+      if (tw.dashA) setSpriteText(tw.dashA, 'Trips ' + Math.round(tw.throughEMA * 60) + '/min   ·   On-road ' + act + '   ·   Congestion ' + tw.congPct + '%   ·   Avg speed ' + tw.flowPct + '%   ·   Cycle ' + Math.round(c.cycle) + 's');
+      try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){} }
+  }
+
+  /* ============================================================
    *  VFX LAB DIORAMA (skeleton) — a NEUTRAL PREVIEW STAGE + a selectable
    *  SAMPLE OBJECT that the VFX library will drive (the control PANELS land
    *  next phase). This is a decorative orbit-camera diorama, exactly like
@@ -12202,10 +12287,12 @@
     builtChunkTheme = null;
   }
   function applyThemeVisibility(theme){
-    const econ   = (theme === 'factory' || theme === 'smart-city');
-    const retail = (theme === 'factory' || theme === 'shopping-mall');
-    const prod   = (theme === 'factory');                 // streamed open world ONLY for the factory theme
+    const econ   = (theme === 'smart-city');              // the live economy district lives in Smart City now
+    const retail = (theme === 'shopping-mall');
+    const prod   = (theme === 'factory');                 // streamed CITY-GRID world ONLY for the factory (Smart City II) theme
     const hall   = (theme === 'smart-factory');           // the enclosed bounded factory hall ONLY for smart-factory
+    const traffic = (theme === 'factory');                // Smart City II traffic twin overlays the streamed grid
+    try { const tw = ensureTrafficTwin(); if (tw && tw.G) tw.G.visible = traffic; } catch(_){}
     // streamed production chunks stream + show ONLY for 'factory'. For every other theme, clear the live
     // chunks so the bounded slice (smart-city / hall / retail) shows no open world behind it.
     if (prod){
@@ -12392,6 +12479,8 @@
       r.textContent = 'Availability ' + Math.round((st.availInst || 1) * 100) + '%  ·  Throughput ' + Math.round((st.perfEMA || 0) * 60) + '/min'; } }
     else if (activeSection === 'warehouse'){ const st = S.warehouse; if (st){ const occ = Math.round(((st.slotOcc || 0) / (st.slotTot || 1)) * 100);
       r.textContent = 'Storage ' + occ + '%  ·  Dock util ' + Math.round((st.availInst || 1) * 100) + '%  ·  Throughput ' + Math.round((st.perfEMA || 0) * 60) + ' lines/min'; } }
+    else if (activeSection === 'factory'){ const tw = (typeof trafficTwin !== 'undefined') ? trafficTwin : null; if (tw){
+      r.textContent = 'Trips ' + Math.round((tw.throughEMA || 0) * 60) + '/min  ·  Congestion ' + (tw.congPct || 0) + '%  ·  Avg speed ' + (tw.flowPct || 100) + '%'; } else r.textContent = ''; }
     else r.textContent = '';   // generic Scene-randomize sections have no live readout
   }
   function buildSimPanel(sec){
@@ -12534,6 +12623,29 @@
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = WH_WMS.bufCap; setBf(WH_WMS.bufCap); }
         if (belt && st.selBelt != null && st.S[st.selBelt]){ const v = st.S[st.selBelt].spd || 1; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + '  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
         cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
+    } else if (sec === 'factory'){
+      // SMART CITY II — TRAFFIC & SIGNAL CONTROL levers (demand · signal cycle · green split · green-wave offset · incident)
+      if (title) title.textContent = 'Smart City II · Traffic & Signal Control';
+      const tw = (typeof ensureTrafficTwin === 'function') ? ensureTrafficTwin() : null; const c = tw ? tw.cfg : { demand: 1, cycle: 8, split: 0.5, offset: 0 };
+      body.innerHTML =
+        '<div class="simctl"><label>Demand (rush hour) <b id="tf-dem-v"></b></label><input type="range" id="tf-dem" min="20" max="300" step="5" aria-label="Traffic demand percent"></div>' +
+        '<div class="simctl"><label>Signal cycle <b id="tf-cyc-v"></b></label><input type="range" id="tf-cyc" min="4" max="16" step="1" aria-label="Signal cycle length seconds"></div>' +
+        '<div class="simctl"><label>Green split (E-W ↔ N-S) <b id="tf-spl-v"></b></label><input type="range" id="tf-spl" min="25" max="75" step="5" aria-label="Green split percent E-W"></div>' +
+        '<div class="simctl"><label>Green-wave offset <b id="tf-off-v"></b></label><input type="range" id="tf-off" min="0" max="40" step="2" aria-label="Green-wave progressive offset"></div>' +
+        '<button class="simbtn" id="tf-incident" type="button">🚧 Inject incident</button>' +
+        '<button class="simbtn" id="tf-reset" type="button">↺ Reset</button>';
+      const setDem = (v) => { const e = $('tf-dem-v'); if (e) e.textContent = v + '%'; };
+      const setCyc = (v) => { const e = $('tf-cyc-v'); if (e) e.textContent = v + 's'; };
+      const setSpl = (v) => { const e = $('tf-spl-v'); if (e) e.textContent = v + '% E-W'; };
+      const setOff = (v) => { const e = $('tf-off-v'); if (e) e.textContent = v ? ('+' + (v / 10).toFixed(1) + 's/int') : 'synced'; };
+      const dem = $('tf-dem'), cyc = $('tf-cyc'), spl = $('tf-spl'), off = $('tf-off');
+      if (dem){ dem.value = Math.round(c.demand * 100); dem.oninput = () => { const v = +dem.value || 100; if (tw) tw.cfg.demand = v / 100; setDem(v); }; setDem(+dem.value); }
+      if (cyc){ cyc.value = Math.round(c.cycle); cyc.oninput = () => { const v = +cyc.value || 8; if (tw) tw.cfg.cycle = v; setCyc(v); }; setCyc(+cyc.value); }
+      if (spl){ spl.value = Math.round(c.split * 100); spl.oninput = () => { const v = +spl.value || 50; if (tw) tw.cfg.split = v / 100; setSpl(v); }; setSpl(+spl.value); }
+      if (off){ off.value = Math.round(c.offset * 10); off.oninput = () => { const v = +off.value || 0; if (tw) tw.cfg.offset = v / 10; setOff(v); }; setOff(+off.value); }
+      const inc = $('tf-incident'); if (inc) inc.onclick = () => { if (!tw) return; const open = tw.segs.filter((s) => !s.closed); if (open.length){ const s = open[(tfFr(Math.sin((tw.spawnSeed = tw.spawnSeed + 1) * 5.7) * 311) * open.length) | 0]; s.closed = true; setTimeout(() => { try { s.closed = false; } catch(_){} }, 12000); } };
+      const rb = $('tf-reset'); if (rb) rb.onclick = () => { if (!tw) return; tw.cfg.demand = 1; tw.cfg.cycle = 8; tw.cfg.split = 0.5; tw.cfg.offset = 0; for (const s of tw.segs) s.closed = false;
+        if (dem){ dem.value = 100; setDem(100); } if (cyc){ cyc.value = 8; setCyc(8); } if (spl){ spl.value = 50; setSpl(50); } if (off){ off.value = 0; setOff(0); } };
     } else {
       // EVERY OTHER SECTION — a Scene-randomize block: roll the chosen transform / visual params of all this
       // section's objects (via the VFX Lab engine), with ↺ Restore. Gives every section a randomize button.
