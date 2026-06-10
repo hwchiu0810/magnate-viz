@@ -201,6 +201,8 @@
   .simctl label{font-size:9.5px;color:#7fb6a0;display:flex;justify-content:space-between;gap:8px}
   .simctl label b{color:#dff6ea;font-weight:600}
   .simctl input[type=range]{width:100%;accent-color:#3fe07a;cursor:pointer}
+  .simctl select{width:100%;background:#0c2018;border:1px solid #2a6a4a;color:#dff6ea;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer}
+  .simctl select:focus-visible{outline:2px solid #3fe07a;outline-offset:1px}
   .simbtn{background:#0d3a2a;border:1px solid #2a6a4a;color:#cfeede;border-radius:8px;padding:4px 11px;font-size:11px;cursor:pointer;align-self:flex-end}
   .simbtn:hover{background:#125239;color:#eafff4}
   .simbtn:focus-visible{outline:2px solid #3fe07a;outline-offset:2px}
@@ -8772,7 +8774,7 @@
     const C = SF_OEE, beltTop = 3.0, fr = (v) => v - Math.floor(v);
     // NODE GRAPH: 2 intake lines → mill/lathe → WELD (combine 2→1) → ASSEMBLE (dispatch 1→2) → 2 pack → 2 docks
     const N = {}, S = [];
-    const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
+    const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
     // 4 intake → 4 machining → 2 sub-assembly welds → MAIN ASSEMBLY → QC/dispatch → 3 pack → 3 ship docks.
     // EACH SITE RUNS AT A DIFFERENT THROUGHPUT (parts/s) — fast mills, slower lathes, the Main Assembly is the
     // deliberate bottleneck — and the belts downstream of each site scroll at that site's throughput.
@@ -8802,7 +8804,7 @@
           new THREE.MeshStandardMaterial({ color: 0x33414f, emissive: new THREE.Color(nd.kind === 'source' ? 0x1c4a36 : 0x4a3620), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3, nd.z); g.add(pad);
         g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 11, nd.x, beltTop + 4.5, nd.z)); continue; }
       const hex = FLOW_COL[nd.outStage % FLOW_COL.length]; const cell = sfMakeCell(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
-      nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
+      nd.cg = cell.cg; nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
       nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7) * 1000) * 14; nd.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3) * 500) * 0.11; nd.offset = fr(Math.sin((mi + 1) * 12.9898) * 43758.5);
       machines.push(nd); mi++; }
     const sparkNode = N.S0 || N.S1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
@@ -9112,7 +9114,13 @@
           if (st && st.solid) add('twin:solid', 'Turbine', st.solid);
           if (st && st.root) add('twin:root', '▦ Twin scene (group)', st.root, true);
         } else if (section === 'smart-factory'){
-          if (typeof sfTwinWire !== 'undefined' && sfTwinWire) add('sf:twin', 'Factory twin wireframe', sfTwinWire);
+          const st = sceneState['smart-factory'];
+          const cellGrps = [];
+          if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) cellGrps.push(m.cg); } }
+          if (st && st.g && cellGrps.length) add('grp:sf', glabel('▦ All machines', cellGrps.length), st.g, true, cellGrps);
+          if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) add('sf:' + m.id, m.name || m.id, m.cg); } }
+          if (st && st.agvs && st.agvs.length){ st.agvs.forEach((v, i) => { if (v && v.grp) add('sf:agv' + i, 'AGV ' + (i + 1), v.grp); });
+            add('grp:sf-agv', glabel('▦ All AGVs', st.agvs.length), st.g, true, st.agvs.map(v => v.grp).filter(Boolean)); }
         } else if (section === 'shopping-mall'){
           if (typeof retailGroup !== 'undefined' && retailGroup) add('grp:retail', '▦ Mall (group)', retailGroup, true);
         } else if (section === 'market' || section === 'finance'){
@@ -11712,19 +11720,34 @@
         if (arr){ arr.value = Math.round(60 / st.C.spawn); setSimArrV(+arr.value); } if (cap){ cap.value = Math.round(st.stations[st.C.constraintIdx].rate * 60); setSimCapV(+cap.value); } };
     } else if (sec === 'smart-factory'){
       if (title) title.textContent = 'Smart Factory · Availability / OEE';
+      const st = sceneState['smart-factory'];
+      const opts = (st && st.machines) ? st.machines.map((m) => '<option value="' + m.id + '">' + (m.name || m.id) + '</option>').join('') : '';
       body.innerHTML =
+        '<div class="simctl"><label>Site <b id="sim-site-v"></b></label><select id="sim-site" aria-label="Choose a machine site">' + opts + '</select></div>' +
+        '<div class="simctl"><label>↳ Throughput <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="24" max="150" step="3" aria-label="Selected site throughput per minute"></div>' +
         '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between failures"></div>' +
         '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="8" step="1" aria-label="Inter-machine buffer capacity"></div>' +
         '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
-      const st = sceneState['smart-factory'], mt = $('sim-mtbf'), bf = $('sim-buf');
+      const mt = $('sim-mtbf'), bf = $('sim-buf'), site = $('sim-site'), rate = $('sim-rate');
       const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
       const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
+      const findM = (id) => (st && st.machines) ? st.machines.find((m) => m.id === id) : null;
+      // push a machine's rate to its OUTPUT belts so the conveyor speed tracks the new throughput
+      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si]) st.S[si].spd = m.rate / base; } };
+      const setRate = (m) => { const e = $('sim-rate-v'); const perMin = Math.round((m ? m.rate : 1) * 60); if (e) e.textContent = perMin + '/min'; if (rate) rate.value = perMin; };
+      const setSiteLabel = (m) => { const e = $('sim-site-v'); if (e) e.textContent = m ? ('⟲ ' + Math.round(m.rate * 60) + '/min') : ''; };
+      let cur = (st && st.machines && st.machines[0]) ? st.machines[0] : null;
+      if (site){ site.value = cur ? cur.id : ''; site.onchange = () => { cur = findM(site.value); setRate(cur); setSiteLabel(cur); }; }
+      if (rate){ rate.oninput = () => { const v = +rate.value || 60; if (cur){ cur.rate = v / 60; applyRate(cur); } const e = $('sim-rate-v'); if (e) e.textContent = v + '/min'; setSiteLabel(cur); }; }
+      setRate(cur); setSiteLabel(cur);
       const mtv = st ? Math.round((st.mtbfMul || 1) * 10) : 10, bfv = st ? (st.bufCap || 4) : 4;
       if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
       if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || 4; if (st) st.bufCap = v; setBf(v); }; }
       setMt(mtv); setBf(bfv);
       const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = SF_OEE.bufCap;
-        if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); } };
+        if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
+        if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); }
+        cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
     }
   }
   function syncSimPanel(){
