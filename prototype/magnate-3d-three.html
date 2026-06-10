@@ -8602,6 +8602,7 @@
    *  Performance × Quality dashboard. VIEW-ONLY, pooled, headless-safe.
    * ============================================================ */
   const SF_OEE = { bufCap: 5, rate: 1.2, spawn: 0.66, objN: 240, objScale: 1.35, mtbf: 16 };
+  const SF_FLOOR2 = 42;   // height of the second-floor mezzanine above floor 1 (world units)
   let sfRateSeed = 7;   // seed for the Smart Factory's RANDOMIZED initial throughput / availability / reject rates
   //  (deterministic, no wall-clock — honours the headless+reproducible invariant; the 🎲 button advances it)
   // Assign every machine a SEEDED-RANDOM throughput within a band chosen by its FUNCTION so the network stays
@@ -8801,16 +8802,18 @@
   // --- NETWORKED factory flow (node-graph): parts MOVE on segments, QUEUE in node buffers, are SERVICED by
   //     machines (gated by breakdowns), then advance — WELD COMBINES (2→1), ASSEMBLE DISPATCHES (1→2). ---
   function oeePlace(st, p, dt){
-    let tx, tz;
+    const bt = st.beltTop;
     if (p.carried){ p.grp.visible = true; return; }   // an AGV is ferrying this part; the AGV update sets its position
     if (p.state === 'exit'){ p.exitT += dt * 1.6; const s = Math.max(0, 1 - p.exitT); p.vx += 14 * dt;
-      p.grp.position.set(p.vx, st.beltTop + 0.5 + p.exitT * 1.4, p.vz); p.grp.scale.setScalar(st.C.objScale * s);
+      p.grp.position.set(p.vx, (p.vy != null ? p.vy : bt) + 0.5 + p.exitT * 1.4, p.vz); p.grp.scale.setScalar(st.C.objScale * s);
       if (p.exitT >= 1){ p.active = false; p.grp.visible = false; } return; }
-    if (p.state === 'moving'){ const s = st.S[p.seg]; tx = s.ax + (s.bx - s.ax) * p.t; tz = s.az + (s.bz - s.az) * p.t; }
-    else if (p.state === 'holding'){ const nd = st.N[p.node]; tx = nd.x; tz = nd.z; }
-    else { const nd = st.N[p.node]; const slot = Math.max(0, nd.buf.indexOf(p)); tx = nd.x - 6 - (slot % 3) * 2.3; tz = nd.z + (((slot / 3) | 0) - 1) * 2.2; }
-    const k = dt > 0 ? Math.min(1, dt * 4) : 1; p.vx += (tx - p.vx) * k; p.vz += (tz - p.vz) * k;
-    p.grp.position.set(p.vx, st.beltTop + 0.5, p.vz); p.grp.scale.setScalar(st.C.objScale); p.grp.visible = true;
+    let tx, tz, ty;   // ty = belt-surface height (floor-aware; interpolates along an escalator segment)
+    if (p.state === 'moving'){ const s = st.S[p.seg]; tx = s.ax + (s.bx - s.ax) * p.t; tz = s.az + (s.bz - s.az) * p.t; ty = (s.say != null ? s.say : bt) + ((s.sby != null ? s.sby : bt) - (s.say != null ? s.say : bt)) * p.t; }
+    else if (p.state === 'holding'){ const nd = st.N[p.node]; tx = nd.x; tz = nd.z; ty = bt + (nd.fy || 0); }
+    else { const nd = st.N[p.node]; const slot = Math.max(0, nd.buf.indexOf(p)); tx = nd.x - 6 - (slot % 3) * 2.3; tz = nd.z + (((slot / 3) | 0) - 1) * 2.2; ty = bt + (nd.fy || 0); }
+    const k = dt > 0 ? Math.min(1, dt * 4) : 1; if (p.vy == null) p.vy = ty;
+    p.vx += (tx - p.vx) * k; p.vz += (tz - p.vz) * k; p.vy += (ty - p.vy) * k;
+    p.grp.position.set(p.vx, p.vy + 0.5, p.vz); p.grp.scale.setScalar(st.C.objScale); p.grp.visible = true;
   }
   function oeeFree(st){ for (const x of st.parts){ if (!x.active) return x; } return null; }
   // ONE Automated Guided Vehicle: a low cart on 4 wheels with a guide-light, carrying a crate on its deck
@@ -8833,7 +8836,7 @@
     const podY = railY - 7; pod.position.y = podY; g.add(pod);
     return { grp: g, pod, podY }; }
   function oeeEmit(st, p, segIdx, stage){ p.active = true; p.state = 'moving'; p.seg = segIdx; p.t = 0; p.node = null; setOeePart(p, stage);
-    const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.grp.visible = true; }
+    const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.vy = (s.say != null) ? s.say : st.beltTop; p.grp.visible = true; }
   function buildSmartFactoryScene(section){
     const g = buildSceneRoot(section);
     g.add(labelSpriteSafe('🏭 Smart Factory · Networked OEE Plant — 6 lines · converge · branch · assemble · dispatch', '#cfe0ff', 22, 0, 74, 0));
@@ -8845,7 +8848,7 @@
     const C = SF_OEE, beltTop = 3.0, fr = (v) => v - Math.floor(v);
     // NODE GRAPH: 2 intake lines → mill/lathe → WELD (combine 2→1) → ASSEMBLE (dispatch 1→2) → 2 pack → 2 docks
     const N = {}, S = [];
-    const node = (id, x, z, kind, type, name, outStage, rate) => (N[id] = { id, x, z, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
+    const node = (id, x, z, kind, type, name, outStage, rate, fy) => (N[id] = { id, x, z, fy: fy || 0, kind, type, name, outStage: outStage || 0, rate: rate || C.rate, rate0: rate || C.rate, inSegs: [], outSegs: [], buf: [], holding: null, busyT: 0, down: false, need: (kind === 'merge') ? 2 : 1, state: '' });
     // A BRANCHING, MULTI-PATH PLANT: 6 intake → 6 machining → 3 sub-assembly welds (combine 2→1) → 3 distribution
     // hubs (dispatch 1→many) → 5 finishing cells (one is a mid-line splitter) → 2 main-assembly hubs (combine) →
     // 2 QC/dispatch sorters (dispatch 1→3) → 5 pack lines → 5 ship docks. Cross-connecting diagonals everywhere.
@@ -8867,8 +8870,9 @@
     const Zpk = [-48, -24, 0, 24, 48];
     Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4));
     Zpk.forEach((z, i) => node('D' + i, 110, z, 'sink', null, 'Ship ' + String.fromCharCode(65 + i), 4));
-    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate, spdAbs: false };
-      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, say: beltTop + (A.fy || 0), sby: beltTop + (B.fy || 0), spd: (A.rate || C.rate) / C.rate, spdAbs: false };
+      s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); s.incline = Math.abs(s.sby - s.say) > 1.5;   // an escalator/ramp between floors
+      const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
     for (let i = 0; i < 6; i++) seg('IN' + i, 'M' + i);                                  // intake → machining
     seg('M0', 'W0'); seg('M1', 'W0'); seg('M2', 'W1'); seg('M3', 'W1'); seg('M4', 'W2'); seg('M5', 'W2'); // 6 mills/lathes → 3 welds
     seg('W0', 'DS0'); seg('W1', 'DS1'); seg('W2', 'DS2');                                // welds → distribution hubs
@@ -8876,6 +8880,18 @@
     seg('F0', 'A0'); seg('F1', 'A0'); seg('F2', 'A0'); seg('F2', 'A1'); seg('F3', 'A1'); seg('F4', 'A1'); // finishing → 2 assembly hubs (sorter F2 feeds both)
     seg('A0', 'Q0'); seg('A1', 'Q1');                                                    // assembly → QC
     seg('Q0', 'PK0'); seg('Q0', 'PK1'); seg('Q0', 'PK2'); seg('Q1', 'PK2'); seg('Q1', 'PK3'); seg('Q1', 'PK4'); // QC dispatch → 5 pack (PK2 shared)
+    // ===== SECOND FLOOR — a PREMIUM-FINISHING MEZZANINE with a DIFFERENT (radial fan-out) routing, reached by
+    // ESCALATORS. A share of QC-passed parts ride up two escalators to a central inbound hub, fan out to a ring
+    // of finishing pods, recombine, and descend a third escalator to a premium ship dock on floor 1. =====
+    const F2 = SF_FLOOR2;
+    node('U0', 70, -30, 'split', 'qc', 'Mezzanine Intake', 3, 2.0, F2);                  // top of the up-escalators; fans out
+    node('G0', 96, -48, 'machine', 'mill', 'Premium Finish 1', 3, 1.1, F2); node('G1', 104, -22, 'machine', 'pack', 'Premium Finish 2', 3, 1.0, F2); node('G2', 96, 4, 'machine', 'lathe', 'Premium Finish 3', 3, 1.05, F2);
+    node('OUT2', 70, -8, 'machine', 'assemble', 'Mezzanine Outfeed', 4, 1.4, F2);        // recombines the 3 pods
+    node('DP0', 110, -16, 'sink', null, 'Premium Ship', 4, 0, 0);                        // back on floor 1
+    seg('Q0', 'U0'); seg('Q1', 'U0');                                                    // ⬆ TWO up-escalators (count as QC forward routes → a share of passes go up)
+    seg('U0', 'G0'); seg('U0', 'G1'); seg('U0', 'G2');                                   // floor-2 RADIAL fan-out
+    seg('G0', 'OUT2'); seg('G1', 'OUT2'); seg('G2', 'OUT2');                             // floor-2 recombine
+    seg('OUT2', 'DP0');                                                                  // ⬇ down-escalator → floor-1 premium dock
     seg('Q0', 'RW'); seg('Q1', 'RW'); seg('RW', 'A0');                                   // REWORK LOOP: QC rejects → repair → back into assembly
     for (let i = 0; i < 5; i++) seg('PK' + i, 'D' + i);                                  // pack → ship docks
     // mark the two QC stations as pass/fail GATES (route each part to ONE pack line, or back to Rework), and
@@ -8883,32 +8899,54 @@
     [N.Q0, N.Q1].forEach((q, i) => { q.qcGate = true; q.failFrac = 0.14; q.reworkOut = q.outSegs.length - 1; q.rr = 0; q.qhash = (i + 1) * 13.37; });
     for (const s of S){ if (s.a === 'RW' || s.b === 'RW') s.rework = true; }
     sfRollRates(N, S, C, sfRateSeed);   // assign the RANDOMIZED initial throughput + reject rates + belt speeds
+    // orient an object so its local +X axis runs from A→B in 3D (handles both flat belts and tilted escalators)
+    const XAX = (typeof THREE !== 'undefined' && THREE.Vector3) ? new THREE.Vector3(1, 0, 0) : null;
+    const orient3 = (obj, ax, ay, az, bx, by, bz) => { try { const d = new THREE.Vector3(bx - ax, by - ay, bz - az); if (d.length()) { d.normalize(); if (obj.quaternion && obj.quaternion.setFromUnitVectors) obj.quaternion.setFromUnitVectors(XAX, d); } } catch(_){} };
     const chev = [], belts = [];
-    S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, s.rework ? 0x3a2014 : 0x202d40, s.rework ? 0x1c0c04 : 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
-      belt.name = 'Belt ' + s.a + '→' + s.b; belt.userData = { sfSeg: si }; belts.push({ obj: belt, seg: si, label: belt.name });
-      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: s.rework ? 0xff8a3a : 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
-        const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, beltTop + 0.4, s.az + (s.bz - s.az) * t0); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); } });
+    S.forEach((s, si) => { const len3 = Math.hypot(s.len, s.sby - s.say);   // true 3D belt length (longer on an incline)
+      const belt = dioBox(len3, 0.5, 5.0, s.rework ? 0x3a2014 : (s.incline ? 0x243a52 : 0x202d40), s.rework ? 0x1c0c04 : 0x0c1622);
+      belt.position.set((s.ax + s.bx) / 2, (s.say + s.sby) / 2, (s.az + s.bz) / 2); orient3(belt, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(belt);
+      belt.name = (s.incline ? 'Escalator ' : 'Belt ') + s.a + '→' + s.b; belt.userData = { sfSeg: si }; belts.push({ obj: belt, seg: si, label: belt.name });
+      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: s.rework ? 0xff8a3a : (s.incline ? 0xffd36a : 0x3fd6ff), transparent: true, opacity: 0.42, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
+        const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, s.say + (s.sby - s.say) * t0 + 0.4, s.az + (s.bz - s.az) * t0); orient3(cg, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); }
+      // ESCALATOR structure: step treads + side handrails + a top/bottom landing
+      if (s.incline){ const steps = Math.max(5, Math.round(len3 / 4));
+        for (let k = 0; k < steps; k++){ const t = (k + 0.5) / steps; const tread = dioBox(1.3, 0.55, 5.4, 0x46566c, 0x141c28);
+          tread.position.set(s.ax + (s.bx - s.ax) * t, s.say + (s.sby - s.say) * t + 0.4, s.az + (s.bz - s.az) * t); orient3(tread, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(tread); }
+        for (const off of [-2.9, 2.9]){ const px = -Math.sin(s.ang) * off, pz = Math.cos(s.ang) * off; const rail = dioBox(len3, 1.5, 0.4, 0x5a6678, 0x1a2430);
+          rail.position.set((s.ax + s.bx) / 2 + px, (s.say + s.sby) / 2 + 1.1, (s.az + s.bz) / 2 + pz); orient3(rail, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(rail); } } });
     const machines = []; let mi = 0;
     for (const id in N){ const nd = N[id];
       if (nd.kind === 'source' || nd.kind === 'sink'){ const pad = new THREE.Mesh(new THREE.CylinderGeometry(4, 4.6, 1, 20),
-          new THREE.MeshStandardMaterial({ color: 0x33414f, emissive: new THREE.Color(nd.kind === 'source' ? 0x1c4a36 : 0x4a3620), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3, nd.z); g.add(pad);
-        g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 11, nd.x, beltTop + 4.5, nd.z)); continue; }
+          new THREE.MeshStandardMaterial({ color: 0x33414f, emissive: new THREE.Color(nd.kind === 'source' ? 0x1c4a36 : 0x4a3620), emissiveIntensity: 0.3, roughness: 0.6, metalness: 0.3 })); pad.position.set(nd.x, beltTop - 0.3 + (nd.fy || 0), nd.z); g.add(pad);
+        g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 11, nd.x, beltTop + 4.5 + (nd.fy || 0), nd.z)); continue; }
       const hex = FLOW_COL[nd.outStage % FLOW_COL.length]; const cell = sfMakeCell(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
+      if (nd.fy) cell.cg.position.y = nd.fy;   // lift second-floor machine cells onto the mezzanine deck
       nd.cg = cell.cg; nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
       nd.mi = mi;   // breakdown/availability clock seeded by (machine index + the rate seed) → randomized initial availability
       nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + sfRateSeed * 3.1) * 1000) * 14; nd.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3 + sfRateSeed * 1.7) * 500) * 0.11; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + sfRateSeed * 5.0) * 43758.5);
       machines.push(nd); mi++; }
+    // SECOND-FLOOR deck + support columns (a glass-railed mezzanine the floor-2 cells sit on)
+    { const f2 = []; for (const id in N){ if (N[id].fy) f2.push(N[id]); }
+      if (f2.length){ let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const p of f2){ x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+        const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, dw = (x1 - x0) + 40, dd = (z1 - z0) + 40;
+        const deck = dioBox(dw, 1.4, dd, 0x222c3a, 0x0e151f); deck.position.set(cx, SF_FLOOR2 - 0.5, cz); g.add(deck);
+        if (typeof THREE.GridHelper === 'function'){ try { const gr = new THREE.GridHelper(Math.max(dw, dd), 16, 0x46557a, 0x2c3850); gr.position.set(cx, SF_FLOOR2 + 0.3, cz);
+          const ms = gr.material ? (Array.isArray(gr.material) ? gr.material : [gr.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.18; m.depthWrite = false; } }); g.add(gr); } catch(_){} }
+        for (const px of [x0 - 14, x1 + 14]) for (const pz of [z0 - 14, z1 + 14]){ const col = dioBox(2.4, SF_FLOOR2, 2.4, 0x39424f, 0x141a22); col.position.set(px, SF_FLOOR2 / 2, pz); g.add(col); }
+        for (const rz of [z0 - 20, z1 + 20]){ const rail = new THREE.Mesh(new THREE.BoxGeometry(dw, 2.2, 0.3), new THREE.MeshBasicMaterial({ color: 0x6fb6d8, transparent: true, opacity: 0.16, depthWrite: false })); rail.position.set(cx, SF_FLOOR2 + 1.6, rz); g.add(rail); }
+        g.add(labelSpriteSafe('▢ Mezzanine · Premium Finishing (radial)', '#cfe0ff', 15, cx, SF_FLOOR2 + 18, cz)); } }
     const sparkNode = N.W0 || N.W1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
       for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sgo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD })); sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
     // AGV FLEET — one cart per INTER-STAGE belt (between processing nodes; skips intake-pad + ship-dock stubs).
     // On the REWORK belts the cart is FUNCTIONAL: it picks up the actual rejected part and ferries it (its generic
     // crate is hidden — the real workpiece rides the deck); elsewhere it's a decorative ferry carrying a crate.
-    const agvs = []; S.forEach((s, si) => { if (N[s.a].kind === 'source' || N[s.b].kind === 'sink') return;
+    const agvs = []; S.forEach((s, si) => { if (N[s.a].kind === 'source' || N[s.b].kind === 'sink' || s.incline) return;   // escalators move parts vertically — no ground AGV
       const a = oeeAgv(); g.add(a.grp); if (s.rework && a.crate) a.crate.visible = false;
-      agvs.push({ grp: a.grp, crate: a.crate, seg: si, off: 4.4, u: fr(Math.sin((si + 1) * 5.1) * 311), dir: 1, rework: !!s.rework, carry: null }); });
+      agvs.push({ grp: a.grp, crate: a.crate, seg: si, off: 4.4, floorY: (N[s.a].fy || 0) + 0.45, u: fr(Math.sin((si + 1) * 5.1) * 311), dir: 1, rework: !!s.rework, carry: null }); });
     const env = sfBuildEnv(g, machines.map((m) => ({ x: m.x, z: m.z })), beltTop);
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
-      parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, exitT: 0, stageBuilt: -1 }); }
+      parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1 }); }
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 58, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
@@ -8968,7 +9006,7 @@
       if (m.beacon && m.beacon.material) m.beacon.material.opacity = m.down ? (0.4 + 0.4 * Math.abs(Math.sin(T * 5))) : 0.0;
     }
     for (const p of st.parts){ if (p.active) oeePlace(st, p, dt); }
-    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, st.beltTop + 0.45, s.az + (s.bz - s.az) * c.t); }
+    for (const c of st.chev){ const s = st.S[c.seg]; c.t += (10 * (s.spd || 1) * dt) / s.len; if (c.t > 1) c.t -= 1; const cy = (s.say != null ? s.say : st.beltTop) + ((s.sby != null ? s.sby : st.beltTop) - (s.say != null ? s.say : st.beltTop)) * c.t; c.grp.position.set(s.ax + (s.bx - s.ax) * c.t, cy + 0.45, s.az + (s.bz - s.az) * c.t); }
     // AGV fleet — REWORK carts carry the actual rejected part (pick up at the start, ferry it across, deliver
     // into the next node, drive back empty); other carts are decorative ferries (crate outbound, return empty).
     if (st.agvs){ for (const v of st.agvs){ const s = st.S[v.seg]; const spd = (s.spd || 1);
@@ -8981,15 +9019,15 @@
           if (v.u >= 1){ v.u = 1; const p = v.carry; p.carried = false; v.carry = null;
             const nd = st.N[s.b]; if (nd.kind === 'sink'){ p.state = 'exit'; p.exitT = 0.001; st.compN++; st.completed++; } else { p.state = 'queued'; p.node = nd.id; nd.buf.push(p); }
             v.dir = -1; } }
-        const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u;
+        const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u; const fyB = v.floorY || 0.45;
         const px = bx - Math.sin(s.ang) * v.off, pz = bz + Math.cos(s.ang) * v.off;
-        v.grp.position.set(px, 0.45, pz); v.grp.rotation.y = -s.ang;
-        if (v.carry){ v.carry.grp.position.set(px, 2.0, pz); v.carry.grp.scale.setScalar(st.C.objScale * 0.9); v.carry.grp.visible = true; }
+        v.grp.position.set(px, fyB, pz); v.grp.rotation.y = -s.ang;
+        if (v.carry){ v.carry.grp.position.set(px, fyB + 1.55, pz); v.carry.grp.scale.setScalar(st.C.objScale * 0.9); v.carry.grp.visible = true; }
       } else {
         v.u += v.dir * (9 * spd * dt) / s.len;
         if (v.u >= 1){ v.u = 1; v.dir = -1; if (v.crate) v.crate.visible = false; } else if (v.u <= 0){ v.u = 0; v.dir = 1; if (v.crate) v.crate.visible = true; }
         const bx = s.ax + (s.bx - s.ax) * v.u, bz = s.az + (s.bz - s.az) * v.u;
-        v.grp.position.set(bx - Math.sin(s.ang) * v.off, 0.45, bz + Math.cos(s.ang) * v.off);
+        v.grp.position.set(bx - Math.sin(s.ang) * v.off, v.floorY || 0.45, bz + Math.cos(s.ang) * v.off);
         v.grp.rotation.y = -s.ang + (v.dir < 0 ? Math.PI : 0);
       } } }
     const wnode = st.sparkNode;
@@ -11688,8 +11726,10 @@
     // OrbitControls path: retarget controls to the diorama center + place the orbit camera. The
     // rotate-to flourish runs as controls.autoRotate (frame loop disables it under reduced-motion).
     if (useOrbit && controls){
-      const dist = (section === 'smart-factory') ? 250 : stageCam.dist;   // the big networked plant needs a wider view
-      orbitTo(stageCam.pivot.x, stageCam.pivot.y, stageCam.pivot.z, dist, ORBIT_DEFAULT.polar, sectionToYaw);
+      const isSF = (section === 'smart-factory');
+      const dist = isSF ? 280 : stageCam.dist;   // the big TWO-FLOOR networked plant needs a wider, taller view
+      const pivotY = stageCam.pivot.y + (isSF ? 18 : 0);   // raise the look-at toward the mezzanine so both floors frame
+      orbitTo(stageCam.pivot.x, pivotY, stageCam.pivot.z, dist, ORBIT_DEFAULT.polar, sectionToYaw);
       controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
     }
   }
