@@ -8628,7 +8628,7 @@
     for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink' || !inScope(id, nd)) continue;
       if (doRate){ const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate; }
       if (doReject && nd.qcGate) nd.failFrac = +(0.06 + rnd() * 0.12).toFixed(3); }
-    if (doRate) for (const s of S) s.spd = ((N[s.a].rate || C.rate) / C.rate) * (s.spdUser || 1);   // belts scroll at the feeding site's rate × any manual belt-speed override
+    if (doRate) for (const s of S){ if (!s.spdAbs) s.spd = (N[s.a].rate || C.rate) / C.rate; }   // belts track the feeding site's rate UNLESS the belt has a manual absolute speed locked
     if (doAvail && machines){ for (const m of machines){ if (!inScope(m.id, m)) continue; const mi = m.mi || 0;  // reshuffle availability/breakdown clocks
       m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 14;
       m.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.11;
@@ -8867,7 +8867,7 @@
     const Zpk = [-48, -24, 0, 24, 48];
     Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4));
     Zpk.forEach((z, i) => node('D' + i, 110, z, 'sink', null, 'Ship ' + String.fromCharCode(65 + i), 4));
-    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate, spdUser: 1 };
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate, spdAbs: false };
       s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
     for (let i = 0; i < 6; i++) seg('IN' + i, 'M' + i);                                  // intake → machining
     seg('M0', 'W0'); seg('M1', 'W0'); seg('M2', 'W1'); seg('M3', 'W1'); seg('M4', 'W2'); seg('M5', 'W2'); // 6 mills/lathes → 3 welds
@@ -11959,9 +11959,10 @@
       const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
       const findM = (id) => (st && st.machines) ? st.machines.find((m) => m.id === id) : null;
       // push a machine's rate to its OUTPUT belts so the conveyor speed tracks the new throughput
-      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si]) st.S[si].spd = (m.rate / base) * (st.S[si].spdUser || 1); } };
-      // 🛞 Belt-speed slider: adjusts the SELECTED belt's animation speed (a multiplier over its nominal feed rate)
-      const belt = $('sim-belt'); if (belt) belt.oninput = () => { const si = st.selBelt; if (si == null || !st.S[si]) return; const seg = st.S[si]; const mul = (+belt.value || 100) / 100; seg.spdUser = mul; seg.spd = ((st.N[seg.a].rate || st.C.rate) / st.C.rate) * mul; const e = $('sim-belt-v'); if (e) e.textContent = '×' + mul.toFixed(2) + '  (' + seg.a + '→' + seg.b + ')'; };
+      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si] && !st.S[si].spdAbs) st.S[si].spd = m.rate / base; } };
+      // 🛞 Belt-speed slider: sets the SELECTED belt's ABSOLUTE animation speed (locked — independent of, and no
+      // longer recomputed from, the feeding machine's throughput) until Reset.
+      const belt = $('sim-belt'); if (belt) belt.oninput = () => { const si = st.selBelt; if (si == null || !st.S[si]) return; const seg = st.S[si]; const v = (+belt.value || 100) / 100; seg.spd = v; seg.spdAbs = true; const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + ' abs  (' + seg.a + '→' + seg.b + ')'; };
       const setRate = (m) => { const e = $('sim-rate-v'); const perMin = Math.round((m ? m.rate : 1) * 60); if (e) e.textContent = perMin + '/min'; if (rate) rate.value = perMin; };
       const setSiteLabel = (m) => { const e = $('sim-site-v'); if (e) e.textContent = m ? ('⟲ ' + Math.round(m.rate * 60) + '/min') : ''; };
       let cur = (st && st.machines && st.machines[0]) ? st.machines[0] : null;
@@ -11988,10 +11989,10 @@
         st.qcFail = sfRollRates(st.N, st.S, st.C, sfRateSeed, st.machines, opts);
         cur = findM(selId) || cur; setRate(cur); setSiteLabel(cur); };
       const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = SF_OEE.bufCap;
-        for (const s of st.S) s.spdUser = 1;   // clear manual belt-speed overrides
+        for (const s of st.S) s.spdAbs = false;   // release any locked absolute belt speeds (back to rate-derived)
         if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); }
-        if (belt && st.selBelt != null && st.S[st.selBelt]){ belt.value = 100; const e = $('sim-belt-v'); if (e) e.textContent = '×1.00  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
+        if (belt && st.selBelt != null && st.S[st.selBelt]){ const v = st.S[st.selBelt].spd || 1; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); const e = $('sim-belt-v'); if (e) e.textContent = '×' + v.toFixed(2) + '  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
         cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
     } else {
       // EVERY OTHER SECTION — a Scene-randomize block: roll the chosen transform / visual params of all this
@@ -12040,8 +12041,8 @@
       // a BELT? (the mesh, or any ancestor, carries userData.sfSeg) → drive the Belt-speed slider
       let segIdx = null, o = sel, g = 0; while (o && g++ < 60){ if (o.userData && o.userData.sfSeg != null){ segIdx = o.userData.sfSeg; break; } o = o.parent; }
       const belt = $('sim-belt'), bl = $('sim-belt-v');
-      if (segIdx != null && st.S[segIdx]){ st.selBelt = segIdx; const seg = st.S[segIdx], mul = seg.spdUser || 1;
-        if (belt){ belt.disabled = false; belt.value = Math.round(mul * 100); } if (bl) bl.textContent = '×' + mul.toFixed(2) + '  (' + seg.a + '→' + seg.b + ')'; return; }
+      if (segIdx != null && st.S[segIdx]){ st.selBelt = segIdx; const seg = st.S[segIdx], v = seg.spd || 1;
+        if (belt){ belt.disabled = false; belt.value = Math.max(20, Math.min(400, Math.round(v * 100))); } if (bl) bl.textContent = '×' + v.toFixed(2) + (seg.spdAbs ? ' abs' : '') + '  (' + seg.a + '→' + seg.b + ')'; return; }
       st.selBelt = null; if (belt){ belt.disabled = true; } if (bl) bl.textContent = '— pick a belt —';
       // else a MACHINE? → select it as the active Site
       const m = sfMachineForObject(st, sel); if (!m) return;
