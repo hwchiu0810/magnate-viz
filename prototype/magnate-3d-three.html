@@ -8715,13 +8715,20 @@
     for (const p of mpos){ const zone = dioBox(13, 0.05, 11, 0x2a2a18, 0x161608); zone.position.set(p.x, 0.42, p.z); g.add(zone); }
     // support pillars at the floor corners
     for (const px of [xmin - 18, xmax + 18]) for (const pz of [-(zmax + 16), zmax + 16]){ const pil = dioBox(2.2, 38, 2.2, 0x39424f, 0x141a22); pil.position.set(px, 19, pz); g.add(pil); }
-    // overhead gantry: rails along the plant + a traveling trolley hook
+    // overhead BRIDGE CRANE: a big trolley spanning the bays on two rails
     const railY = 30; for (const rz of [-5, 5]){ const rail = dioBox(span, 0.7, 0.7, 0x4a586c, 0x16202c); rail.position.set(cx, railY, rz); g.add(rail); }
     const trolley = new THREE.Group();
     const tb = dioBox(3, 1.2, 9, 0x5a6678, 0x1a2430); tb.position.y = railY - 0.9; trolley.add(tb);
     const cable = dioBox(0.18, 11, 0.18, 0x2a3340, 0x0a0f18); cable.position.y = railY - 6.5; trolley.add(cable);
     const hook = dioBox(1.5, 1.0, 1.5, 0x9fb0c8, 0x2a3a4d); hook.position.y = railY - 12.5; trolley.add(hook);
     trolley.position.set(cx, 0, 0); g.add(trolley);
+    // OVERHEAD HOIST TRANSFER (OHT): a network of ceiling monorails, several hoist vehicles per line, each
+    // shuttling a lifted carrier pod across the plant (semiconductor-fab style automated material handling)
+    const ohtY = 34, ohts = [], ohtZ = [-50, -20, 20, 50];
+    for (let r = 0; r < ohtZ.length; r++){ const rz = ohtZ[r];
+      for (const dz of [-1.6, 1.6]){ const rail = dioBox(span + 6, 0.55, 0.45, 0x46566c, 0x141c28); rail.position.set(cx, ohtY, rz + dz); g.add(rail); }
+      for (let v = 0; v < 2; v++){ const o = oeeOht(ohtY); o.grp.position.set(cx, 0, rz); g.add(o.grp);
+        ohts.push({ grp: o.grp, pod: o.pod, baseY: o.podY, amp: (span / 2) - 6, spd: 0.09 + 0.018 * r + 0.045 * v, phase: r * 1.7 + v * Math.PI, bob: 0.5 + 0.12 * r }); } }
     // glass control booth off the intake end
     const booth = new THREE.Group(); booth.position.set(xmin - 14, 0, zmax + 8);
     const bf = dioBox(12, 0.3, 12, 0x222a36, 0x0c1018); bf.position.y = 0.3; booth.add(bf);
@@ -8736,7 +8743,7 @@
       for (const sy of [3.5, 7.5, 11]){ const sh = dioBox(11, 0.4, 1.6, 0x4a586c, 0x16202c); sh.position.set(0, sy, 0); rk.add(sh);
         for (const bx of [-3.2, 0, 3.2]){ const pal = dioBox(2.6, 1.4, 1.3, 0xc8975a, 0x3a2912); pal.position.set(bx, sy + 0.9, 0); rk.add(pal); } }
       g.add(rk); }
-    return { trolley, cx, span };
+    return { trolley, ohts, cx, span };
   }
   // --- NETWORKED factory flow (node-graph): parts MOVE on segments, QUEUE in node buffers, are SERVICED by
   //     machines (gated by breakdowns), then advance — WELD COMBINES (2→1), ASSEMBLE DISPATCHES (1→2). ---
@@ -8761,6 +8768,16 @@
     const crate = new THREE.Group(); const cb = dioBox(1.6, 1.3, 1.4, 0xc8975a, 0x3a2912); cb.position.y = 0.65; crate.add(cb);
     const tp = dioBox(1.66, 0.12, 0.5, 0xffb030, 0x3a2c00); tp.position.y = 1.34; crate.add(tp); crate.position.y = 1.27; g.add(crate);
     return { grp: g, crate }; }
+  // ONE Overhead Hoist Transfer vehicle: a carrier that rides a ceiling monorail with a hoist cable + a lifted
+  // pod/carrier (semiconductor-fab style). Travels along the rail; the hoist bobs up/down.
+  function oeeOht(railY){ const g = new THREE.Group();
+    const car = dioBox(2.8, 1.0, 2.2, 0x5a6678, 0x1a2430); car.position.y = railY - 0.6; g.add(car);
+    const led = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.16, 8), new THREE.MeshBasicMaterial({ color: 0x49e0ff })); led.rotation.z = Math.PI / 2; led.position.set(1.5, railY - 0.6, 0); g.add(led);
+    const cab = dioBox(0.16, 5.0, 0.16, 0x2a3340, 0x0a0f18); cab.position.y = railY - 3.3; g.add(cab);
+    const pod = new THREE.Group(); const body = dioBox(1.8, 2.0, 1.8, 0x35566e, 0x10202c); pod.add(body);
+    const lid = dioBox(1.95, 0.4, 1.95, 0x9fb0c8, 0x2a3a4d); lid.position.y = 1.1; pod.add(lid);
+    const podY = railY - 7; pod.position.y = podY; g.add(pod);
+    return { grp: g, pod, podY }; }
   function oeeEmit(st, p, segIdx, stage){ p.active = true; p.state = 'moving'; p.seg = segIdx; p.t = 0; p.node = null; setOeePart(p, stage);
     const s = st.S[segIdx]; p.vx = s.ax; p.vz = s.az; p.grp.visible = true; }
   function buildSmartFactoryScene(section){
@@ -8791,6 +8808,7 @@
     node('F2', -16, 0, 'split', 'qc', 'Sorter', 3, 2.0); node('F3', -16, 22, 'machine', 'lathe', 'Finish 3', 3, 1.35); node('F4', -16, 44, 'machine', 'mill', 'Finish 4', 3, 1.55);
     node('A0', 16, -22, 'merge', 'assemble', 'Main Assembly A', 3, 0.92); node('A1', 16, 22, 'merge', 'assemble', 'Main Assembly B', 3, 0.88);
     node('Q0', 46, -22, 'split', 'qc', 'QC · Dispatch A', 3, 2.2); node('Q1', 46, 22, 'split', 'qc', 'QC · Dispatch B', 3, 2.15);
+    node('RW', 26, -64, 'machine', 'weld', 'Rework · Repair', 2, 1.4);   // failed-QC parts loop back here, get repaired, re-enter assembly
     const prate = [1.6, 1.4, 1.5, 1.45, 1.55], Zpk = [-48, -24, 0, 24, 48];
     Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4, prate[i]));
     Zpk.forEach((z, i) => node('D' + i, 110, z, 'sink', null, 'Ship ' + String.fromCharCode(65 + i), 4));
@@ -8803,10 +8821,15 @@
     seg('F0', 'A0'); seg('F1', 'A0'); seg('F2', 'A0'); seg('F2', 'A1'); seg('F3', 'A1'); seg('F4', 'A1'); // finishing → 2 assembly hubs (sorter F2 feeds both)
     seg('A0', 'Q0'); seg('A1', 'Q1');                                                    // assembly → QC
     seg('Q0', 'PK0'); seg('Q0', 'PK1'); seg('Q0', 'PK2'); seg('Q1', 'PK2'); seg('Q1', 'PK3'); seg('Q1', 'PK4'); // QC dispatch → 5 pack (PK2 shared)
+    seg('Q0', 'RW'); seg('Q1', 'RW'); seg('RW', 'A0');                                   // REWORK LOOP: QC rejects → repair → back into assembly
     for (let i = 0; i < 5; i++) seg('PK' + i, 'D' + i);                                  // pack → ship docks
+    // mark the two QC stations as pass/fail GATES (route each part to ONE pack line, or back to Rework), and
+    // tag the rework belts so they render as a distinct amber return loop. quality reflects the reject rate.
+    [N.Q0, N.Q1].forEach((q, i) => { q.qcGate = true; q.failFrac = 0.14; q.reworkOut = q.outSegs.length - 1; q.rr = 0; q.qhash = (i + 1) * 13.37; });
+    for (const s of S){ if (s.a === 'RW' || s.b === 'RW') s.rework = true; }
     const chev = [];
-    S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, 0x202d40, 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
-      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
+    S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, s.rework ? 0x3a2014 : 0x202d40, s.rework ? 0x1c0c04 : 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
+      for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: s.rework ? 0xff8a3a : 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
         const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, beltTop + 0.4, s.az + (s.bz - s.az) * t0); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); } });
     const machines = []; let mi = 0;
     for (const id in N){ const nd = N[id];
@@ -8828,9 +8851,10 @@
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 58, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
+    let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
     sceneState[section] = { g, C, N, S, machines, parts, chev, sparks, sparkNode, agvs, beltTop, env,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
-      perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 3), count: new Array(5).fill(0), val: new Array(5).fill(0) };
+      perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 3), qcFail: qn ? qf / qn : 0.03, count: new Array(5).fill(0), val: new Array(5).fill(0) };
     updateSmartFactoryScene(section);
   }
   function updateSmartFactoryScene(section){ const st = sceneState[section]; if (!st || !st.parts) return;
@@ -8854,7 +8878,14 @@
       const roomAny = outs.some((t) => t.kind === 'sink' || t.buf.length < st.bufCap);
       if (!m.down){
         if (m.holding){ m.busyT -= dt; if (m.busyT <= 0){ const carrier = m.holding; m.holding = null;
-          if (m.kind === 'split'){ for (let oi = 0; oi < m.outSegs.length; oi++){ if (outs[oi].kind !== 'sink' && outs[oi].buf.length >= st.bufCap) continue;
+          if (m.qcGate){
+            // INSPECT: pass → route to ONE pack line (round-robin, room-first); fail → send back round the rework loop
+            const rwSeg = m.outSegs[m.reworkOut], rwNode = st.N[st.S[rwSeg].b];
+            const fail = flowFrac(Math.sin((T * 2.7 + (m.qhash || 0)) * 53.17)) < (m.failFrac || 0);
+            if (fail && rwNode && rwNode.buf.length < st.bufCap){ const back = Math.max(0, m.outStage - 1); setOeePart(carrier, back); oeeEmit(st, carrier, rwSeg, back); m.reworkN = (m.reworkN || 0) + 1; }
+            else { let oi = -1; for (let k = 0; k < m.reworkOut; k++){ const c = (m.rr + k) % m.reworkOut; const t = st.N[st.S[m.outSegs[c]].b]; if (t.kind === 'sink' || t.buf.length < st.bufCap){ oi = c; break; } }
+              if (oi < 0) oi = m.rr % m.reworkOut; m.rr = (oi + 1) % m.reworkOut; oeeEmit(st, carrier, m.outSegs[oi], m.outStage); } }
+          else if (m.kind === 'split'){ for (let oi = 0; oi < m.outSegs.length; oi++){ if (outs[oi].kind !== 'sink' && outs[oi].buf.length >= st.bufCap) continue;
               const pp = (oi === 0) ? carrier : oeeFree(st); if (pp) oeeEmit(st, pp, m.outSegs[oi], m.outStage); } }
           else { oeeEmit(st, carrier, m.outSegs[0], m.outStage); } } }
         else if (m.buf.length >= m.need && roomAny){
@@ -8887,9 +8918,12 @@
       for (let s = 0; s < st.sparks.length; s++){ const k = st.sparks[s]; k.t += dt * 2.4;
         if (k.t >= 1){ if (welding){ k.t = flowFrac(Math.sin((T + s) * 12.9898) * 4378.5); k.vx = (flowFrac(Math.sin((T * 7 + s) * 7.1) * 913) - 0.5) * 9; k.vy = 5 + flowFrac(Math.cos((T * 5 + s) * 3.3) * 557) * 5; k.m.position.set(ex, ey, ez); k.m.visible = true; } else { k.m.visible = false; } continue; }
         k.m.position.x += k.vx * dt; k.m.position.y += (k.vy - 16 * k.t) * dt; k.m.position.z = ez; if (k.m.material) k.m.material.opacity = 0.9 * (1 - k.t); } }
-    if (st.env && st.env.trolley) st.env.trolley.position.x = (st.env.cx || 0) + Math.sin(T * 0.12) * ((st.env.span || 120) / 2 - 8);
+    if (st.env){ const ecx = st.env.cx || 0, esp = st.env.span || 120;
+      if (st.env.trolley) st.env.trolley.position.x = ecx + Math.sin(T * 0.12) * (esp / 2 - 8);
+      if (st.env.ohts){ for (const o of st.env.ohts){ o.grp.position.x = ecx + Math.sin(T * o.spd + o.phase) * o.amp;
+        if (o.pod) o.pod.position.y = o.baseY - (0.5 + 0.5 * Math.sin(T * 0.7 + o.phase)) * (o.bob || 0.6) * 4; } } }
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
-      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / (st.perfRef || (C.rate * 1.6)))), quality = 0.97, oee = avail * perf * quality;
+      const avail = st.availInst, perf = Math.max(0, Math.min(1, st.perfEMA / (st.perfRef || (C.rate * 1.6)))), quality = Math.max(0.5, 1 - (st.qcFail || 0.03)), oee = avail * perf * quality;
       if (st.dashA) setSpriteText(st.dashA, 'OEE ' + Math.round(oee * 100) + '%   =  A ' + Math.round(avail * 100) + '%  ×  P ' + Math.round(perf * 100) + '%  ×  Q ' + Math.round(quality * 100) + '%');
       let wip = 0; for (const m of st.machines) wip += m.buf.length + (m.holding ? 1 : 0); const down = st.machines.filter((m) => m.down).length;
       if (st.dashB) setSpriteText(st.dashB, 'Throughput ' + Math.round(st.perfEMA * 60) + '/min   ·   WIP ' + wip + '   ·   Down ' + down + '/' + st.machines.length);
