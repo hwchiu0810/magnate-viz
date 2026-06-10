@@ -9493,29 +9493,40 @@
     const G = new THREE.Group(); G.visible = false; scene.add(G);
     const N = 6, SP = 40, x0 = -(N - 1) / 2 * SP;
     const carMats = [0x49e0ff, 0xffb347, 0x6ee7a8, 0xff8aa0, 0xc89bf0, 0xe6e6ea].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.12), emissiveIntensity: 0.5, roughness: 0.45, metalness: 0.35 }));
-    // LOW-POLY CAR built from shared primitives (forward = +X so rotation.y = -heading orients it): chassis +
-    // hood/boot taper + cabin greenhouse + wrap-around tinted glass + 4 wheels + head/tail lights.
-    const cg = {
-      chassis: new THREE.BoxGeometry(4.6, 0.7, 2.0), hood: new THREE.BoxGeometry(1.5, 0.5, 1.8), cabin: new THREE.BoxGeometry(2.0, 0.95, 1.7),
-      glass: new THREE.BoxGeometry(2.05, 0.8, 1.45), wheel: new THREE.CylinderGeometry(0.5, 0.5, 0.42, 12),
-      headL: new THREE.BoxGeometry(0.18, 0.32, 1.5), tailL: new THREE.BoxGeometry(0.16, 0.34, 1.55),
-    };
+    // LOW-POLY VEHICLES built from shared primitives (forward = +X so rotation.y = -heading orients it). THREE
+    // body styles — sedan, van, bus — each: chassis + cabin/greenhouse + tinted glass + wheels + head/tail lights.
+    // (Imported GLTF is intentionally NOT used: it would break the single-file/offline/headless-deterministic
+    // guarantees + the curated deploy. A GLTFLoader hook with primitive fallback can be enabled with a model URL.)
     const cm = {
-      glass: new THREE.MeshStandardMaterial({ color: 0x0c141e, roughness: 0.15, metalness: 0.6, transparent: true, opacity: 0.78 }),
+      glass: new THREE.MeshStandardMaterial({ color: 0x0c141e, roughness: 0.15, metalness: 0.6, transparent: true, opacity: 0.8 }),
       wheel: new THREE.MeshStandardMaterial({ color: 0x12141a, roughness: 0.9, metalness: 0.1 }),
       hub:   new THREE.MeshStandardMaterial({ color: 0x9aa6b8, roughness: 0.4, metalness: 0.7 }),
-      head:  new THREE.MeshBasicMaterial({ color: 0xfff1c8 }), tail: new THREE.MeshBasicMaterial({ color: 0xff3326 }),
+      head:  new THREE.MeshBasicMaterial({ color: 0xfff1c8 }),
+      busBody: new THREE.MeshStandardMaterial({ color: 0xe2b93a, roughness: 0.5, metalness: 0.3, emissive: new THREE.Color(0x2a2208), emissiveIntensity: 0.4 }),
     };
-    const makeCar = (bodyMat) => { const g = new THREE.Group();
-      const ch = new THREE.Mesh(cg.chassis, bodyMat); ch.position.y = 0.78; g.add(ch);
-      const hd = new THREE.Mesh(cg.hood, bodyMat); hd.position.set(1.45, 1.05, 0); g.add(hd);
-      const cb = new THREE.Mesh(cg.cabin, bodyMat); cb.position.set(-0.45, 1.45, 0); g.add(cb);
-      const gl = new THREE.Mesh(cg.glass, cm.glass); gl.position.set(-0.45, 1.47, 0); g.add(gl);
-      for (const wx of [1.45, -1.45]) for (const wz of [-1.02, 1.02]){ const w = new THREE.Mesh(cg.wheel, cm.wheel); w.rotation.x = Math.PI / 2; w.position.set(wx, 0.5, wz); g.add(w);
-        const hub = new THREE.Mesh(cg.hub, cm.hub); hub.rotation.x = Math.PI / 2; hub.position.set(wx, 0.5, wz + (wz > 0 ? 0.22 : -0.22)); hub.scale.set(0.5, 1.05, 0.5); g.add(hub); }
-      const hlL = new THREE.Mesh(cg.headL, cm.head); hlL.position.set(2.32, 0.85, 0); g.add(hlL);
-      const tlL = new THREE.Mesh(cg.tailL, cm.tail); tlL.position.set(-2.32, 0.9, 0); g.add(tlL);
-      return g; };
+    const STYLE = [   // 0 sedan · 1 van · 2 bus
+      { len: 4.6, w: 2.0, chH: 0.7, chY: 0.78, cabL: 2.0, cabH: 0.95, cabY: 1.45, cabX: -0.45, glH: 0.8, whl: 0.5, wb: 1.45, wzz: 1.02, win: 0 },
+      { len: 5.4, w: 2.2, chH: 1.5, chY: 1.0, cabL: 3.2, cabH: 1.25, cabY: 1.95, cabX: -0.2, glH: 1.0, whl: 0.55, wb: 1.7, wzz: 1.12, win: 0 },
+      { len: 9.0, w: 2.5, chH: 2.6, chY: 1.5, cabL: 8.2, cabH: 1.1, cabY: 2.95, cabX: 0, glH: 0, whl: 0.6, wb: 3.0, wzz: 1.28, win: 5 },
+    ];
+    const styGeo = STYLE.map((s) => ({
+      ch: new THREE.BoxGeometry(s.len, s.chH, s.w), cab: new THREE.BoxGeometry(s.cabL, s.cabH, s.w * 0.92),
+      gl: s.glH ? new THREE.BoxGeometry(s.cabL + 0.06, s.glH, s.w * 0.92 + 0.04) : null,
+      whl: new THREE.CylinderGeometry(s.whl, s.whl, 0.42, 12), tail: new THREE.BoxGeometry(0.16, 0.36, s.w * 0.8),
+      win: s.win ? new THREE.BoxGeometry(0.9, 0.7, s.w * 0.94) : null, head: new THREE.BoxGeometry(0.18, 0.3, s.w * 0.75),
+    }));
+    const makeCar = (bodyMat, style) => { const s = STYLE[style], gg = styGeo[style], g = new THREE.Group();
+      const bMat = style === 2 ? cm.busBody : bodyMat;
+      const ch = new THREE.Mesh(gg.ch, bMat); ch.position.y = s.chY; g.add(ch);
+      const cb = new THREE.Mesh(gg.cab, bMat); cb.position.set(s.cabX, s.cabY, 0); g.add(cb);
+      if (gg.gl){ const gl = new THREE.Mesh(gg.gl, cm.glass); gl.position.set(s.cabX, s.cabY + 0.02, 0); g.add(gl); }
+      if (gg.win){ for (let wi = 0; wi < s.win; wi++){ const win = new THREE.Mesh(gg.win, cm.glass); win.position.set(-s.len / 2 + 1.4 + wi * 1.55, s.cabY, 0); g.add(win); } }
+      const back = -s.len / 2 + 0.1; const wbz = s.wzz;
+      for (const wx of [s.wb, back + 0.4]) for (const wz of [-wbz, wbz]){ const w = new THREE.Mesh(gg.whl, cm.wheel); w.rotation.x = Math.PI / 2; w.position.set(wx, s.whl, wz); g.add(w); }
+      const hl = new THREE.Mesh(gg.head, cm.head); hl.position.set(s.len / 2 - 0.05, s.chY + 0.05, 0); g.add(hl);
+      const tailMat = new THREE.MeshBasicMaterial({ color: 0x5a1410 });   // per-car: brightens to brake-red when stopped
+      const tl = new THREE.Mesh(gg.tail, tailMat); tl.position.set(-s.len / 2 + 0.05, s.chY + 0.1, 0); g.add(tl);
+      g.userData.tail = tailMat; return g; };
     const lampGeo = new THREE.SphereGeometry(0.7, 8, 6);
     const nodes = [];
     for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){ const x = x0 + ix * SP, z = x0 + iy * SP;
@@ -9534,10 +9545,26 @@
       s.mat = mat; const idx = segs.push(s) - 1; a.edges.push(idx); b.edges.push(idx); s.road = rd; s.label = 'Road ' + a.ix + ',' + a.iy + (axis === 'H' ? '→E' : '→S'); return idx; };
     for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++){ const nd = nodeAt(ix, iy);
       if (ix < N - 1) addSeg(nd, nodeAt(ix + 1, iy), 'H'); if (iy < N - 1) addSeg(nd, nodeAt(ix, iy + 1), 'V'); }
-    const vehicles = []; for (let k = 0; k < 150; k++){ const m = makeCar(carMats[k % carMats.length]); m.visible = false; G.add(m); vehicles.push({ mesh: m, active: false, seg: -1, dir: 1, t: 0, hops: 0, waitT: 0 }); }
+    // STREET FURNITURE — trees + lamp posts at the block corners, and a few pedestrians (enriches the VR; decorative)
+    const trunkGeo = new THREE.CylinderGeometry(0.32, 0.42, 2.6, 6), canopyGeo = new THREE.ConeGeometry(2.1, 4.8, 7);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.9 }), leafMat = new THREE.MeshStandardMaterial({ color: 0x2f6b3a, roughness: 0.85, emissive: new THREE.Color(0x0a1c0e), emissiveIntensity: 0.3 });
+    const postGeo = new THREE.CylinderGeometry(0.18, 0.24, 7, 6), postMat = new THREE.MeshStandardMaterial({ color: 0x3a4654, roughness: 0.6, metalness: 0.4 }), lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffe6a6 }), lampHeadGeo = new THREE.SphereGeometry(0.45, 8, 6);
+    const pedBody = (typeof THREE.CapsuleGeometry === 'function') ? new THREE.CapsuleGeometry(0.45, 1.0, 3, 6) : new THREE.CylinderGeometry(0.42, 0.5, 1.7, 6);   // r128 has no CapsuleGeometry
+    const pedHead = new THREE.SphereGeometry(0.4, 7, 6), pedMats = [0x49e0ff, 0xffb347, 0xff8aa0, 0x6ee7a8, 0xe6e6ea].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 }));
+    const peds = [];
+    for (const nd of nodes){ const corners = [[-6.5, -6.5], [-6.5, 6.5], [6.5, -6.5]];   // skip the (+,+) corner (signal mast)
+      for (let ci = 0; ci < corners.length; ci++){ const rr = tfFr(Math.sin((nd.ix * 9.1 + nd.iy * 4.7 + ci * 3.3)) * 4137.7);
+        if (rr < 0.55){ const tr = new THREE.Group(); const tk = new THREE.Mesh(trunkGeo, trunkMat); tk.position.y = 1.3; tr.add(tk); const cp = new THREE.Mesh(canopyGeo, leafMat); cp.position.y = 4.2; cp.scale.setScalar(0.7 + rr * 0.6); tr.add(cp); tr.position.set(nd.x + corners[ci][0], 0, nd.z + corners[ci][1]); G.add(tr); }
+        else { const lp = new THREE.Group(); const ps = new THREE.Mesh(postGeo, postMat); ps.position.y = 3.5; lp.add(ps); const lh = new THREE.Mesh(lampHeadGeo, lampHeadMat); lh.position.y = 7; lp.add(lh); lp.position.set(nd.x + corners[ci][0], 0, nd.z + corners[ci][1]); G.add(lp); } } }
+    for (let k = 0; k < 30; k++){ const nd = nodes[(tfFr(Math.sin((k + 1) * 5.7) * 311.3) * nodes.length) | 0]; const side = (tfFr(Math.sin((k + 1) * 9.3) * 71.1) * 4) | 0;
+      const pg = new THREE.Group(); const bd = new THREE.Mesh(pedBody, pedMats[k % pedMats.length]); bd.position.y = 1.0; pg.add(bd); const hd = new THREE.Mesh(pedHead, pedMats[(k + 2) % pedMats.length]); hd.position.y = 2.0; pg.add(hd);
+      const cx = nd.x + (side === 0 ? 6.5 : side === 1 ? -6.5 : tfFr(Math.sin(k * 3.1) * 91) * 11 - 5.5), cz = nd.z + (side === 2 ? 6.5 : side === 3 ? -6.5 : tfFr(Math.sin(k * 7.7) * 53) * 11 - 5.5);
+      pg.position.set(cx, 0.5, cz); G.add(pg); peds.push({ g: pg, baseY: 0.5, phase: k * 1.7, axis: (side < 2) ? 'z' : 'x', home: (side < 2) ? cz : cx, span: 5 }); }
+    const vehicles = []; for (let k = 0; k < 150; k++){ const style = (k % 9 === 8) ? 2 : (k % 9 >= 6 ? 1 : 0);   // mostly sedans, some vans, a few buses
+      const m = makeCar(carMats[k % carMats.length], style); m.visible = false; G.add(m); vehicles.push({ mesh: m, tail: m.userData.tail, active: false, seg: -1, dir: 1, t: 0, hops: 0, waitT: 0 }); }
     const dashT = labelSpriteSafe('🚦 Smart City II · Traffic & Signal Control', '#cfe0ff', 20, 0, 42, 0); G.add(dashT);
     const dashA = labelSpriteSafe('', '#bfe6ff', 16, 0, 34, 0); G.add(dashA);
-    trafficTwin = { G, N, SP, nodes, segs, nodeAt, vehicles, dashA,
+    trafficTwin = { G, N, SP, nodes, segs, nodeAt, vehicles, peds, dashA,
       cfg: { demand: 1.0, cycle: 7, split: 0.5, offset: 0, capacity: 6, baseSpeed: 30 },
       phase: 0, spawnT: 0, spawnSeed: 0, throughEMA: 0, compN: 0, compT: 0, completed: 0, congPct: 0, flowPct: 100 };
     return trafficTwin;
@@ -9557,6 +9584,7 @@
       const dens = Math.min(1, s.count / c.capacity); const sp = c.baseSpeed * (1 - 0.78 * dens);
       const toNode = v.dir > 0 ? s.b : s.a;
       const blocked = (v.t > 0.9) && (s.closed || toNode.green !== s.axis);
+      if (v.tail && v.tail.color) v.tail.color.setHex((blocked || dens > 0.75) ? 0xff2a14 : 0x5a1410);   // brake-light flare when stopped/crawling
       if (blocked){ v.waitT += dt; } else { v.t += sp * dt / s.len; }
       if (v.t >= 1){ v.hops++;
         if (v.hops >= 8){ v.active = false; v.mesh.visible = false; tw.compN++; tw.completed++; continue; }   // trip complete (reached destination)
@@ -9571,6 +9599,7 @@
       const ex = v.dir > 0 ? s2.bx : s2.ax, ez = v.dir > 0 ? s2.bz : s2.az;
       const px = fx + (ex - fx) * v.t, pz = fz + (ez - fz) * v.t; const ang = Math.atan2(ez - fz, ex - fx);
       v.mesh.position.set(px + Math.sin(ang) * 1.8, 0.4, pz - Math.cos(ang) * 1.8); v.mesh.rotation.y = -ang; }
+    if (tw.peds){ for (const p of tw.peds){ const w = p.home + Math.sin(T * 0.6 + p.phase) * p.span; if (p.axis === 'z') p.g.position.z = w; else p.g.position.x = w; p.g.position.y = p.baseY + Math.abs(Math.sin(T * 3 + p.phase)) * 0.18; p.g.rotation.y = (Math.cos(T * 0.6 + p.phase) > 0 ? 0 : Math.PI) + (p.axis === 'z' ? Math.PI / 2 : 0); } }
     let cong = 0; for (const s of tw.segs){ const dens = Math.min(1, s.count / c.capacity); let col;
       if (s.closed) col = 0x6a2a2a; else if (dens < 0.4) col = 0x2f5e3a; else if (dens < 0.7) col = 0x7a6a2a; else { col = 0x7a2a2a; }
       if (dens > 0.65 && !s.closed) cong++; if (s.mat && s.mat.color && s.mat.color.setHex) s.mat.color.setHex(col); }
