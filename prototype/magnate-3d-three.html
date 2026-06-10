@@ -8583,6 +8583,35 @@
    *  Performance × Quality dashboard. VIEW-ONLY, pooled, headless-safe.
    * ============================================================ */
   const SF_OEE = { bufCap: 5, rate: 1.2, spawn: 0.66, objN: 240, objScale: 1.35, mtbf: 16 };
+  let sfRateSeed = 7;   // seed for the Smart Factory's RANDOMIZED initial throughput / availability / reject rates
+  //  (deterministic, no wall-clock — honours the headless+reproducible invariant; the 🎲 button advances it)
+  // Assign every machine a SEEDED-RANDOM throughput within a band chosen by its FUNCTION so the network stays
+  // balanced (assembly hubs are the slow bottleneck, convergence/dispatch nodes stay fast), then re-derive each
+  // belt's speed + (optionally) each machine's availability clock. Returns the average QC reject rate.
+  function sfRollRates(N, S, C, seed, machines){
+    let rc = 0; const fr = (v) => v - Math.floor(v);
+    const rnd = () => { rc++; return fr(Math.sin(rc * 12.9898 + seed * 19.73) * 43758.5453); };
+    const band = (id, nd) => {
+      if (nd.kind === 'merge' && id[0] === 'A') return [0.78, 0.98];   // main assembly = deliberate bottleneck
+      if (nd.type === 'weld') return [1.5, 1.9];                       // sub-assembly welds / rework
+      if (nd.kind === 'split' && (id[0] === 'D' || id[0] === 'Q')) return [2.0, 2.4]; // distribution + QC dispatch
+      if (id === 'F2') return [1.9, 2.3];                              // mid-line sorter split
+      if (nd.type === 'pack') return [1.3, 1.7];
+      if (nd.type === 'mill') return [1.5, 2.0];
+      if (nd.type === 'lathe') return [1.3, 1.7];
+      return [1.3, 1.7];
+    };
+    for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink') continue;
+      const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate;
+      if (nd.qcGate) nd.failFrac = +(0.06 + rnd() * 0.12).toFixed(3); }
+    for (const s of S) s.spd = (N[s.a].rate || C.rate) / C.rate;       // belts scroll at the feeding site's rate
+    if (machines){ for (const m of machines){ const mi = m.mi || 0;    // reshuffle the availability/breakdown clocks too
+      m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 14;
+      m.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.11;
+      m.offset = fr(Math.sin((mi + 1) * 12.9898 + seed * 5.0) * 43758.5); } }
+    let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac; qn++; } }
+    return qn ? qf / qn : 0.03;
+  }
   // shared materials/geometries for the detailed machines + morphing workpieces (built once; recognizable, not boxes)
   const SFX_M = {
     steel: new THREE.MeshStandardMaterial({ color: 0x8a98ac, emissive: new THREE.Color(0x18222e), emissiveIntensity: 0.1, roughness: 0.4, metalness: 0.62 }),
@@ -8796,22 +8825,23 @@
     // A BRANCHING, MULTI-PATH PLANT: 6 intake → 6 machining → 3 sub-assembly welds (combine 2→1) → 3 distribution
     // hubs (dispatch 1→many) → 5 finishing cells (one is a mid-line splitter) → 2 main-assembly hubs (combine) →
     // 2 QC/dispatch sorters (dispatch 1→3) → 5 pack lines → 5 ship docks. Cross-connecting diagonals everywhere.
-    // EACH SITE RUNS AT A DIFFERENT THROUGHPUT (parts/s) — the two Main-Assembly hubs are the deliberate
-    // bottlenecks — and the belts downstream of each site scroll at that site's throughput.
+    // EACH SITE RUNS AT A DIFFERENT, RANDOMIZED (seeded) THROUGHPUT (parts/s) — assigned below by sfRollRates
+    // within function-specific bands; the two Main-Assembly hubs are the deliberate bottlenecks, and the belts
+    // downstream of each site scroll at that site's throughput.
     // DIVERGENCE only happens at 'split' nodes (1→N); CONVERGENCE (multiple inbound belts) is fine on any node.
     const Zsrc = [-55, -33, -11, 11, 33, 55];
     Zsrc.forEach((z, i) => node('IN' + i, -134, z, 'source', null, 'Intake ' + String.fromCharCode(65 + i), 0));
-    const mtypes = ['mill', 'lathe', 'mill', 'lathe', 'mill', 'lathe'], mrate = [1.9, 1.5, 1.85, 1.45, 1.9, 1.5];
-    Zsrc.forEach((z, i) => node('M' + i, -106, z, 'machine', mtypes[i], (mtypes[i] === 'mill' ? 'Mill ' : 'Lathe ') + (i + 1), 1, mrate[i]));
-    node('W0', -76, -37, 'merge', 'weld', 'Sub-weld A', 2, 1.7); node('W1', -76, 0, 'merge', 'weld', 'Sub-weld B', 2, 1.6); node('W2', -76, 37, 'merge', 'weld', 'Sub-weld C', 2, 1.65);
-    node('DS0', -46, -37, 'split', 'assemble', 'Distrib 1', 2, 2.2); node('DS1', -46, 0, 'split', 'assemble', 'Distrib 2', 2, 2.1); node('DS2', -46, 37, 'split', 'assemble', 'Distrib 3', 2, 2.15);
-    node('F0', -16, -44, 'machine', 'mill', 'Finish 1', 3, 1.6); node('F1', -16, -22, 'machine', 'lathe', 'Finish 2', 3, 1.4);
-    node('F2', -16, 0, 'split', 'qc', 'Sorter', 3, 2.0); node('F3', -16, 22, 'machine', 'lathe', 'Finish 3', 3, 1.35); node('F4', -16, 44, 'machine', 'mill', 'Finish 4', 3, 1.55);
-    node('A0', 16, -22, 'merge', 'assemble', 'Main Assembly A', 3, 0.92); node('A1', 16, 22, 'merge', 'assemble', 'Main Assembly B', 3, 0.88);
-    node('Q0', 46, -22, 'split', 'qc', 'QC · Dispatch A', 3, 2.2); node('Q1', 46, 22, 'split', 'qc', 'QC · Dispatch B', 3, 2.15);
-    node('RW', 26, -64, 'machine', 'weld', 'Rework · Repair', 2, 1.4);   // failed-QC parts loop back here, get repaired, re-enter assembly
-    const prate = [1.6, 1.4, 1.5, 1.45, 1.55], Zpk = [-48, -24, 0, 24, 48];
-    Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4, prate[i]));
+    const mtypes = ['mill', 'lathe', 'mill', 'lathe', 'mill', 'lathe'];
+    Zsrc.forEach((z, i) => node('M' + i, -106, z, 'machine', mtypes[i], (mtypes[i] === 'mill' ? 'Mill ' : 'Lathe ') + (i + 1), 1));
+    node('W0', -76, -37, 'merge', 'weld', 'Sub-weld A', 2); node('W1', -76, 0, 'merge', 'weld', 'Sub-weld B', 2); node('W2', -76, 37, 'merge', 'weld', 'Sub-weld C', 2);
+    node('DS0', -46, -37, 'split', 'assemble', 'Distrib 1', 2); node('DS1', -46, 0, 'split', 'assemble', 'Distrib 2', 2); node('DS2', -46, 37, 'split', 'assemble', 'Distrib 3', 2);
+    node('F0', -16, -44, 'machine', 'mill', 'Finish 1', 3); node('F1', -16, -22, 'machine', 'lathe', 'Finish 2', 3);
+    node('F2', -16, 0, 'split', 'qc', 'Sorter', 3); node('F3', -16, 22, 'machine', 'lathe', 'Finish 3', 3); node('F4', -16, 44, 'machine', 'mill', 'Finish 4', 3);
+    node('A0', 16, -22, 'merge', 'assemble', 'Main Assembly A', 3); node('A1', 16, 22, 'merge', 'assemble', 'Main Assembly B', 3);
+    node('Q0', 46, -22, 'split', 'qc', 'QC · Dispatch A', 3); node('Q1', 46, 22, 'split', 'qc', 'QC · Dispatch B', 3);
+    node('RW', 26, -64, 'machine', 'weld', 'Rework · Repair', 2);   // failed-QC parts loop back here, get repaired, re-enter assembly
+    const Zpk = [-48, -24, 0, 24, 48];
+    Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4));
     Zpk.forEach((z, i) => node('D' + i, 110, z, 'sink', null, 'Ship ' + String.fromCharCode(65 + i), 4));
     const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate };
       s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
@@ -8828,6 +8858,7 @@
     // tag the rework belts so they render as a distinct amber return loop. quality reflects the reject rate.
     [N.Q0, N.Q1].forEach((q, i) => { q.qcGate = true; q.failFrac = 0.14; q.reworkOut = q.outSegs.length - 1; q.rr = 0; q.qhash = (i + 1) * 13.37; });
     for (const s of S){ if (s.a === 'RW' || s.b === 'RW') s.rework = true; }
+    sfRollRates(N, S, C, sfRateSeed);   // assign the RANDOMIZED initial throughput + reject rates + belt speeds
     const chev = [];
     S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, s.rework ? 0x3a2014 : 0x202d40, s.rework ? 0x1c0c04 : 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
       for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: s.rework ? 0xff8a3a : 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
@@ -8839,7 +8870,8 @@
         g.add(labelSpriteSafe((nd.kind === 'source' ? '▼ ' : '▲ ') + nd.name, '#9fb6cf', 11, nd.x, beltTop + 4.5, nd.z)); continue; }
       const hex = FLOW_COL[nd.outStage % FLOW_COL.length]; const cell = sfMakeCell(g, mi, nd.x, nd.z, hex, nd.type, nd.name);
       nd.cg = cell.cg; nd.tool = cell.tool; nd.arms = cell.arms; nd.lampR = cell.lampR; nd.lampA = cell.lampA; nd.lampG = cell.lampG; nd.beacon = cell.beacon;
-      nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7) * 1000) * 14; nd.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3) * 500) * 0.11; nd.offset = fr(Math.sin((mi + 1) * 12.9898) * 43758.5);
+      nd.mi = mi;   // breakdown/availability clock seeded by (machine index + the rate seed) → randomized initial availability
+      nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + sfRateSeed * 3.1) * 1000) * 14; nd.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3 + sfRateSeed * 1.7) * 500) * 0.11; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + sfRateSeed * 5.0) * 43758.5);
       machines.push(nd); mi++; }
     const sparkNode = N.W0 || N.W1 || null; const sparks = []; if (sparkNode){ const sgo = new THREE.SphereGeometry(0.17, 6, 5);
       for (let s = 0; s < 16; s++){ const sp = new THREE.Mesh(sgo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, opacity: 0.9, depthWrite: false, blending: FLOW_ADD })); sp.visible = false; g.add(sp); sparks.push({ m: sp, t: 1, vx: 0, vy: 0 }); } }
@@ -11794,6 +11826,7 @@
         '<div class="simctl"><label>↳ Throughput <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="24" max="150" step="3" aria-label="Selected site throughput per minute"></div>' +
         '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between failures"></div>' +
         '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="8" step="1" aria-label="Inter-machine buffer capacity"></div>' +
+        '<button class="simbtn" id="sim-roll" type="button">🎲 Randomize rates</button>' +
         '<button class="simbtn" id="sim-reset" type="button">↺ Reset</button>';
       const mt = $('sim-mtbf'), bf = $('sim-buf'), site = $('sim-site'), rate = $('sim-rate');
       const setMt = (v) => { const e = $('sim-mtbf-v'); if (e) e.textContent = '×' + (v / 10).toFixed(1); };
@@ -11811,6 +11844,10 @@
       if (mt){ mt.value = mtv; mt.oninput = () => { const v = +mt.value || 10; if (st) st.mtbfMul = v / 10; setMt(v); }; }
       if (bf){ bf.value = bfv; bf.oninput = () => { const v = +bf.value || 4; if (st) st.bufCap = v; setBf(v); }; }
       setMt(mtv); setBf(bfv);
+      // 🎲 re-roll ALL sites' throughput + reject + availability rates to a fresh seeded-random set (deterministic per seed)
+      const rl = $('sim-roll'); if (rl) rl.onclick = () => { if (!st) return; sfRateSeed = (sfRateSeed % 9000) + 1;
+        st.qcFail = sfRollRates(st.N, st.S, st.C, sfRateSeed, st.machines);
+        cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
       const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = SF_OEE.bufCap;
         if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); }
