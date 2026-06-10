@@ -9288,33 +9288,33 @@
       nd.mi = mi;
       nd.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + whRateSeed * 3.1) * 1000) * 16; nd.downFrac = 0.05 + fr(Math.sin((mi + 1) * 3.3 + whRateSeed * 1.7) * 500) * 0.09; nd.offset = fr(Math.sin((mi + 1) * 12.9898 + whRateSeed * 5.0) * 43758.5);
       stations.push(nd); mi++; }
-    // ===== MOBILE-RACK INVENTORY — 10 MOVABLE WALLS, each a 10×10 bin grid (10 columns × 10 floors = 100 bins;
-    // 1000 bins total). The walls slide along Z (compactus / mobile shelving) so exactly ONE aisle opens at a
-    // time — and a floor PICK ROBOT drives into that aisle to store/retrieve. NO overhead transport. =====
-    const WALLS = 10, COLS = 10, FLOORS = 10, CELLX = 4.4, CELLY = 4.2, WALLPITCH = 3.4, AISLEW = 12, cubeCX = 0, cubeBaseY = 5;
-    const cubeW = COLS * CELLX, cubeH = FLOORS * CELLY;
+    // ===== MOBILE-RACK INVENTORY — TWO banks flanking the retrieval conveyor (one each side, clear of the
+    // spine). Each bank = 10 MOVABLE WALLS, each wall a 10×10 grid (10 deep-columns × 10 floors = 100 bins);
+    // 2000 bins total. The walls are PERPENDICULAR to the conveyor (arrayed along X) and slide along X so ONE
+    // aisle (running in Z, away from the conveyor) opens at a time; a floor PICK ROBOT drives down that aisle. =====
+    const WALLS = 10, DEPTH = 10, FLOORS = 10, CELLZ = 4.2, CELLY = 4.2, WALLPITCH = 3.4, AISLEW = 12, cubeCX = 0, cubeBaseY = 5, BANKZ = 32;
+    const cubeW = WALLS * WALLPITCH + AISLEW, cubeH = FLOORS * CELLY, bankDepth = DEPTH * CELLZ;
     const cubeGroup = new THREE.Group(); g.add(cubeGroup);
-    const binGeo = new THREE.BoxGeometry(CELLX * 0.82, CELLY * 0.74, 2.2);
+    const binGeo = new THREE.BoxGeometry(2.2, CELLY * 0.74, CELLZ * 0.82);
     const skuMats = [0x3fd6ff, 0xffb347, 0x6ee7a8, 0xc89bf0, 0xff8aa0, 0xe6c24a].map((c) => new THREE.MeshStandardMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.18), emissiveIntensity: 0.5, roughness: 0.55, metalness: 0.2 }));
     const emptyMat = new THREE.MeshStandardMaterial({ color: 0x141c28, emissive: new THREE.Color(0x05080c), roughness: 0.9, metalness: 0.1, transparent: true, opacity: 0.35 });
-    const cellX = (ix) => cubeCX + (ix - (COLS - 1) / 2) * CELLX, cellY = (iy) => cubeBaseY + iy * CELLY;
-    const bins = [], walls = []; let slotTot = 0, slotOcc = 0;
-    for (let w = 0; w < WALLS; w++){ const wall = new THREE.Group(); const baseZ = (w - (WALLS - 1) / 2) * WALLPITCH; wall.position.z = baseZ; cubeGroup.add(wall);
-      for (let iy = 0; iy < FLOORS; iy++) for (let ix = 0; ix < COLS; ix++){ slotTot++;
-        const occ = flowFrac(Math.sin((w * 53.1 + ix * 12.9 + iy * 37.7 + whRateSeed * 3.3)) * 43758.5453) > 0.30; const sku = (w * 5 + ix * 3 + iy) % skuMats.length;
-        const m = new THREE.Mesh(binGeo, occ ? skuMats[sku] : emptyMat); m.position.set(cellX(ix), cellY(iy), 0); wall.add(m);
-        if (occ) slotOcc++; bins.push({ mesh: m, occ, mat: skuMats[sku] }); }
-      // wall frame: a thin shelf plate per floor + two end uprights
-      for (let iy = 0; iy < FLOORS; iy++){ const shelf = dioBox(cubeW + 1.2, 0.22, 2.6, 0x2a3442, 0x0e1620); shelf.position.set(cubeCX, cellY(iy) - CELLY * 0.42, 0); wall.add(shelf); }
-      for (const ux of [-cubeW / 2 - 0.4, cubeW / 2 + 0.4]){ const post = dioBox(0.6, cubeH + 1.4, 2.6, 0x39424f, 0x141a22); post.position.set(cubeCX + ux, cubeBaseY + cubeH / 2 - CELLY * 0.5, 0); wall.add(post); }
-      // rail the wall slides on
-      const railm = dioBox(cubeW + 2, 0.3, 0.5, 0x4a586c, 0x16202c); railm.position.set(cubeCX, cubeBaseY - 0.8, 0); wall.add(railm);
-      walls.push({ group: wall, baseZ }); }
-    cubeGroup.add(labelSpriteSafe('▦ Mobile-Rack Inventory · 10 walls × 10×10 (' + slotTot + ' bins)', '#cfe0ff', 16, cubeCX, cubeBaseY + cubeH + 8, 0));
-    // PICK ROBOTS — 2 floor carriers that drive into whichever aisle is open (travel X, hoist Y to the bins)
-    const pickers = [];
-    for (let k = 0; k < 2; k++){ const p = whPicker(); p.grp.position.set(cubeCX + (k ? 8 : -8), 0, 0); cubeGroup.add(p.grp); pickers.push({ grp: p.grp, shuttle: p.shuttle, phase: k * 2.4 }); }
-    const cranes = [];   // (legacy field kept empty — replaced by mobile walls + pick robots)
+    const cellY = (iy) => cubeBaseY + iy * CELLY;
+    const bins = [], banks = []; let slotTot = 0, slotOcc = 0;
+    for (let bi = 0; bi < 2; bi++){ const s = bi ? 1 : -1, bankCZ = s * BANKZ; const wallsArr = [];
+      for (let w = 0; w < WALLS; w++){ const wall = new THREE.Group(); const baseX = cubeCX + (w - (WALLS - 1) / 2) * WALLPITCH; wall.position.set(baseX, 0, bankCZ); cubeGroup.add(wall);
+        for (let iy = 0; iy < FLOORS; iy++) for (let c = 0; c < DEPTH; c++){ slotTot++;
+          const occ = flowFrac(Math.sin((bi * 91.3 + w * 53.1 + c * 12.9 + iy * 37.7 + whRateSeed * 3.3)) * 43758.5453) > 0.30; const sku = (bi * 2 + w * 5 + c * 3 + iy) % skuMats.length;
+          const m = new THREE.Mesh(binGeo, occ ? skuMats[sku] : emptyMat); m.position.set(0, cellY(iy), (c - (DEPTH - 1) / 2) * CELLZ); wall.add(m);
+          if (occ) slotOcc++; bins.push({ mesh: m, occ, mat: skuMats[sku] }); }
+        for (let iy = 0; iy < FLOORS; iy++){ const shelf = dioBox(2.4, 0.22, bankDepth + 1.2, 0x2a3442, 0x0e1620); shelf.position.set(0, cellY(iy) - CELLY * 0.42, 0); wall.add(shelf); }
+        for (const uz of [-bankDepth / 2 - 0.4, bankDepth / 2 + 0.4]){ const post = dioBox(2.4, cubeH + 1.4, 0.6, 0x39424f, 0x141a22); post.position.set(0, cubeBaseY + cubeH / 2 - CELLY * 0.5, uz); wall.add(post); }
+        const railm = dioBox(0.5, 0.3, bankDepth + 2, 0x4a586c, 0x16202c); railm.position.set(0, cubeBaseY - 0.8, 0); wall.add(railm);
+        wallsArr.push({ group: wall, baseX }); }
+      // PICK ROBOT for this bank: enters the open aisle from the conveyor side (z near 0) and drives into the depth
+      const nearZ = bankCZ - s * (bankDepth / 2 + 1), farZ = bankCZ + s * (bankDepth / 2 - 2);
+      const p = whPicker(); p.grp.rotation.y = Math.PI / 2; p.grp.position.set(cubeCX, 0, nearZ); cubeGroup.add(p.grp);
+      banks.push({ walls: wallsArr, picker: { grp: p.grp, shuttle: p.shuttle }, cx: cubeCX, cz: bankCZ, nearZ, farZ, phase: bi * 3.0 }); }
+    cubeGroup.add(labelSpriteSafe('▦ Mobile-Rack Inventory · 2 banks × 10 walls × 10×10 (' + slotTot + ' bins)', '#cfe0ff', 16, cubeCX, cubeBaseY + cubeH + 9, 0));
     // AMR FLEET — one autonomous mobile robot per INTER-STAGE conveyor (between processing nodes; skips dock
     // stubs + vertical lifts). On the RE-PICK conveyors the AMR is FUNCTIONAL: it picks up the actual mis-picked
     // tote and ferries it (its generic tote is hidden); elsewhere it's a decorative ferry carrying a tote.
@@ -9329,7 +9329,7 @@
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
     let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
     sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, agvs, beltTop, env,
-      bins, walls, pickers, cranes, cubeGroup, emptyMat, invClock: 0, invStep: 0,
+      bins, banks, cubeGroup, emptyMat, invClock: 0, invStep: 0,
       cubeCX, cubeW, cubeH, cubeBaseY, aisleW: AISLEW,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
       perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 3), qcFail: qn ? qf / qn : 0.03, count: new Array(5).fill(0), val: new Array(5).fill(0),
@@ -9412,15 +9412,16 @@
       } } }
     if (st.env){ const ecx = st.env.cx || 0, esp = st.env.span || 120;
       if (st.env.trolley) st.env.trolley.position.x = ecx + Math.sin(T * 0.12) * (esp / 2 - 8); }
-    // MOBILE RACK: slide the 10 walls so ONE aisle opens at a cycling index; the pick robots drive into that open
-    // aisle (ease Z), travel its length (X) + hoist (Y). Live store/retrieve churn flips bins so occupancy drifts.
-    if (st.walls && st.walls.length){ const NW = st.walls.length, dwell = 6, a = 1 + (Math.floor(T / dwell) % (NW - 1)); st.aisleA = a;
-      const kz = Math.min(1, dt * 2.5);
-      for (let i = 0; i < NW; i++){ const wll = st.walls[i]; const tgt = wll.baseZ + (i >= a ? st.aisleW / 2 : -st.aisleW / 2); wll.group.position.z += (tgt - wll.group.position.z) * kz; }
-      const azc = (st.walls[a - 1].baseZ - st.aisleW / 2 + st.walls[a].baseZ + st.aisleW / 2) / 2;
-      if (st.pickers){ for (const pk of st.pickers){ pk.grp.position.z += (azc - pk.grp.position.z) * kz;
-        pk.grp.position.x = st.cubeCX + Math.sin(T * 0.5 + pk.phase) * (st.cubeW / 2 - 3);
-        if (pk.shuttle) pk.shuttle.position.y = 6 + (0.5 + 0.5 * Math.sin(T * 0.9 + pk.phase)) * (st.cubeH - 6); } } }
+    // MOBILE RACK (two banks flanking the conveyor): slide each bank's 10 walls along X so ONE Z-aisle opens at a
+    // cycling index; that bank's pick robot eases to the open aisle's X, drives its depth (Z) + hoists (Y). Live
+    // store/retrieve churn flips bins so occupancy drifts.
+    if (st.banks){ const kz = Math.min(1, dt * 2.5), dwell = 6;
+      for (let bi = 0; bi < st.banks.length; bi++){ const bk = st.banks[bi], NW = bk.walls.length, a = 1 + (Math.floor(T / dwell + bi * 3) % (NW - 1));
+        for (let i = 0; i < NW; i++){ const wll = bk.walls[i]; const tgt = wll.baseX + (i >= a ? st.aisleW / 2 : -st.aisleW / 2); wll.group.position.x += (tgt - wll.group.position.x) * kz; }
+        const gapX = (bk.walls[a - 1].baseX + bk.walls[a].baseX) / 2;
+        const pk = bk.picker; if (pk){ pk.grp.position.x += (gapX - pk.grp.position.x) * kz;
+          pk.grp.position.z = bk.nearZ + (0.5 + 0.5 * Math.sin(T * 0.55 + bk.phase)) * (bk.farZ - bk.nearZ);
+          if (pk.shuttle) pk.shuttle.position.y = 6 + (0.5 + 0.5 * Math.sin(T * 0.9 + bk.phase)) * (st.cubeH - 6); } } }
     if (st.bins && st.bins.length){ st.invClock = (st.invClock || 0) + dt; if (st.invClock > 0.7){ st.invClock = 0;
       for (let q = 0; q < 4; q++){ st.invStep = (st.invStep || 0) + 1; const idx = Math.floor(flowFrac(Math.sin(st.invStep * 12.9898) * 43758.5453) * st.bins.length) % st.bins.length; const b = st.bins[idx]; if (!b) continue;
         b.occ = !b.occ; b.mesh.material = b.occ ? b.mat : st.emptyMat; st.slotOcc += b.occ ? 1 : -1; if (st.slotOcc < 0) st.slotOcc = 0; if (st.slotOcc > st.slotTot) st.slotOcc = st.slotTot; } } }
