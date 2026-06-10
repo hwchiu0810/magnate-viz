@@ -8628,7 +8628,7 @@
     for (const id in N){ const nd = N[id]; if (nd.kind === 'source' || nd.kind === 'sink' || !inScope(id, nd)) continue;
       if (doRate){ const b = band(id, nd); nd.rate = +(b[0] + rnd() * (b[1] - b[0])).toFixed(3); nd.rate0 = nd.rate; }
       if (doReject && nd.qcGate) nd.failFrac = +(0.06 + rnd() * 0.12).toFixed(3); }
-    if (doRate) for (const s of S) s.spd = (N[s.a].rate || C.rate) / C.rate;   // belts scroll at the feeding site's rate
+    if (doRate) for (const s of S) s.spd = ((N[s.a].rate || C.rate) / C.rate) * (s.spdUser || 1);   // belts scroll at the feeding site's rate × any manual belt-speed override
     if (doAvail && machines){ for (const m of machines){ if (!inScope(m.id, m)) continue; const mi = m.mi || 0;  // reshuffle availability/breakdown clocks
       m.period = C.mtbf + fr(Math.sin((mi + 1) * 7.7 + seed * 3.1) * 1000) * 14;
       m.downFrac = 0.07 + fr(Math.sin((mi + 1) * 3.3 + seed * 1.7) * 500) * 0.11;
@@ -8867,7 +8867,7 @@
     const Zpk = [-48, -24, 0, 24, 48];
     Zpk.forEach((z, i) => node('PK' + i, 78, z, 'machine', 'pack', 'Pack ' + String.fromCharCode(65 + i), 4));
     Zpk.forEach((z, i) => node('D' + i, 110, z, 'sink', null, 'Ship ' + String.fromCharCode(65 + i), 4));
-    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate };
+    const seg = (a, b) => { const A = N[a], B = N[b]; const s = { a, b, ax: A.x, az: A.z, bx: B.x, bz: B.z, spd: (A.rate || C.rate) / C.rate, spdUser: 1 };
       s.len = Math.hypot(s.bx - s.ax, s.bz - s.az) || 1; s.ang = Math.atan2(s.bz - s.az, s.bx - s.ax); const idx = S.push(s) - 1; A.outSegs.push(idx); B.inSegs.push(idx); };
     for (let i = 0; i < 6; i++) seg('IN' + i, 'M' + i);                                  // intake → machining
     seg('M0', 'W0'); seg('M1', 'W0'); seg('M2', 'W1'); seg('M3', 'W1'); seg('M4', 'W2'); seg('M5', 'W2'); // 6 mills/lathes → 3 welds
@@ -8883,8 +8883,9 @@
     [N.Q0, N.Q1].forEach((q, i) => { q.qcGate = true; q.failFrac = 0.14; q.reworkOut = q.outSegs.length - 1; q.rr = 0; q.qhash = (i + 1) * 13.37; });
     for (const s of S){ if (s.a === 'RW' || s.b === 'RW') s.rework = true; }
     sfRollRates(N, S, C, sfRateSeed);   // assign the RANDOMIZED initial throughput + reject rates + belt speeds
-    const chev = [];
+    const chev = [], belts = [];
     S.forEach((s, si) => { const belt = dioBox(s.len, 0.5, 5.0, s.rework ? 0x3a2014 : 0x202d40, s.rework ? 0x1c0c04 : 0x0c1622); belt.position.set((s.ax + s.bx) / 2, beltTop, (s.az + s.bz) / 2); belt.rotation.y = -s.ang; g.add(belt);
+      belt.name = 'Belt ' + s.a + '→' + s.b; belt.userData = { sfSeg: si }; belts.push({ obj: belt, seg: si, label: belt.name });
       for (let c = 0; c < 3; c++){ const cg = new THREE.Group(); cg.rotation.y = -s.ang; const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 4), new THREE.MeshBasicMaterial({ color: s.rework ? 0xff8a3a : 0x3fd6ff, transparent: true, opacity: 0.4, depthWrite: false, blending: FLOW_ADD })); cone.rotation.z = -Math.PI / 2; cg.add(cone);
         const t0 = c / 3; cg.position.set(s.ax + (s.bx - s.ax) * t0, beltTop + 0.4, s.az + (s.bz - s.az) * t0); g.add(cg); chev.push({ grp: cg, seg: si, t: t0 }); } });
     const machines = []; let mi = 0;
@@ -8912,7 +8913,7 @@
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 52, 0); g.add(dashB);
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
     let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
-    sceneState[section] = { g, C, N, S, machines, parts, chev, sparks, sparkNode, agvs, beltTop, env,
+    sceneState[section] = { g, C, N, S, machines, parts, chev, belts, selBelt: null, sparks, sparkNode, agvs, beltTop, env,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
       perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 3), qcFail: qn ? qf / qn : 0.03, count: new Array(5).fill(0), val: new Array(5).fill(0) };
     updateSmartFactoryScene(section);
@@ -9204,8 +9205,8 @@
       const out = [];
       // members (an array of THREE.Object3D) makes a group fan an effect onto EVERY member; without it a
       // group target just uses its container (centroid for emitters, first mesh for materials).
-      const add = (id, label, obj, group, members) => {
-        if (obj) out.push({ id, label, obj, group: !!group, members: (members && members.length) ? members : null });
+      const add = (id, label, obj, group, members, noList) => {
+        if (obj) out.push({ id, label, obj, group: !!group, members: (members && members.length) ? members : null, noList: !!noList });
       };
       const glabel = (base, n) => base + ' (group · ' + n + ')';
       try {
@@ -9244,6 +9245,9 @@
           if (st && st.machines){ for (const m of st.machines){ if (m && m.cg) add('sf:' + m.id, m.name || m.id, m.cg); } }
           if (st && st.agvs && st.agvs.length){ st.agvs.forEach((v, i) => { if (v && v.grp) add('sf:agv' + i, 'AGV ' + (i + 1), v.grp); });
             add('grp:sf-agv', glabel('▦ All AGVs', st.agvs.length), st.g, true, st.agvs.map(v => v.grp).filter(Boolean)); }
+          // conveyor BELTS are pickable (◎ Pick in scene / ⌖ Pick any) but kept OUT of the dropdown (noList) to
+          // avoid swamping it — selecting one drives the panel's Belt-speed slider.
+          if (st && st.belts){ for (const b of st.belts){ if (b && b.obj) add('sfbelt:' + b.seg, b.label, b.obj, false, null, true); } }
         } else if (section === 'shopping-mall'){
           if (typeof retailGroup !== 'undefined' && retailGroup) add('grp:retail', '▦ Mall (group)', retailGroup, true);
         } else if (section === 'market' || section === 'finance'){
@@ -9295,8 +9299,8 @@
     function populateTargetSelect(section){
       const sel = $('vfx-target-sel'); if (!sel) return;
       targetList = sectionTargets(section);
-      const opts = ['<option value="-1">— Lab pedestal —</option>']
-        .concat(targetList.map((t, i) => '<option value="' + i + '">' + esc(t.label) + '</option>'));
+      const opts = ['<option value="-1">— Lab pedestal —</option>'];
+      targetList.forEach((t, i) => { if (t.noList) return; opts.push('<option value="' + i + '">' + esc(t.label) + '</option>'); });   // noList targets (e.g. belts) stay pickable but off the dropdown
       sel.innerHTML = opts.join('');
     }
     // reflect the current sceneTarget in the dropdown selection.
@@ -11937,6 +11941,7 @@
       body.innerHTML =
         '<div class="simctl"><label>Site <b id="sim-site-v"></b></label><select id="sim-site" aria-label="Choose a machine site">' + opts + '</select></div>' +
         '<div class="simctl"><label>↳ Throughput <b id="sim-rate-v"></b></label><input type="range" id="sim-rate" min="24" max="150" step="3" aria-label="Selected site throughput per minute"></div>' +
+        '<div class="simctl"><label>🛞 Belt speed <b id="sim-belt-v">— pick a belt —</b></label><input type="range" id="sim-belt" min="20" max="400" step="5" disabled aria-label="Selected conveyor belt speed (percent of nominal)"></div>' +
         '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between failures"></div>' +
         '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="8" step="1" aria-label="Inter-machine buffer capacity"></div>' +
         '<div class="simctl"><label>🎲 Randomize — sites</label><select id="sim-rnd-scope" aria-label="Which sites to randomize">' +
@@ -11954,7 +11959,9 @@
       const setBf = (v) => { const e = $('sim-buf-v'); if (e) e.textContent = String(v); };
       const findM = (id) => (st && st.machines) ? st.machines.find((m) => m.id === id) : null;
       // push a machine's rate to its OUTPUT belts so the conveyor speed tracks the new throughput
-      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si]) st.S[si].spd = m.rate / base; } };
+      const applyRate = (m) => { if (!m || !st) return; const base = (st.C && st.C.rate) || 1; for (const si of (m.outSegs || [])){ if (st.S[si]) st.S[si].spd = (m.rate / base) * (st.S[si].spdUser || 1); } };
+      // 🛞 Belt-speed slider: adjusts the SELECTED belt's animation speed (a multiplier over its nominal feed rate)
+      const belt = $('sim-belt'); if (belt) belt.oninput = () => { const si = st.selBelt; if (si == null || !st.S[si]) return; const seg = st.S[si]; const mul = (+belt.value || 100) / 100; seg.spdUser = mul; seg.spd = ((st.N[seg.a].rate || st.C.rate) / st.C.rate) * mul; const e = $('sim-belt-v'); if (e) e.textContent = '×' + mul.toFixed(2) + '  (' + seg.a + '→' + seg.b + ')'; };
       const setRate = (m) => { const e = $('sim-rate-v'); const perMin = Math.round((m ? m.rate : 1) * 60); if (e) e.textContent = perMin + '/min'; if (rate) rate.value = perMin; };
       const setSiteLabel = (m) => { const e = $('sim-site-v'); if (e) e.textContent = m ? ('⟲ ' + Math.round(m.rate * 60) + '/min') : ''; };
       let cur = (st && st.machines && st.machines[0]) ? st.machines[0] : null;
@@ -11981,8 +11988,10 @@
         st.qcFail = sfRollRates(st.N, st.S, st.C, sfRateSeed, st.machines, opts);
         cur = findM(selId) || cur; setRate(cur); setSiteLabel(cur); };
       const rb = $('sim-reset'); if (rb) rb.onclick = () => { if (!st) return; st.mtbfMul = 1; st.bufCap = SF_OEE.bufCap;
+        for (const s of st.S) s.spdUser = 1;   // clear manual belt-speed overrides
         if (st.machines){ for (const m of st.machines){ m.rate = m.rate0 || m.rate; applyRate(m); } }
         if (mt){ mt.value = 10; setMt(10); } if (bf){ bf.value = SF_OEE.bufCap; setBf(SF_OEE.bufCap); }
+        if (belt && st.selBelt != null && st.S[st.selBelt]){ belt.value = 100; const e = $('sim-belt-v'); if (e) e.textContent = '×1.00  (' + st.S[st.selBelt].a + '→' + st.S[st.selBelt].b + ')'; }
         cur = findM(site ? site.value : '') || cur; setRate(cur); setSiteLabel(cur); };
     } else {
       // EVERY OTHER SECTION — a Scene-randomize block: roll the chosen transform / visual params of all this
@@ -12028,6 +12037,13 @@
       if (sec !== 'smart-factory') return;
       const st = sceneState['smart-factory']; if (!st) return;
       const sel = (typeof VFXLab !== 'undefined' && VFXLab.primarySelected) ? VFXLab.primarySelected() : null;
+      // a BELT? (the mesh, or any ancestor, carries userData.sfSeg) → drive the Belt-speed slider
+      let segIdx = null, o = sel, g = 0; while (o && g++ < 60){ if (o.userData && o.userData.sfSeg != null){ segIdx = o.userData.sfSeg; break; } o = o.parent; }
+      const belt = $('sim-belt'), bl = $('sim-belt-v');
+      if (segIdx != null && st.S[segIdx]){ st.selBelt = segIdx; const seg = st.S[segIdx], mul = seg.spdUser || 1;
+        if (belt){ belt.disabled = false; belt.value = Math.round(mul * 100); } if (bl) bl.textContent = '×' + mul.toFixed(2) + '  (' + seg.a + '→' + seg.b + ')'; return; }
+      st.selBelt = null; if (belt){ belt.disabled = true; } if (bl) bl.textContent = '— pick a belt —';
+      // else a MACHINE? → select it as the active Site
       const m = sfMachineForObject(st, sel); if (!m) return;
       const siteSel = $('sim-site'); if (siteSel && siteSel.value !== m.id){ siteSel.value = m.id; if (siteSel.dispatchEvent) siteSel.dispatchEvent(new Event('change')); }
     } catch(_){}
