@@ -9289,6 +9289,7 @@
       selection = (sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : [];   // a normal pick = single selection
       targetReadout(); updateTargetHelper();
       try { applyGizmo(); syncPinBtn(); } catch(_){}     // keep the move gizmo bound to the new selection
+      try { if (typeof syncSimPanelSelection === 'function') syncSimPanelSelection(); } catch(_){}   // mirror the pick into the section's own panel (e.g. Smart-Factory site)
     }
     // (re)build the dropdown for a section; option -1 is always the lab pedestal.
     function populateTargetSelect(section){
@@ -9543,7 +9544,8 @@
         if (ix < 0) selection.push(obj); else if (selection.length > 1) selection.splice(ix, 1);   // toggle off (keep ≥1)
       } else { selection = [obj]; }
       if (selection.length <= 1){ setTarget({ id: 'pick:' + (++pickCounter), label: label || 'object', obj: selection[0] }); }
-      else { sceneTarget = { id: 'multi', label: selection.length + ' objects', obj: null, group: true }; targetReadout(); updateTargetHelper(); applyGizmo(); syncPinBtn(); }
+      else { sceneTarget = { id: 'multi', label: selection.length + ' objects', obj: null, group: true }; targetReadout(); updateTargetHelper(); applyGizmo(); syncPinBtn();
+        try { if (typeof syncSimPanelSelection === 'function') syncSimPanelSelection(); } catch(_){} }
     }
 
     // attach the gizmo to the current selection (single object, or a pivot proxy for a multi-selection)
@@ -10245,6 +10247,10 @@
       enforcePin(){ enforcePin(); },
       // introspection: how many objects are currently selected (1 = single, >1 = multi). View-only.
       selectionCount(){ return selection.length; },
+      // the live selected THREE objects (so other panels — e.g. the Smart-Factory Availability panel — can
+      // map a scene selection onto their own data). primarySelected = the single/first selected object.
+      selectedObjects(){ return (selection && selection.length) ? selection.slice() : ((sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : []); },
+      primarySelected(){ return (selection && selection.length) ? selection[0] : ((sceneTarget && sceneTarget.obj) ? sceneTarget.obj : null); },
       // unified randomize — roll the chosen transform/visual params of the selected objects; restore reverts.
       randomize(opts){ randomizeSelection(opts || { pos: true }); },
       randomizeSection(opts){ return randomizeSection(opts); },   // roll EVERY object in the active section (per-section panel button)
@@ -11934,7 +11940,7 @@
         '<div class="simctl"><label>Reliability (MTBF) <b id="sim-mtbf-v"></b></label><input type="range" id="sim-mtbf" min="5" max="30" step="1" aria-label="Mean time between failures"></div>' +
         '<div class="simctl"><label>Buffer size <b id="sim-buf-v"></b></label><input type="range" id="sim-buf" min="1" max="8" step="1" aria-label="Inter-machine buffer capacity"></div>' +
         '<div class="simctl"><label>🎲 Randomize — sites</label><select id="sim-rnd-scope" aria-label="Which sites to randomize">' +
-          '<option value="all">All sites</option><option value="sel">Selected site only</option>' +
+          '<option value="all">All sites</option><option value="sel">Selected in scene</option>' +
           '<option value="mill">All mills</option><option value="lathe">All lathes</option>' +
           '<option value="weld">All welds + rework</option><option value="assemble">All assembly + distribution</option>' +
           '<option value="qc">All QC + sorter</option><option value="pack">All pack</option></select></div>' +
@@ -11962,8 +11968,13 @@
       // 🎲 re-roll the CHOSEN parameters for the CHOSEN sites to a fresh seeded-random set (deterministic per seed)
       const rl = $('sim-roll'); if (rl) rl.onclick = () => { if (!st) return; sfRateSeed = (sfRateSeed % 9000) + 1;
         const scope = ($('sim-rnd-scope') || {}).value || 'all', selId = site ? site.value : null;
+        // 'sel' = the machine(s) PICKED IN THE SCENE (VFX-Lab selection); falls back to the Site dropdown value
+        let selIds = null;
+        if (scope === 'sel'){ selIds = new Set();
+          try { const objs = (typeof VFXLab !== 'undefined' && VFXLab.selectedObjects) ? VFXLab.selectedObjects() : []; for (const o of objs){ const mm = sfMachineForObject(st, o); if (mm) selIds.add(mm.id); } } catch(_){}
+          if (!selIds.size && selId) selIds.add(selId); }
         const filter = scope === 'all' ? null
-          : scope === 'sel' ? ((id) => id === selId)
+          : scope === 'sel' ? ((id) => selIds.has(id))
           : ((id, nd) => nd.type === scope);   // mill / lathe / weld(+RW) / assemble(distrib+assembly) / qc(sorter+dispatch) / pack
         const opts = { rate: !!($('rnd-thru') || {}).checked, avail: !!($('rnd-avail') || {}).checked, reject: !!($('rnd-rej') || {}).checked, filter };
         if (!opts.rate && !opts.avail && !opts.reject) return;   // nothing selected → no-op
@@ -12002,6 +12013,24 @@
     if (!show) return;
     if (panel.getAttribute && panel.getAttribute('data-built') !== sec){ buildSimPanel(sec); if (panel.setAttribute) panel.setAttribute('data-built', sec); }
     updateSimReadout();
+  }
+  // map a scene OBJECT (or any descendant) onto the Smart-Factory machine whose cell-group contains it.
+  function sfMachineForObject(st, obj){
+    if (!st || !st.machines || !obj) return null;
+    for (const m of st.machines){ if (!m.cg) continue; let o = obj, g = 0; while (o && g++ < 60){ if (o === m.cg) return m; o = o.parent; } }
+    return null;
+  }
+  // BRIDGE the VFX-Lab object selection → the Smart-Factory Availability/OEE panel: picking a machine in the
+  // scene selects it as the panel's active Site (so the throughput slider + "selected site" randomize target it).
+  function syncSimPanelSelection(){
+    try {
+      const sec = (typeof activeSection !== 'undefined') ? activeSection : '';
+      if (sec !== 'smart-factory') return;
+      const st = sceneState['smart-factory']; if (!st) return;
+      const sel = (typeof VFXLab !== 'undefined' && VFXLab.primarySelected) ? VFXLab.primarySelected() : null;
+      const m = sfMachineForObject(st, sel); if (!m) return;
+      const siteSel = $('sim-site'); if (siteSel && siteSel.value !== m.id){ siteSel.value = m.id; if (siteSel.dispatchEvent) siteSel.dispatchEvent(new Event('change')); }
+    } catch(_){}
   }
   function wireSections(){
     for (const s of SECTIONS){
