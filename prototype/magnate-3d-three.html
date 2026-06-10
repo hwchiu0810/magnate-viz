@@ -1696,6 +1696,43 @@
     outageSeed: 11       // seed advanced on each inject so successive outages differ deterministically
   };
 
+  // ---- UAV (DRONE) SWARM LIGHT-SHOW (this story): a pooled, bounded swarm of ~240 drones that fly into the SKY
+  //   above the smart-city district and FORM images / symbols / characters (the classic drone light-show). Each
+  //   drone = a tiny body + a bright sub-white emissive "light" + 4 tiny rotor hints; pooled + reused (NO per-frame
+  //   alloc). A TIMED sequence forms a formation, HOLDS, then smoothly MORPHS (lerp current→next target) into the
+  //   next: parametric SYMBOLS (ring / heart / star / spiral / arrow / cube-grid) and CHARACTERS via hardcoded
+  //   5×7 dot-matrix glyphs spelling "SMART CITY". Choreography (drift/shimmer while holding + an eased hue sweep
+  //   by index) runs on accumulated dt/phase ONLY — NO RNG, NO wall-clock (seeded hashing for any pseudo-random).
+  //   Sub-white emissive (INV-3, capped ≤ 0.85). Parented to its OWN group (child of scene) shown ONLY while the
+  //   smart-city section is active; built LAZILY on first reveal (never in the harness probe). VIEW-ONLY: nothing
+  //   pickable, no userData.firmId, never pushed to `pickables`, never touches the streamed economy / its gates.
+  let uavSwarmGrp   = null;  // GROUP (child of scene) holding the pooled drones — shown ONLY while smart-city active
+  let uavSwarmBuilt = false; // lazily built on first reveal (never during the harness probe)
+  let uavSwarmOn    = false; // whether the swarm is currently shown (mirrors smart-city active)
+  const UAV_MAX     = 240;   // HARD CAP on pooled drones (bounded; pool + reuse, no per-frame alloc/dispose)
+  const UAV_EMIS    = 0.82;  // sub-white emissive ceiling for a lit drone (INV-3, < 0.85 — glowing but never white)
+  // per-drone pool record { grp, lightMat, bodyMat, cur:{x,y,z}, from:{x,y,z}, lit, idx } — positions are LOCAL to
+  // uavSwarmGrp (the group sits in the sky above the district; the plane is the X-Y billboard facing the camera).
+  const uavDrones   = [];
+  // POWER/SEQUENCE state for the swarm — deterministic (advances on accumulated dt/phase ONLY). The formation
+  // sequence cycles on a seeded timer; `t` is the accumulated show clock; `phase` HOLD↔MORPH; `f` is the seconds
+  // into the current phase. `cur`/`next` index the FORMATIONS list; `morphK` is the eased 0..1 lerp progress.
+  const uavShow = {
+    t: 0,                 // accumulated show clock (drives drift/shimmer + the hue sweep)
+    phase: 'hold',        // 'hold' (formed, gently drifting) | 'morph' (lerping cur→next)
+    f: 0,                 // seconds elapsed in the current phase
+    holdLen: 6.0,         // seconds to HOLD a formed shape
+    morphLen: 2.6,        // seconds to MORPH between shapes (scaled by morphSpeed)
+    morphSpeed: 1.0,      // lever 0.4..2.5 — multiplies the morph rate (lower = slower glide)
+    cur: 0,               // index into FORMATIONS of the currently-formed shape
+    next: 1,              // index into FORMATIONS of the shape being morphed toward
+    morphK: 0,            // eased morph progress 0..1 (0 = at `cur`, 1 = arrived at `next`)
+    size: UAV_MAX,        // lever: number of drones airborne (the rest park dim at the deck), clamped to UAV_MAX
+    theme: 0,             // colour theme index (0 aurora · 1 ember · 2 ice · 3 neon)
+    auto: true,           // auto-cycle formations on the seeded timer (Formation→Next pauses auto for a beat)
+    airborne: 0           // live readout: drones currently lit/airborne in the formed shape
+  };
+
   // Fixed-height lobby PODIUM under every firm tower. The animated shaft sits ON TOP of this base
   // (shaft bottom at PODIUM_H), so the podium NEVER scales with net worth. tierTopY()/the ease loop
   // both add PODIUM_H so rooftops + flow endpoints land at PODIUM_H + h (the true shaft top).
@@ -3901,6 +3938,297 @@
     try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){}
   }
 
+  /* ============================================================
+   *  🛸 UAV (DRONE) SWARM LIGHT-SHOW — the smart-city "simulation topic" centrepiece.
+   *  A pooled, BOUNDED swarm of ~240 drones flies into the SKY above the district and FORMS images / symbols /
+   *  characters (the classic drone light-show). Each drone = a tiny body + a bright SUB-WHITE emissive "light"
+   *  (INV-3, capped) + 4 tiny rotor hints; pooled + REUSED (no per-frame alloc/dispose). A timed sequence forms a
+   *  shape, HOLDS, then smoothly MORPHS (eased lerp from each drone's current pos → its assigned target) into the
+   *  next: parametric SYMBOLS (ring / heart / star / spiral / arrow / cube-grid) + CHARACTERS via hardcoded 5×7
+   *  dot-matrix glyphs spelling "SMART CITY". Choreography (drift/shimmer while holding + an eased hue sweep by
+   *  index) runs on accumulated dt/phase ONLY (NO RNG, NO wall-clock; seeded hashing for any pseudo-random).
+   *  Parented to uavSwarmGrp (child of scene), shown ONLY while smart-city is active, built LAZILY on first reveal.
+   *  Local plane = X-Y billboard facing the default camera (the group sits in the sky over the origin district).
+   *  VIEW-ONLY: nothing pickable, no userData.firmId, never pushed to `pickables`, never touches the economy.
+   *  Headless-safe: every THREE call no-ops under the recording stub; the frame loop never runs in the harness.
+   * ============================================================ */
+  const UAV_W = 5;                 // glyph bitmap width  (5 columns)
+  const UAV_H = 7;                 // glyph bitmap height (7 rows) — the classic 5×7 dot-matrix cell
+  // HARDCODED 5×7 dot-matrix glyph maps (rows top→bottom, '1' = a lit dot ⇒ place a drone). NO canvas rasterising
+  // (fillText/getImageData throw under the headless stub) — pure ARRAYS, the merge-gate-safe way to spell text.
+  const UAV_GLYPHS = {
+    'S': ['01111','10000','10000','01110','00001','00001','11110'],
+    'M': ['10001','11011','10101','10101','10001','10001','10001'],
+    'A': ['01110','10001','10001','11111','10001','10001','10001'],
+    'R': ['11110','10001','10001','11110','10100','10010','10001'],
+    'T': ['11111','00100','00100','00100','00100','00100','00100'],
+    'C': ['01110','10001','10000','10000','10000','10001','01110'],
+    'I': ['11111','00100','00100','00100','00100','00100','11111'],
+    'Y': ['10001','10001','01010','00100','00100','00100','00100'],
+    ' ': ['00000','00000','00000','00000','00000','00000','00000'],
+  };
+  // FORMATIONS list — id + label (mirrored into the lever's <select>). Order is the auto-cycle sequence.
+  const UAV_FORMATIONS = [
+    { id: 'ring',    label: '◯ Ring' },
+    { id: 'heart',   label: '♥ Heart' },
+    { id: 'star',    label: '★ Star' },
+    { id: 'spiral',  label: '🌀 Spiral' },
+    { id: 'arrow',   label: '➤ Arrow' },
+    { id: 'cube',    label: '▦ Cube grid' },
+    { id: 'text',    label: '🔤 "SMART CITY"' },
+  ];
+  // COLOUR THEMES — base hue + spread (in hue units 0..1) for the eased per-index hue sweep. Sub-white via a capped
+  // lightness; the emissive ceiling (UAV_EMIS) is the real INV-3 guard, so even theme 3 never white-outs.
+  const UAV_THEMES = [
+    { name: 'Aurora', h0: 0.46, hsp: 0.34, sat: 0.85, lit: 0.55 },  // teal→violet
+    { name: 'Ember',  h0: 0.02, hsp: 0.14, sat: 0.95, lit: 0.52 },  // red→amber
+    { name: 'Ice',    h0: 0.54, hsp: 0.10, sat: 0.70, lit: 0.60 },  // icy cyan/blue
+    { name: 'Neon',   h0: 0.78, hsp: 0.40, sat: 0.95, lit: 0.55 },  // magenta→cyan
+  ];
+
+  // SKY placement of the billboard plane (LOCAL frame; the group is at the origin so these are world-ish coords).
+  const UAV_SKY_Y = 70;            // centre height of the image in the sky (above the towers; framed below the top panel)
+  const UAV_SCALE = 2.1;           // dot pitch — spacing between adjacent formation points (sky-plane units)
+
+  /* uavFormationPoints(id) — return an ARRAY of LOCAL {x,y,z} target points (centred on the billboard, z≈0) for a
+   * formation, capped to UAV_MAX. Deterministic (pure parametric maths / fixed glyph arrays; seeded hashing only).
+   * The swarm assigns drone i → point (i % points.length) by index; spare drones (beyond the point count) park dim. */
+  function uavFormationPoints(id){
+    const pts = []; const S = UAV_SCALE;
+    const push = (x, y) => { if (pts.length < UAV_MAX) pts.push({ x: x, y: y + UAV_SKY_Y, z: 0 }); };
+    if (id === 'ring'){
+      const N = 120, R = 24;
+      for (let i = 0; i < N; i++){ const a = (i / N) * Math.PI * 2; push(Math.cos(a) * R, Math.sin(a) * R); }
+    } else if (id === 'heart'){
+      const N = 150;
+      for (let i = 0; i < N; i++){ const t = (i / N) * Math.PI * 2;          // classic heart parametric
+        const x = 16 * Math.pow(Math.sin(t), 3);
+        const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+        push(x * 1.35, y * 1.35); }
+    } else if (id === 'star'){
+      const POINTS = 5, PER = 24, N = POINTS * PER, RO = 28, RI = 11;
+      for (let i = 0; i < N; i++){ const a = (i / N) * Math.PI * 2 - Math.PI / 2;
+        const seg = (i / PER) | 0; const f = (i % PER) / PER;               // walk the star outline
+        const a0 = (seg / POINTS) * Math.PI * 2 - Math.PI / 2, a1 = ((seg + 0.5) / POINTS) * Math.PI * 2 - Math.PI / 2;
+        // alternate outer-tip → inner-notch each half-segment so the outline traces a 5-point star
+        const inner = (i % (PER)) >= (PER / 2);
+        const r0 = inner ? RI : RO, r1 = inner ? RO : RI;
+        const ff = (f * 2) % 1; const r = r0 + (r1 - r0) * ff; const ang = a0 + (a1 - a0) * ff;
+        push(Math.cos(ang) * r, Math.sin(ang) * r); }
+    } else if (id === 'spiral'){
+      const N = 160, turns = 3.2;
+      for (let i = 0; i < N; i++){ const t = i / N; const a = t * Math.PI * 2 * turns; const r = 4 + t * 26;
+        push(Math.cos(a) * r, Math.sin(a) * r); }
+    } else if (id === 'arrow'){
+      // an up-arrow: a vertical shaft + a chevron head, sampled as a point set
+      const N = 130;
+      for (let i = 0; i < N; i++){ const t = i / N;
+        if (t < 0.5){ const y = -26 + (t / 0.5) * 34; push(0, y); push(-3, y); push(3, y); }   // shaft (3 wide)
+        else { const u = (t - 0.5) / 0.5; const reach = 18 * (1 - u); push(-reach, 8 + u * 0); push(reach, 8 + u * 0); push(0, 8 + u * 18); } }
+    } else if (id === 'cube'){
+      // a 3D-looking cube: a front grid + a back grid offset (parallax) + connecting corners — reads as a wireframe box
+      const G = 6, sp = 6;                                                  // 6×6 grid, spacing 6
+      for (let gy = 0; gy < G; gy++){ for (let gx = 0; gx < G; gx++){
+        const fx = (gx - (G - 1) / 2) * sp, fy = (gy - (G - 1) / 2) * sp;
+        if (gx === 0 || gx === G - 1 || gy === 0 || gy === G - 1){          // front face outline
+          push(fx, fy); push(fx + sp * 0.7, fy + sp * 0.7);                 // back face shifted (the parallax depth)
+        }
+      } }
+    } else { // 'text' → spell "SMART CITY" with the 5×7 glyph arrays, placing a drone on each lit dot
+      const word = ['SMART', ' ', 'CITY'];
+      const dot = S * 0.95;                                                 // dot pitch within a glyph
+      const glyphW = (UAV_W + 1) * dot;                                     // per-character advance (incl. 1-col gap)
+      let totalChars = 0; for (const w of word) totalChars += w.length;
+      const fullW = totalChars * glyphW; let penX = -fullW / 2;
+      const fullH = (UAV_H - 1) * dot;
+      for (const w of word){ for (let ci = 0; ci < w.length; ci++){
+        const rows = UAV_GLYPHS[w[ci]] || UAV_GLYPHS[' '];
+        for (let ry = 0; ry < UAV_H; ry++){ const row = rows[ry] || '';
+          for (let cx = 0; cx < UAV_W; cx++){
+            if (row[cx] === '1'){
+              const x = penX + cx * dot;
+              const y = (fullH / 2) - ry * dot;                            // row 0 at the top
+              push(x, y);
+            }
+          } }
+        penX += glyphW;
+      } }
+    }
+    return pts;
+  }
+
+  /* buildUavSwarm() — lazily build the pooled swarm (UAV_MAX drones) under uavSwarmGrp (child of scene), parked at
+   * the sky deck. Headless-safe (guarded primitives; never runs in the harness). Idempotent. */
+  function buildUavSwarm(){
+    if (typeof THREE === 'undefined' || uavSwarmBuilt) return;
+    const ADD = (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2);
+    const grp = new THREE.Group();
+    if (grp.position && grp.position.set) grp.position.set(0, 0, 0);        // origin district; points already carry sky Y
+    if (typeof scene !== 'undefined' && scene && scene.add) scene.add(grp);
+    uavSwarmGrp = grp; grp.visible = false;
+    // a faint label so the formed image reads as a deliberate light-show (sky billboard, well above the towers)
+    try { grp.add(labelSpriteSafe('🛸 UAV SWARM LIGHT-SHOW', '#bfe8ff', 18, 0, UAV_SKY_Y + 38, 0)); } catch(_){}
+    // shared GEOMETRIES (built once, reused by every drone — pooled, no per-frame alloc):
+    const bodyGeo  = (typeof THREE.BoxGeometry === 'function') ? new THREE.BoxGeometry(0.55, 0.22, 0.55) : null;
+    const lightGeo = (typeof THREE.SphereGeometry === 'function') ? new THREE.SphereGeometry(0.42, 8, 8)
+                    : (typeof THREE.BoxGeometry === 'function' ? new THREE.BoxGeometry(0.7, 0.7, 0.7) : null);
+    const rotorGeo = (typeof THREE.BoxGeometry === 'function') ? new THREE.BoxGeometry(0.34, 0.04, 0.34) : null;
+    for (let i = 0; i < UAV_MAX; i++){
+      const dg = new THREE.Group();
+      // dark carbon body
+      if (bodyGeo){
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0a0e16, emissive: new THREE.Color(0x10202e), emissiveIntensity: 0.1, roughness: 0.7, metalness: 0.5 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat); dg.add(body);
+        // 4 tiny rotor hints at the corners
+        if (rotorGeo){
+          const rPos = [[-0.32,-0.32],[0.32,-0.32],[-0.32,0.32],[0.32,0.32]];
+          for (let r = 0; r < 4; r++){ const rotor = new THREE.Mesh(rotorGeo, bodyMat);
+            if (rotor.position && rotor.position.set) rotor.position.set(rPos[r][0], 0.16, rPos[r][1]); dg.add(rotor); }
+        }
+      }
+      // the bright sub-white emissive "light" — its OWN material (so the hue sweep tints only this, never shared)
+      const lightMat = new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.95, blending: ADD, depthWrite: false });
+      let light = null;
+      if (lightGeo){ light = new THREE.Mesh(lightGeo, lightMat); if (light.position && light.position.set) light.position.set(0, 0.28, 0); dg.add(light); }
+      // start parked on a deterministic sky-deck grid (seeded fract; NO RNG) so the launch reads as a tidy lift-off
+      const gx = (i % 20) - 9.5, gz = ((i / 20) | 0) - 5.5;
+      const px = gx * 3.2, py = UAV_SKY_Y - 46 + flowFrac(Math.sin(i * 12.9898) * 43758.5453) * 2, pz = gz * 3.2;
+      if (dg.position && dg.position.set) dg.position.set(px, py, pz);
+      grp.add(dg);
+      uavDrones.push({ grp: dg, lightMat: lightMat, cur: { x: px, y: py, z: pz }, from: { x: px, y: py, z: pz }, lit: false, idx: i });
+    }
+    uavSwarmBuilt = true;
+    // seed the first formation targets so the very first reveal already reads as a shape morphing in
+    uavAssignTargets(uavShow.cur);
+    uavAssignTargets(uavShow.next, true);
+  }
+
+  // current cached target arrays for cur/next (recomputed only on a formation change — NOT per frame)
+  let _uavTargCur = null, _uavTargNext = null;
+  /* uavAssignTargets(formationIndex, toNext) — recompute + cache the LOCAL target point array for a formation and,
+   * for each drone, record where it currently is (`from`) so the morph lerps from the live pose. Pooled — no alloc
+   * beyond the small point array (built only on a formation change, never per frame). */
+  function uavAssignTargets(formationIndex, toNext){
+    const id = (UAV_FORMATIONS[formationIndex] || UAV_FORMATIONS[0]).id;
+    const pts = uavFormationPoints(id);
+    if (toNext) _uavTargNext = pts; else _uavTargCur = pts;
+  }
+  // resolve drone i's target {x,y,z} from a cached point array — index-assigned (i % len); spare drones park dim at
+  // the sky deck centre. Returns null when there are no points (degenerate).
+  function uavTargetFor(i, pts, sizeLimit){
+    if (!pts || !pts.length) return null;
+    if (i >= sizeLimit) return { x: ((i % 20) - 9.5) * 3.0, y: UAV_SKY_Y - 46, z: ((i / 20 | 0) - 5.5) * 3.0, park: true };
+    const p = pts[i % pts.length];
+    return { x: p.x, y: p.y, z: p.z, park: false };
+  }
+
+  /* applyUavSwarm(on) — show/hide the swarm. ON: build lazily on first reveal, then reveal the group. OFF: hide it
+   * and reset the show to a calm HOLD on the first formation so a later ON starts fresh. Idempotent + headless-safe. */
+  function applyUavSwarm(on){
+    uavSwarmOn = !!on;
+    if (uavSwarmOn && !uavSwarmBuilt){
+      try { buildUavSwarm(); } catch(_){ /* headless / partial THREE — never throw */ }
+    }
+    if (uavSwarmGrp) uavSwarmGrp.visible = uavSwarmOn;
+    if (!uavSwarmOn){
+      // reset to a calm idle so re-entering smart-city starts the show fresh (no residual mid-morph)
+      uavShow.phase = 'hold'; uavShow.f = 0; uavShow.morphK = 1; uavShow.t = 0;
+    }
+  }
+
+  /* animateUavSwarm(dt) — advance the light-show: run the HOLD↔MORPH state machine, ease every pooled drone toward
+   * its assigned formation target (lerp from `from`→target), add a gentle drift/shimmer while holding, and sweep an
+   * eased hue across the swarm by index. Deterministic (accumulated dt/phase ONLY; seeded hashing for shimmer; NO
+   * RNG, NO wall-clock). Sub-white emissive ceiling (UAV_EMIS, INV-3). Alloc-free (scalar maths + position/colour
+   * writes on the pooled drones). Gated by the caller to smart-city active + !reduceMotion. */
+  function animateUavSwarm(dt){
+    if (!uavSwarmOn || !uavSwarmGrp || !uavDrones.length) return;
+    const SH = uavShow; SH.t += dt; SH.f += dt;
+    const size = Math.max(12, Math.min(UAV_MAX, SH.size | 0));
+    // ---- SEQUENCE state machine: HOLD a formed shape, then MORPH (eased) into the next; cycle on the timer ----
+    if (SH.phase === 'morph'){
+      const dur = Math.max(0.4, SH.morphLen / Math.max(0.4, SH.morphSpeed));
+      SH.morphK = Math.max(0, Math.min(1, SH.f / dur));
+      if (SH.morphK >= 1){
+        // arrived: the `next` shape is now `cur`; pick the following shape to pre-stage as the new `next`.
+        SH.cur = SH.next; _uavTargCur = _uavTargNext;
+        SH.next = SH.auto ? ((SH.cur + 1) % UAV_FORMATIONS.length) : SH.next;
+        uavAssignTargets(SH.next, true);
+        SH.phase = 'hold'; SH.f = 0; SH.morphK = 1;
+      }
+    } else { // hold
+      if (SH.auto && SH.f >= SH.holdLen){
+        // begin morphing to the pre-staged `next`: snapshot each drone's current pose as the morph origin.
+        for (let i = 0; i < uavDrones.length; i++){ const d = uavDrones[i]; d.from.x = d.cur.x; d.from.y = d.cur.y; d.from.z = d.cur.z; }
+        SH.phase = 'morph'; SH.f = 0; SH.morphK = 0;
+      }
+    }
+    if (!_uavTargCur) uavAssignTargets(SH.cur);
+    if (!_uavTargNext) uavAssignTargets(SH.next, true);
+    // eased morph factor (smoothstep) so the glide accelerates then settles
+    const k = SH.morphK; const ease = k * k * (3 - 2 * k);
+    const T = SH.theme | 0, TH = UAV_THEMES[T % UAV_THEMES.length];
+    const morphing = (SH.phase === 'morph');
+    let airborne = 0;
+    for (let i = 0; i < uavDrones.length; i++){
+      const d = uavDrones[i];
+      const tgtCur  = uavTargetFor(i, _uavTargCur, size);
+      const tgtNext = uavTargetFor(i, _uavTargNext, size);
+      let tx, ty, tz, parked;
+      if (morphing && tgtCur && tgtNext){
+        // morph: lerp from the snapshot `from` toward the next target (eased) — a smooth flight to the new shape
+        tx = d.from.x + (tgtNext.x - d.from.x) * ease;
+        ty = d.from.y + (tgtNext.y - d.from.y) * ease;
+        tz = d.from.z + (tgtNext.z - d.from.z) * ease;
+        parked = tgtNext.park;
+      } else {
+        const tgt = tgtCur || tgtNext;
+        if (!tgt){ continue; }
+        // hold: ease toward the formed target (a soft critically-damped approach) so size changes glide in too
+        tx = tgt.x; ty = tgt.y; tz = tgt.z; parked = tgt.park;
+        // gentle drift/shimmer while holding (seeded per-index; NO RNG, NO clock)
+        if (!parked){
+          const ph = flowFrac(Math.sin(i * 7.13) * 43758.5453) * Math.PI * 2;
+          tx += Math.sin(SH.t * 0.9 + ph) * 0.5;
+          ty += Math.cos(SH.t * 0.7 + ph) * 0.5;
+          tz += Math.sin(SH.t * 1.1 + ph) * 1.2;          // a little depth shimmer so the plane breathes
+        }
+      }
+      // soft approach toward (tx,ty,tz): move a fraction each frame (frame-rate-tolerant, alloc-free)
+      const a = Math.min(1, dt * (morphing ? 9 : 4));
+      d.cur.x += (tx - d.cur.x) * a; d.cur.y += (ty - d.cur.y) * a; d.cur.z += (tz - d.cur.z) * a;
+      if (d.grp && d.grp.position && d.grp.position.set) d.grp.position.set(d.cur.x, d.cur.y, d.cur.z);
+      // LIGHT: lit + hue-swept when part of the formed shape; dim + cool when parked. Hue sweeps across the swarm
+      // by index (eased) so a colour wave rolls over the image; the emissive ceiling caps it sub-white (INV-3).
+      const lit = !parked;
+      if (lit) airborne++;
+      if (d.lightMat){
+        const hueF = (i / Math.max(1, size));
+        const hue  = (TH.h0 + hueF * TH.hsp + SH.t * 0.04) % 1;          // rolling colour wave (eased by index)
+        const litB = 0.5 + 0.5 * Math.sin(SH.t * 2.0 + i * 0.21);        // gentle shimmer brightness
+        const L    = lit ? Math.min(UAV_EMIS, TH.lit * (0.85 + 0.15 * litB)) : 0.12;  // sub-white cap (INV-3)
+        if (d.lightMat.color && d.lightMat.color.setHSL) d.lightMat.color.setHSL(lit ? hue : 0.58, lit ? TH.sat : 0.3, L);
+        d.lightMat.opacity = lit ? (0.7 + 0.28 * litB) : 0.16;
+      }
+    }
+    SH.airborne = airborne;
+    // gentle whole-swarm sway so the billboard feels alive (pure phase; alloc-free). BASE yaw = π so the formation's
+    // local +X reads left→right from the smart-city camera (which orbits at azimuth π) — otherwise text mirror-flips.
+    if (uavSwarmGrp.rotation) uavSwarmGrp.rotation.y = Math.PI + Math.sin(SH.t * 0.18) * 0.07;
+    // mirror the live readout into the DOM sim panel (if open on this section)
+    try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){}
+  }
+
+  /* uavSetFormation(index) — jump-stage the swarm to morph toward formation `index` now (lever: Formation select /
+   * Next). Pauses auto-cycle for the chosen shape, snapshots the current pose as the morph origin, begins a MORPH. */
+  function uavSetFormation(index){
+    const n = UAV_FORMATIONS.length; const idx = ((index % n) + n) % n;
+    if (!uavSwarmBuilt){ uavShow.cur = idx; uavShow.next = (idx + 1) % n; return; }
+    for (let i = 0; i < uavDrones.length; i++){ const d = uavDrones[i]; d.from.x = d.cur.x; d.from.y = d.cur.y; d.from.z = d.cur.z; }
+    uavShow.next = idx; uavAssignTargets(idx, true);
+    uavShow.phase = 'morph'; uavShow.f = 0; uavShow.morphK = 0;
+  }
+
   /* animateSmartFactory(dt) — advance the ENCLOSED HALL's motion: loop goods circulate the CLOSED conveyor
    * loops, AGVs + FORKLIFTS track their fixed circuits, AMRs hop their flexible waypoints (with a dwell at
    * each), robot arms oscillate (guarded if a model swapped them), workers walk the aisles (limb swing + bob).
@@ -5702,6 +6030,10 @@
         // block too → all city-twin motion freezes under reduced-motion (the wireframe + static thermal still
         // render; only the animation stops). The loads it reads are the eased tower heights — view-only.
         if (activeSection === 'smart-city' && cityTwinOn) animateSmartCityTwin(dt);
+        // UAV (DRONE) SWARM LIGHT-SHOW — advance the formation sequence + morph + hue sweep ONLY while smart-city is
+        // active (and the swarm is shown). Gated by this !reduceMotion block too ⇒ the show freezes under reduced
+        // motion (drones hold their last formed pose; only the animation stops). Deterministic + alloc-free.
+        if (activeSection === 'smart-city' && uavSwarmOn){ try { animateUavSwarm(dt); } catch(_){} }
         // SMART CITY II — the traffic micro-sim (cars flowing the fixed central grid). Factory is a WORLD theme,
         // so it's driven here in the world-animate block (not the diorama block above). Frozen under reduced-motion.
         if (activeSection === 'factory'){ try { animateTrafficTwin(dt); } catch(_){} }
@@ -10916,6 +11248,9 @@
           // the CITY-UTILITY digital twin (substations / data center / solar / sensors / feeders) — one group target
           // for smart-city, available only once the twin overlay is built (lazily on first reveal). VIEW-ONLY.
           if (section === 'smart-city' && typeof cityUtilGrp !== 'undefined' && cityUtilGrp) add('grp:city-util', '▦ City utility twin (group)', cityUtilGrp, true);
+          // the UAV (drone) SWARM LIGHT-SHOW group — one selectable group target for smart-city, available once the
+          // swarm is built (lazily on first reveal). VIEW-ONLY (decorative sky overlay; nothing pickable inside it).
+          if (section === 'smart-city' && typeof uavSwarmGrp !== 'undefined' && uavSwarmGrp) add('grp:uav-swarm', '🛸 UAV swarm light-show (group)', uavSwarmGrp, true);
         } else if (section === 'network'){
           const st = sceneState.network;
           const nodeGrps = [];
@@ -13554,7 +13889,12 @@
       // the ENCLOSED HALL: orbit its centre (600,0) at a steeper 3/4 angle so the camera looks DOWN through
       // the open truss roof and the bounded interior (lines/robots/AGVs/AMRs/workers) fills the view.
       fx = 600; fz = 0; fy = 8; dist = 165; polar = 0.78;
-    } /* smart-city → origin metropolis (defaults fx=fz=0, fy=26) */
+    } else if (section === 'smart-city'){
+      // origin metropolis + the UAV light-show in the sky above it. Look UP into the sky-band (raised look-at) and
+      // pull back so the swarm (centred ~UAV_SKY_Y) sits in the OPEN centre of the frame — clear of the top sim
+      // panel — with the city skyline filling the lower third. polar a touch higher = a more horizon-ward gaze.
+      fx = 0; fz = 0; fy = 64; dist = 205; polar = 1.0;
+    }
     if (useOrbit && controls){
       controls.autoRotate = false;            // focused world views don't auto-spin (that's the diorama flourish)
       const d = ORBIT_DEFAULT;
@@ -13606,6 +13946,11 @@
       if (cyh.classList) cyh.classList.toggle('on', onCy);
       if (cyh.setAttribute) cyh.setAttribute('aria-hidden', onCy ? 'false' : 'true');
     }
+    // UAV (DRONE) SWARM LIGHT-SHOW — the smart-city simulation topic. An additive sky overlay shown ONLY while the
+    // smart-city section is active (built lazily on first reveal; fully reversible). Toggled here in the section
+    // show/hide path the way the city-utility twin / smart-city HUD are toggled. VIEW-ONLY; never disturbs the
+    // streamed economy / centralBuildings / chunkSignature / any gate vector.
+    if (typeof applyUavSwarm === 'function') applyUavSwarm(activeSection === 'smart-city');
     // VFX LAB workbench — now available in EVERY section. Its Target panel binds added effects to the
     // current section's objects (click-to-pick / list / group); only the lab pedestal target is lab-specific.
     // Built lazily on first show in a real browser; entirely guarded so the headless harness never throws.
@@ -13642,8 +13987,10 @@
     else if (activeSection === 'crm'){ const st = S.crm; if (st){ const closed = (st.won || 0) + (st.lost || 0); const winRate = closed ? (st.won || 0) / closed : 0;
       let wip = 0, stuck = 0; if (st.machines){ for (const m of st.machines){ if (m.isSink) continue; const b = (m.buf || []).length; wip += b + (m.holding ? 1 : 0); if (b >= Math.max(3, (st.bufCap || 6) - 1)) stuck += b; } }
       r.textContent = 'Win rate ' + Math.round(winRate * 100) + '%  ·  Open pipeline ' + crmK(st.pipeVal || 0) + '  ·  Velocity ' + ((st.velEMA || 0) * 60).toFixed(0) + ' won/min  ·  WIP ' + wip + '  ·  Stuck ' + stuck; } }
-    else if (activeSection === 'smart-city'){ const G = cityGrid;
-      r.textContent = 'Grid load ' + G.loadPct + '%  ·  Reserve ' + G.reserve + '%  ·  Risk ' + G.outageRisk + '%  ·  Carbon ' + G.carbon + ' g/kWh' + (G.outageT > 0 ? '  ·  ⚠ OUTAGE' : ''); }
+    else if (activeSection === 'smart-city'){ const G = cityGrid; const U = uavShow;
+      const fLabel = (UAV_FORMATIONS[U.cur] || UAV_FORMATIONS[0]).label;
+      r.textContent = 'Grid load ' + G.loadPct + '%  ·  Reserve ' + G.reserve + '%  ·  Risk ' + G.outageRisk + '%  ·  Carbon ' + G.carbon + ' g/kWh' + (G.outageT > 0 ? '  ·  ⚠ OUTAGE' : '')
+        + '  ·  🛸 ' + fLabel + (U.phase === 'morph' ? ' (morphing)' : '') + '  ·  ' + U.airborne + ' airborne'; }
     else r.textContent = '';   // generic Scene-randomize sections have no live readout
   }
   function buildSimPanel(sec){
@@ -14006,7 +14353,16 @@
         '<div class="simctl"><label>🏭 Generation capacity <b id="cg-cap-v"></b></label><input type="range" id="cg-cap" min="70" max="140" step="5" aria-label="Total generation capacity percent of nominal"></div>' +
         '<div class="simctl"><label>🕑 Day speed <b id="cg-day-v"></b></label><input type="range" id="cg-day" min="16" max="120" step="4" aria-label="Seconds per simulated 24 hour day"></div>' +
         '<button class="simbtn" id="cg-outage" type="button">⚠ Inject outage (cascade)</button>' +
-        '<button class="simbtn" id="cg-reset" type="button">↺ Reset</button>';
+        '<button class="simbtn" id="cg-reset" type="button">↺ Reset</button>' +
+        // ---- UAV (DRONE) SWARM LIGHT-SHOW levers (this story): Formation (select / Next) · Swarm size · Morph
+        //      speed · Colour theme + a live readout (current formation · drones airborne). Mirrors the grid wiring.
+        '<div class="simctl" style="margin-top:8px;border-top:1px solid rgba(120,180,255,.18);padding-top:8px"><label>🛸 UAV formation <b id="uav-form-v"></b></label><select id="uav-form" aria-label="UAV swarm formation">' +
+          UAV_FORMATIONS.map((f, i) => '<option value="' + i + '">' + f.label + '</option>').join('') + '</select></div>' +
+        '<div class="simctl"><label>🔢 Swarm size <b id="uav-size-v"></b></label><input type="range" id="uav-size" min="40" max="' + UAV_MAX + '" step="10" aria-label="Number of drones airborne in the formation"></div>' +
+        '<div class="simctl"><label>🌀 Morph speed <b id="uav-morph-v"></b></label><input type="range" id="uav-morph" min="4" max="25" step="1" aria-label="Formation morph speed"></div>' +
+        '<div class="simctl"><label>🎨 Colour theme <b id="uav-theme-v"></b></label><select id="uav-theme" aria-label="UAV swarm colour theme">' +
+          UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
+        '<button class="simbtn" id="uav-next" type="button">⏭ Next formation</button>';
       const ren = $('cg-ren'), dr = $('cg-dr'), cap = $('cg-cap'), day = $('cg-day');
       const setRen = (v) => { const e = $('cg-ren-v'); if (e) e.textContent = v + '%'; };
       const setDr  = (v) => { const e = $('cg-dr-v');  if (e) e.textContent = v + '%'; };
@@ -14019,6 +14375,18 @@
       const og = $('cg-outage'); if (og) og.onclick = () => { G.outageSeed = (G.outageSeed % 9000) + 1; G.outageT = 11; G.cascade = 1; };
       const rb = $('cg-reset'); if (rb) rb.onclick = () => { G.renew = 0.35; G.dr = 0; G.cap = 1.0; G.dayLen = 48; G.outageT = 0; G.cascade = 0; G.peakPct = G.loadPct;
         if (ren){ ren.value = 35; setRen(35); } if (dr){ dr.value = 0; setDr(0); } if (cap){ cap.value = 100; setCap(100); } if (day){ day.value = 48; setDay(48); } };
+      // ---- UAV (DRONE) SWARM LIGHT-SHOW lever wiring (mirrors the grid levers above). VIEW-ONLY. ----
+      const U = uavShow;
+      const uForm = $('uav-form'), uSize = $('uav-size'), uMorph = $('uav-morph'), uTheme = $('uav-theme');
+      const setUForm  = (i) => { const e = $('uav-form-v');  if (e) e.textContent = (UAV_FORMATIONS[i] || UAV_FORMATIONS[0]).label.replace(/^\S+\s/, ''); };
+      const setUSize  = (v) => { const e = $('uav-size-v');  if (e) e.textContent = v + ' drones'; };
+      const setUMorph = (v) => { const e = $('uav-morph-v'); if (e) e.textContent = (v / 10).toFixed(1) + '×'; };
+      const setUTheme = (i) => { const e = $('uav-theme-v'); if (e) e.textContent = (UAV_THEMES[i] || UAV_THEMES[0]).name; };
+      if (uForm){ uForm.value = String(U.cur); uForm.onchange = () => { const v = (+uForm.value) | 0; U.auto = false; if (typeof uavSetFormation === 'function') uavSetFormation(v); setUForm(v); }; setUForm(U.cur); }
+      if (uSize){ uSize.value = Math.round(U.size); uSize.oninput = () => { const v = +uSize.value || UAV_MAX; U.size = Math.max(12, Math.min(UAV_MAX, v)); setUSize(v); }; setUSize(+uSize.value); }
+      if (uMorph){ uMorph.value = Math.round(U.morphSpeed * 10); uMorph.oninput = () => { const v = +uMorph.value || 10; U.morphSpeed = Math.max(0.4, Math.min(2.5, v / 10)); setUMorph(v); }; setUMorph(+uMorph.value); }
+      if (uTheme){ uTheme.value = String(U.theme); uTheme.onchange = () => { const v = (+uTheme.value) | 0; U.theme = v; setUTheme(v); }; setUTheme(U.theme); }
+      const un = $('uav-next'); if (un) un.onclick = () => { U.auto = false; const nx = (U.cur + 1) % UAV_FORMATIONS.length; if (typeof uavSetFormation === 'function') uavSetFormation(nx); if (uForm){ uForm.value = String(nx); setUForm(nx); } };
     } else if (sec === 'factory'){
       // SMART CITY II — TRAFFIC & SIGNAL CONTROL levers (demand · signal cycle · green split · green-wave offset · incident)
       if (title) title.textContent = 'Smart City II · Traffic & Signal Control';
@@ -14338,6 +14706,33 @@
         if (typeof drawCityHud === 'function') drawCityHud(); }   // PHASE 2: exercise the telemetry HUD path too (headless-safe; view-only)
       const out = this.cityTwin();
       activeSection = prevSection; applyCityTwin(prevOn);
+      return out;
+    },
+    // Drive `frames` UAV-swarm light-show steps (formation sequence + morph + hue sweep) WITHOUT the renderer, so a
+    // harness can confirm the per-frame swarm animation runs clean (no throw) when shown. Toggles the swarm ON for
+    // the duration, then RESTORES prior state (reversible). VIEW-ONLY: touches only decorative sky-overlay meshes —
+    // never the economy/world/picking. Returns the swarm's pooled/bounded counts + current formation state.
+    uavSwarm(frames){
+      const prevSection = activeSection, prevOn = uavSwarmOn;
+      // snapshot the show state so repeated probe calls are ISOLATED (reversible) — the accumulated phase/timer is
+      // restored after the run, matching applyUavSwarm's reset discipline (the probe never leaves residual state).
+      const snap = { t: uavShow.t, phase: uavShow.phase, f: uavShow.f, cur: uavShow.cur, next: uavShow.next, morphK: uavShow.morphK, auto: uavShow.auto };
+      uavShow.t = 0; uavShow.phase = 'hold'; uavShow.f = 0; uavShow.cur = 0; uavShow.next = 1; uavShow.morphK = 1; uavShow.auto = true;
+      activeSection = 'smart-city'; applyUavSwarm(true);
+      const N = Math.max(1, (frames | 0) || 1);
+      for (let i = 0; i < N; i++){ try { animateUavSwarm(0.016); } catch(_){} }
+      const out = {
+        built: !!uavSwarmBuilt,
+        pooled: uavDrones.length,            // POOLED drone count (bounded by UAV_MAX)
+        cap: UAV_MAX,                        // the hard cap
+        formations: UAV_FORMATIONS.length,
+        formation: (UAV_FORMATIONS[uavShow.cur] || {}).id,
+        phase: uavShow.phase,
+        airborne: uavShow.airborne,
+        emisCap: UAV_EMIS,                   // sub-white emissive ceiling (INV-3, < 0.85)
+      };
+      activeSection = prevSection; applyUavSwarm(prevOn);
+      uavShow.t = snap.t; uavShow.phase = snap.phase; uavShow.f = snap.f; uavShow.cur = snap.cur; uavShow.next = snap.next; uavShow.morphK = snap.morphK; uavShow.auto = snap.auto;
       return out;
     },
   };
