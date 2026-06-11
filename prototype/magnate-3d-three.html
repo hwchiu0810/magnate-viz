@@ -4426,21 +4426,23 @@
       const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(SR * 0.66, SR * 0.66, 1.2, 36, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false }));
       baseRing.position.y = 8; DOME.add(baseRing); cityShow.edges.push(baseRing.material);
     }
-    // LED IMAGE SURFACE — pooled cells laid in CONCENTRIC RINGS over the front-pole spherical cap, all the way out to
-    // the LIMB (θ→90°), so the cells fill the ENTIRE visible disc edge-to-edge (no dark rim → reads as a full sphere,
-    // not a cap). The image maps onto the inner cap (θ ≤ IMGTH); the outer rings glow ambient. −Z = front pole.
+    // LED IMAGE SURFACE — pooled cells covering the ENTIRE sphere (full 360° longitude × ±latitude rings), so the
+    // globe is a complete LED ball from every angle — no dark back/half. The cycling image maps onto the front
+    // hemisphere (angular distance θ from the front pole ≤ IMGTH); every other cell glows ambient (the wrap-around
+    // glow). −Z = front pole (toward the camera). Bounded pool (~540 cells).
     const dotGeo = new THREE.BoxGeometry(2.0, 2.0, 2.0);
-    const NR = 16, IMGTH = 1.30, sinImg = Math.sin(IMGTH);        // rings to ~90°; picture within θ≤IMGTH (~74°)
-    for (let r = 0; r <= NR; r++){
-      const th = (r / NR) * (Math.PI / 2) * 0.995;                // 0 (front pole) → ~90° (silhouette limb)
-      const rr = Math.sin(th), cz = Math.cos(th);
-      const ring = Math.max(1, Math.round(48 * rr));              // cell count grows with ring radius (even spacing)
+    const NLAT = 15, IMGTH = 1.30, sinImg = Math.sin(IMGTH);      // 15 latitude rings; picture within θ≤IMGTH (~74°)
+    for (let r = 0; r < NLAT; r++){
+      const lat = (((r + 0.5) / NLAT) * 2 - 1) * (Math.PI / 2) * 0.94;   // −85°..+85° (skip the exact poles)
+      const cl = Math.cos(lat), sl = Math.sin(lat);
+      const ring = Math.max(4, Math.round(52 * cl));              // cell count tracks the ring circumference
       for (let j = 0; j < ring; j++){
-        const phi = (j / ring) * Math.PI * 2;
-        const sx = rr * Math.cos(phi), sy = rr * Math.sin(phi);   // screen-plane unit direction
+        const lon = (j / ring) * Math.PI * 2;                     // full 360° — front AND back
+        const px = SR * Math.sin(lon) * cl, py = SR * sl, pz = -SR * Math.cos(lon) * cl;
         const m = new THREE.MeshBasicMaterial({ color: 0x12283c, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
-        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(SR * sx, SCY + SR * sy, -SR * cz - 0.3); DOME.add(cell);
-        cityShow.sphereCells.push({ mat: m, u: sx / sinImg, v: sy / sinImg, img: (th <= IMGTH) });
+        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(px, SCY + py, pz); DOME.add(cell);
+        const cosTh = Math.cos(lon) * cl;                         // cos of angular distance from the FRONT pole
+        cityShow.sphereCells.push({ mat: m, u: (px / SR) / sinImg, v: (py / SR) / sinImg, img: (cosTh >= Math.cos(IMGTH)) });
       }
     }
 
@@ -4565,10 +4567,10 @@
           if (lvl > 0.05){
             const hue = (TH.h0 + (c.u * 0.5 + 0.5) * TH.hsp + S.t * 0.05) % 1;    // themed colour wave across the face
             m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.22 + 0.6 * lvl) * I)); m.opacity = 0.06 + 0.9 * lvl;
-          } else { m.color.setHSL(0.62, 0.5, 0.03); m.opacity = 0.05; }            // OFF pixel → near-black (image reads)
-        } else {                                                                 // outer border ring → ambient theme glow
-          const g = 0.45 + 0.35 * Math.sin(S.t * 1.6 + (c.u + c.v) * 2.0);
-          m.color.setHSL((TH.h0 + S.t * 0.05) % 1, TH.sat, Math.min(LED_EMIS, 0.22 * I * g)); m.opacity = 0.28 + 0.18 * g;
+          } else { m.color.setHSL((TH.h0 + 0.5) % 1, TH.sat * 0.7, 0.18); m.opacity = 0.38; }  // OFF pixel → soft glow (ball fully lit; image reads bright-on-soft)
+        } else {                                                                 // wrap-around cells → bright ambient theme glow (the full LED ball)
+          const g = 0.55 + 0.45 * Math.sin(S.t * 1.6 + (c.u + c.v) * 2.0);
+          m.color.setHSL((TH.h0 + S.t * 0.05) % 1, TH.sat, Math.min(LED_EMIS, 0.42 * I * g)); m.opacity = 0.45 + 0.3 * g;
         }
       }
     }
@@ -5889,7 +5891,7 @@
     // SMART CITY is a NIGHT light-show: pin its sky to deep night so the LED landmarks + drone swarm dominate and
     // the mundane skyline recedes. View-only (a constant sky phase — deterministic), scoped to this section only;
     // the global clock resumes from here on exit. Other world sections (incl. Smart City II) keep the live cycle.
-    if (activeSection === 'smart-city') todPhase = 0.66;   // late dusk — a glowing blue-hour sky, not pitch black
+    if (activeSection === 'smart-city') todPhase = 0.58;   // luminous golden/blue hour — a bright glowing sky for the show
     const s = _todSample(todPhase, C);
     // SUN: colour + intensity from the palette; swing elevation/azimuth across the sky so the
     // long shadows of dawn/dusk read (kept above the horizon at night so nothing flips to lit-from-below).
@@ -5910,10 +5912,10 @@
     if (lightHemi){
       if (lightHemi.color && lightHemi.color.copy) lightHemi.color.copy(C.hs);
       if (lightHemi.groundColor && lightHemi.groundColor.copy) lightHemi.groundColor.copy(C.hg);
-      lightHemi.intensity = lumCity ? Math.max(s.hemiI, 0.95) : s.hemiI;
+      lightHemi.intensity = lumCity ? Math.max(s.hemiI, 1.35) : s.hemiI;
     }
-    if (lightAmbient) lightAmbient.intensity = lumCity ? Math.max(s.ambI, 0.72) : s.ambI;
-    if (lumCity && lightSun) lightSun.intensity = Math.max(s.sunI, 0.55);   // a soft key so facades + the skyline catch light
+    if (lightAmbient) lightAmbient.intensity = lumCity ? Math.max(s.ambI, 1.05) : s.ambI;
+    if (lumCity && lightSun) lightSun.intensity = Math.max(s.sunI, 0.9);    // a strong key so facades + the skyline shine
     // SKY: background + fog share one tone (day blue → sunset orange → deep night-blue, never black).
     // SKIP while the Digital-Twin overlay owns the backdrop (it set a fixed dark-navy bg/fog in
     // applyTwinMode); retinting here would clobber it every frame. OFF restores the saved bg/fog and
@@ -11610,7 +11612,7 @@
       };
       const glabel = (base, n) => base + ' (group · ' + n + ')';
       try {
-        if (section === 'smart-city' || section === 'factory'){
+        if (section === 'factory'){
           const firmGrps = [];
           if (typeof buildings === 'object' && buildings){ for (const fid in buildings){ const b = buildings[fid]; if (b && b.grp) firmGrps.push(b.grp); } }
           if (typeof economyGroup !== 'undefined' && economyGroup && firmGrps.length) add('grp:firms', glabel('▦ All firms', firmGrps.length), economyGroup, true, firmGrps);
@@ -11618,13 +11620,20 @@
             for (const fid in buildings){ const b = buildings[fid]; if (b && b.grp) add('firm:' + fid, firmLabel(fid), b.grp); }
           }
           if (typeof exchange !== 'undefined' && exchange && exchange.grp) add('desk', firmLabel('NPC_DESK'), exchange.grp);
-          // the CITY-UTILITY digital twin (substations / data center / solar / sensors / feeders) — one group target
-          // for smart-city, available only once the twin overlay is built (lazily on first reveal). VIEW-ONLY.
-          if (section === 'smart-city' && typeof cityUtilGrp !== 'undefined' && cityUtilGrp) add('grp:city-util', '▦ City utility twin (group)', cityUtilGrp, true);
-          // the UAV (drone) SWARM LIGHT-SHOW group — one selectable group target for smart-city, available once the
-          // swarm is built (lazily on first reveal). VIEW-ONLY (decorative sky overlay; nothing pickable inside it).
-          if (section === 'smart-city' && typeof uavSwarmGrp !== 'undefined' && uavSwarmGrp) add('grp:uav-swarm', '🛸 UAV swarm light-show (group)', uavSwarmGrp, true);
-          if (section === 'smart-city' && typeof cityShowGrp !== 'undefined' && cityShowGrp) add('grp:city-show', '🌃 Landmark light show (group)', cityShowGrp, true);
+        } else if (section === 'smart-city'){
+          // SMART CITY = the LIGHT-SHOW stage. The economy district (firms/exchange) was REMOVED from this scene,
+          // so its targets are gone too — the list now mirrors exactly what's on stage: each landmark individually
+          // plus an all-objects group (members fan an effect onto every landmark + the swarm + the city fill).
+          const CS = (typeof cityShow !== 'undefined') ? cityShow : null;
+          const allMembers = [];
+          if (CS && CS.gTower){ add('show:101', '🏙️ Taipei 101 tower', CS.gTower, true); allMembers.push(CS.gTower); }
+          if (CS && CS.gDome){ add('show:sphere', '🔮 Vegas Sphere', CS.gDome, true); allMembers.push(CS.gDome); }
+          if (CS && CS.gBridge){ add('show:bridge', '🌉 Light bridge', CS.gBridge, true); allMembers.push(CS.gBridge); }
+          if (CS && CS.gFill){ add('show:city', '🏢 Boundaryless city (group)', CS.gFill, true); allMembers.push(CS.gFill); }
+          if (typeof uavSwarmGrp !== 'undefined' && uavSwarmGrp){ add('grp:uav-swarm', '🛸 UAV drone swarm (group)', uavSwarmGrp, true); allMembers.push(uavSwarmGrp); }
+          if (typeof cityUtilGrp !== 'undefined' && cityUtilGrp) add('grp:city-util', '▦ City utility twin (group)', cityUtilGrp, true);
+          if (typeof cityShowGrp !== 'undefined' && cityShowGrp && allMembers.length)
+            add('grp:city-show', glabel('🌃 Whole light show — all objects', allMembers.length), cityShowGrp, true, allMembers);
         } else if (section === 'network'){
           const st = sceneState.network;
           const nodeGrps = [];
