@@ -4229,6 +4229,253 @@
     uavShow.phase = 'morph'; uavShow.f = 0; uavShow.morphK = 0;
   }
 
+  /* =================== SMART CITY · LANDMARK LIGHT SHOW =====================================================
+   * A wide-open NIGHT spectacle anchored on three landmarks built in the cleared downtown core (no chunk lots
+   * within hypot<124 of origin): a TAIPEI-101-style tapered TOWER running an LED MEDIA FACADE (a scrolling 5×7
+   * dot-matrix CHARACTER marquee + a rolling colour-wave) with a crown beacon + edge-strip chase; a geodesic
+   * DOME ringed with chasing LED bands; and a cable-stayed BRIDGE whose fan cables run a travelling light-chase.
+   * Pooled + bounded (INV-4), deterministic (accumulated dt/phase + seeded hashing — NO RNG, NO wall-clock,
+   * INV-1), sub-white emissive (INV-3, every lit LED capped ≤ LED_EMIS), r128-only primitives behind typeof
+   * guards (headless-safe; built LAZILY on first reveal, never in the harness). VIEW-ONLY: its own group (child
+   * of scene), shown ONLY while smart-city is active; nothing pickable, no economy/gate coupling. ======== */
+  let cityShowGrp = null, cityShowBuilt = false, cityShowOn = false;
+  const LED_EMIS = 0.82;              // sub-white ceiling for any lit LED (INV-3)
+  const LEDH = 7, LEDW = 5;          // classic 5×7 dot-matrix cell
+  const LED_COLS = 18;               // visible facade columns (window into the scrolling message)
+  // full 5×7 alphanumeric font (top→bottom rows, '1' = lit) — richer than the sky-swarm's SMART-CITY-only set so
+  // the tower can scroll an arbitrary message / "character show".
+  const LED_GLYPHS = {
+    'A':['01110','10001','10001','11111','10001','10001','10001'], 'B':['11110','10001','10001','11110','10001','10001','11110'],
+    'C':['01110','10001','10000','10000','10000','10001','01110'], 'D':['11100','10010','10001','10001','10001','10010','11100'],
+    'E':['11111','10000','10000','11110','10000','10000','11111'], 'F':['11111','10000','10000','11110','10000','10000','10000'],
+    'G':['01110','10001','10000','10111','10001','10001','01111'], 'H':['10001','10001','10001','11111','10001','10001','10001'],
+    'I':['11111','00100','00100','00100','00100','00100','11111'], 'J':['00111','00010','00010','00010','10010','10010','01100'],
+    'K':['10001','10010','10100','11000','10100','10010','10001'], 'L':['10000','10000','10000','10000','10000','10000','11111'],
+    'M':['10001','11011','10101','10101','10001','10001','10001'], 'N':['10001','11001','10101','10011','10001','10001','10001'],
+    'O':['01110','10001','10001','10001','10001','10001','01110'], 'P':['11110','10001','10001','11110','10000','10000','10000'],
+    'Q':['01110','10001','10001','10001','10101','10010','01101'], 'R':['11110','10001','10001','11110','10100','10010','10001'],
+    'S':['01111','10000','10000','01110','00001','00001','11110'], 'T':['11111','00100','00100','00100','00100','00100','00100'],
+    'U':['10001','10001','10001','10001','10001','10001','01110'], 'V':['10001','10001','10001','10001','10001','01010','00100'],
+    'W':['10001','10001','10001','10101','10101','11011','10001'], 'X':['10001','10001','01010','00100','01010','10001','10001'],
+    'Y':['10001','10001','01010','00100','00100','00100','00100'], 'Z':['11111','00001','00010','00100','01000','10000','11111'],
+    '0':['01110','10001','10011','10101','11001','10001','01110'], '1':['00100','01100','00100','00100','00100','00100','01110'],
+    '2':['01110','10001','00001','00010','00100','01000','11111'], '3':['11111','00010','00100','00010','00001','10001','01110'],
+    '4':['00010','00110','01010','10010','11111','00010','00010'], '5':['11111','10000','11110','00001','00001','10001','01110'],
+    '6':['00110','01000','10000','11110','10001','10001','01110'], '7':['11111','00001','00010','00100','01000','01000','01000'],
+    '8':['01110','10001','10001','01110','10001','10001','01110'], '9':['01110','10001','10001','01111','00001','00010','01100'],
+    ' ':['00000','00000','00000','00000','00000','00000','00000'], '*':['00000','10101','01110','11111','01110','10101','00000'],
+    '!':['00100','00100','00100','00100','00100','00000','00100'], '.':['00000','00000','00000','00000','00000','00110','00110'],
+    '-':['00000','00000','00000','11111','00000','00000','00000'], ':':['00000','00110','00110','00000','00110','00110','00000'],
+  };
+  const cityShow = {
+    msg: 'SMART CITY  *  WELCOME TO 101  *  LUXURY NIGHT LIGHT SHOW  *  ',
+    theme: 0,            // palette index (reuses UAV_THEMES hue base/spread/sat/lit)
+    intensity: 1.0,      // 0.6..1.4 master brightness multiplier (still capped sub-white)
+    speed: 6.0,          // facade marquee scroll speed (columns / sec)
+    tower: true, dome: true, bridge: true,   // landmark visibility toggles
+    t: 0, scroll: 0,
+    cols: [],            // message column bitmap (each entry = 7-char '0'/'1' string for one source column)
+    cells: [],           // pooled facade cell materials, row-major [col*LEDH + row]
+    domeBands: [],       // pooled dome ring materials (chase)
+    cables: [],          // pooled bridge cable records { mat, k }  (k = anchor position along span 0..1)
+    edges: [],           // tower vertical-edge LED strip materials
+    beacon: null,        // crown beacon material
+    gTower: null, gDome: null, gBridge: null
+  };
+  // rebuild the scrolling message → column bitmap (called at build + whenever the message lever changes)
+  function ledRebuildCols(){
+    const cols = []; const msg = (cityShow.msg || ' ').toUpperCase();
+    for (let i = 0; i < msg.length; i++){
+      const g = LED_GLYPHS[msg[i]] || LED_GLYPHS[' '];
+      for (let cx = 0; cx < LEDW; cx++){ let s = ''; for (let ry = 0; ry < LEDH; ry++){ s += (g[ry] || '')[cx] === '1' ? '1' : '0'; } cols.push(s); }
+      cols.push('0000000');   // 1-column gap between characters
+    }
+    cityShow.cols = cols.length ? cols : ['0000000'];
+  }
+  // orient a unit-height box mesh to span world points a→b (position = midpoint, +Y → direction, scale.y = length).
+  // Built ONCE per cable at build time (static) — no per-frame alloc. Module-scope scratch vectors (built once).
+  const _ledUp = (typeof THREE !== 'undefined' && THREE.Vector3) ? new THREE.Vector3(0, 1, 0) : null;
+  const _ledDir = (typeof THREE !== 'undefined' && THREE.Vector3) ? new THREE.Vector3() : null;
+  const _ledQ = (typeof THREE !== 'undefined' && THREE.Quaternion) ? new THREE.Quaternion() : null;
+  function ledOrientBox(mesh, ax, ay, az, bx, by, bz){
+    const dx = bx - ax, dy = by - ay, dz = bz - az, len = Math.hypot(dx, dy, dz) || 1;
+    if (mesh.position && mesh.position.set) mesh.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+    if (_ledUp && _ledDir && _ledQ && mesh.quaternion){ _ledDir.set(dx / len, dy / len, dz / len); _ledQ.setFromUnitVectors(_ledUp, _ledDir); mesh.quaternion.copy(_ledQ); }
+    if (mesh.scale && mesh.scale.set) mesh.scale.y = len;
+  }
+
+  /* buildCityLightShow() — lazily build the three landmarks + their pooled LED materials. Headless-safe (guarded
+   * primitives; never runs in the harness). Idempotent. Positions sit inside the cleared downtown core. */
+  function buildCityLightShow(){
+    if (typeof THREE === 'undefined' || cityShowBuilt) return;
+    const ADD = (THREE.AdditiveBlending !== undefined ? THREE.AdditiveBlending : 2);
+    const BOX = (typeof THREE.BoxGeometry === 'function');
+    if (!BOX){ cityShowBuilt = true; return; }   // degenerate stub — nothing to build
+    const grp = new THREE.Group(); if (typeof scene !== 'undefined' && scene && scene.add) scene.add(grp);
+    cityShowGrp = grp; grp.visible = false;
+    const litMat = () => new THREE.MeshBasicMaterial({ color: 0x123048, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
+    const darkGlass = (hex) => new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(0x0a1722), emissiveIntensity: 0.12, roughness: 0.45, metalness: 0.65 });
+
+    // ---------- LANDMARK 1: the "101" tower (tapered stacked segments) + LED media facade ----------
+    const TWR = new THREE.Group(); TWR.position.set(28, 0, -42); grp.add(TWR); cityShow.gTower = TWR;
+    const SEG = 6, segH = 13, baseW = 52;                          // 6 flared "ruyi" segments on a wide footprint
+    // tapered plinth + shaft segments (each flares slightly outward toward its top — the Taipei-101 silhouette)
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(baseW + 10, 16, baseW + 10), darkGlass(0x1b2733));
+    plinth.position.y = 8; TWR.add(plinth);
+    for (let s = 0; s < SEG; s++){
+      const w0 = baseW * (1 - s * 0.045), w1 = w0 * 1.14;          // bottom narrow → top wide (inverted taper)
+      const y0 = 16 + s * segH;
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(w1, segH - 1.4, w1), darkGlass(0x16212c));
+      seg.position.y = y0 + segH / 2; TWR.add(seg);
+      // a thin emissive ledge cap between segments (the signature notch)
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(w1 + 1.2, 0.9, w1 + 1.2), new THREE.MeshBasicMaterial({ color: 0x2a5a7a, transparent: true, opacity: 0.6, blending: ADD, depthWrite: false }));
+      cap.position.y = y0 + segH - 0.4; TWR.add(cap); cityShow.edges.push(cap.material);
+    }
+    // spire + crown beacon
+    const spireBase = 16 + SEG * segH;
+    const spire = new THREE.Mesh(new THREE.BoxGeometry(2.2, 26, 2.2), darkGlass(0x223340)); spire.position.y = spireBase + 13; TWR.add(spire);
+    const beaconMat = new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.95, blending: ADD, depthWrite: false });
+    if (typeof THREE.SphereGeometry === 'function'){ const bc = new THREE.Mesh(new THREE.SphereGeometry(2.6, 10, 10), beaconMat); bc.position.y = spireBase + 27; TWR.add(bc); }
+    cityShow.beacon = beaconMat;
+    // LED MEDIA FACADE — a window of LED_COLS × LEDH emissive cells on the tower's −Z face (toward the camera).
+    // Big chunky cells so the marquee reads from the wide city shot. col 0 = screen-LEFT (camera at azimuth π ⇒
+    // local +X is screen-left), cells laid +X→−X so glyph columns read left→right (verified by screenshot).
+    const facade = new THREE.Group(); const fz = -(baseW * 1.16 / 2) - 1.2;   // just outside the front face, toward camera
+    const cellW = 2.3, cellH = 3.4, fGapX = 0.22, fGapY = 0.3;
+    const fw = LED_COLS * (cellW + fGapX), fh = LEDH * (cellH + fGapY);
+    facade.position.set(0, 50, fz); TWR.add(facade);
+    // a dark screen backing so unlit cells read as a panel, not floating dots
+    const back = new THREE.Mesh(new THREE.BoxGeometry(fw + 3, fh + 3, 0.5), new THREE.MeshStandardMaterial({ color: 0x05090f, emissive: new THREE.Color(0x040a12), emissiveIntensity: 0.1, roughness: 0.6, metalness: 0.3 }));
+    back.position.z = -0.6; facade.add(back);
+    const cellGeo = new THREE.BoxGeometry(cellW, cellH, 0.4);
+    for (let c = 0; c < LED_COLS; c++){
+      const x = (fw / 2) - (c + 0.5) * (cellW + fGapX);           // c=0 → +X (screen-left); increasing c → −X
+      for (let row = 0; row < LEDH; row++){
+        const y = (fh / 2) - (row + 0.5) * (cellH + fGapY);       // row 0 → top
+        const m = litMat(); const cell = new THREE.Mesh(cellGeo, m); cell.position.set(x, y, 0); facade.add(cell);
+        cityShow.cells.push(m);                                   // row-major: index = c*LEDH + row
+      }
+    }
+
+    // ---------- LANDMARK 2: geodesic DOME ringed with chasing LED bands ----------
+    const DOME = new THREE.Group(); DOME.position.set(-44, 0, -8); grp.add(DOME); cityShow.gDome = DOME;
+    const R = 24;
+    if (typeof THREE.SphereGeometry === 'function'){
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(R, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x0e1822, emissive: new THREE.Color(0x0a141e), emissiveIntensity: 0.12, roughness: 0.4, metalness: 0.6, side: THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2 }));
+      DOME.add(shell);
+    }
+    // latitude LED rings (TorusGeometry) that chase colour up the dome
+    if (typeof THREE.TorusGeometry === 'function'){
+      const NB = 6;
+      for (let b = 0; b < NB; b++){
+        const ph = (b + 0.5) / NB * (Math.PI / 2);                // latitude angle
+        const ry = Math.sin(ph) * R, rr = Math.cos(ph) * R;
+        const m = new THREE.MeshBasicMaterial({ color: 0x1f7fae, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false });
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.55, 8, 40), m);
+        ring.rotation.x = Math.PI / 2; ring.position.y = ry; DOME.add(ring); cityShow.domeBands.push(m);
+      }
+    }
+    // a bright base ring + plaza disc
+    if (typeof THREE.CylinderGeometry === 'function'){
+      const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(R + 2, R + 2, 1.4, 36, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false }));
+      baseRing.position.y = 0.7; DOME.add(baseRing); cityShow.domeBands.push(baseRing.material);
+    }
+
+    // ---------- LANDMARK 3: cable-stayed BRIDGE with a travelling light-chase ----------
+    const BR = new THREE.Group(); BR.position.set(0, 4, -66); grp.add(BR); cityShow.gBridge = BR;
+    const span = 132, deckY = 8, deckHalf = span / 2, pylX = 30, pylTop = 50;
+    const deckMat = darkGlass(0x18242e);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(span, 2.2, 12), deckMat); deck.position.y = deckY; BR.add(deck);
+    // deck-edge LED runners (two long emissive strips)
+    for (const ez of [-6, 6]){
+      const m = new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false });
+      const run = new THREE.Mesh(new THREE.BoxGeometry(span, 0.5, 0.5), m); run.position.set(0, deckY + 1.4, ez); BR.add(run); cityShow.edges.push(m);
+    }
+    const cableGeo = new THREE.BoxGeometry(0.32, 1, 0.32);          // unit-height; scaled per cable by ledOrientBox
+    for (const px of [-pylX, pylX]){
+      // H-pylon: two legs + a cross-beam
+      for (const lx of [px - 4, px + 4]){ const leg = new THREE.Mesh(new THREE.BoxGeometry(2.4, pylTop, 2.4), darkGlass(0x1d2a36)); leg.position.set(lx, deckY + pylTop / 2, 0); BR.add(leg); }
+      const xbeam = new THREE.Mesh(new THREE.BoxGeometry(12, 2.2, 2.2), darkGlass(0x1d2a36)); xbeam.position.set(px, deckY + pylTop - 6, 0); BR.add(xbeam);
+      // fan cables from the pylon top to evenly-spaced deck anchors on BOTH sides of the pylon
+      const topY = deckY + pylTop, NC = 7;
+      for (let s = -1; s <= 1; s += 2){
+        for (let i = 1; i <= NC; i++){
+          const ax = px + s * (i / NC) * (deckHalf - 6);           // deck anchor walking out toward the span end
+          const m = new THREE.MeshBasicMaterial({ color: 0x39c0e0, transparent: true, opacity: 0.8, blending: ADD, depthWrite: false });
+          const cab = new THREE.Mesh(cableGeo, m); ledOrientBox(cab, px, topY, 0, ax, deckY + 1.4, 0); BR.add(cab);
+          // k = normalized position along the FULL span (-1..1 → 0..1) for the travelling chase
+          cityShow.cables.push({ mat: m, k: (ax / deckHalf + 1) / 2 });
+        }
+      }
+    }
+
+    ledRebuildCols();
+    cityShowBuilt = true;
+  }
+
+  /* applyCityLightShow(on) — show/hide the landmark light-show (lazily build on first reveal). Idempotent + safe. */
+  function applyCityLightShow(on){
+    cityShowOn = !!on;
+    if (cityShowOn && !cityShowBuilt){ try { buildCityLightShow(); } catch(_){ /* headless / partial THREE */ } }
+    if (cityShowGrp) cityShowGrp.visible = cityShowOn;
+    if (cityShowOn && cityShowGrp){
+      if (cityShow.gTower)  cityShow.gTower.visible  = !!cityShow.tower;
+      if (cityShow.gDome)   cityShow.gDome.visible   = !!cityShow.dome;
+      if (cityShow.gBridge) cityShow.gBridge.visible = !!cityShow.bridge;
+    }
+  }
+
+  /* animateCityLightShow(dt) — advance the marquee scroll + colour-waves across all three landmarks. Deterministic
+   * (accumulated dt/phase; seeded hashing for shimmer; NO RNG/clock). Alloc-free (scalar maths + colour writes on
+   * the pooled materials). Sub-white emissive ceiling (LED_EMIS, INV-3). Gated by the caller to smart-city active
+   * + !reduceMotion (the show freezes — holding its last frame — under reduced motion). */
+  function animateCityLightShow(dt){
+    if (!cityShowOn || !cityShowGrp || !cityShowBuilt) return;
+    const S = cityShow; S.t += dt; S.scroll += dt * S.speed;
+    const TH = UAV_THEMES[(S.theme | 0) % UAV_THEMES.length];
+    const I = Math.max(0.3, Math.min(1.4, S.intensity));
+    // landmark toggles (cheap — just visibility)
+    if (S.gTower)  S.gTower.visible  = !!S.tower;
+    if (S.gDome)   S.gDome.visible   = !!S.dome;
+    if (S.gBridge) S.gBridge.visible = !!S.bridge;
+    // ---- TOWER media facade: scroll the message bitmap through the window + roll a colour wave across columns ----
+    if (S.tower && S.cells.length && S.cols.length){
+      const buf = S.cols, blen = buf.length; const base = Math.floor(S.scroll);
+      for (let c = 0; c < LED_COLS; c++){
+        const src = ((base + c) % blen + blen) % blen; const colbits = buf[src];
+        const hue = (TH.h0 + (c / LED_COLS) * TH.hsp + S.t * 0.05) % 1;          // rolling colour wave by column
+        for (let row = 0; row < LEDH; row++){
+          const m = S.cells[c * LEDH + row]; if (!m || !m.color) continue;
+          const lit = colbits[row] === '1';
+          if (lit){ const sh = 0.85 + 0.15 * Math.sin(S.t * 3 + c * 0.4 + row * 0.2);
+            if (m.color.setHSL) m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, TH.lit * I * sh)); m.opacity = 0.92; }
+          else { if (m.color.setHSL) m.color.setHSL(0.6, 0.4, 0.05); m.opacity = 0.14; }
+        }
+      }
+      // edge-strip / ledge caps pulse with the theme (a slow breathing glow up the tower)
+      for (let i = 0; i < S.edges.length; i++){ const m = S.edges[i]; if (!m || !m.color || !m.color.setHSL) continue;
+        const b = 0.5 + 0.5 * Math.sin(S.t * 1.5 + i * 0.7);
+        m.color.setHSL((TH.h0 + i * 0.04 + S.t * 0.03) % 1, TH.sat * 0.8, Math.min(LED_EMIS, 0.35 * I + 0.3 * I * b)); }
+      // crown beacon strobe
+      if (S.beacon && S.beacon.color && S.beacon.color.setHSL){ const fl = 0.5 + 0.5 * Math.sin(S.t * 4.0);
+        S.beacon.color.setHSL((TH.h0 + 0.5) % 1, 0.5, Math.min(LED_EMIS, 0.4 + 0.42 * fl)); S.beacon.opacity = 0.6 + 0.38 * fl; }
+    }
+    // ---- DOME: chase colour UP the latitude rings ----
+    if (S.dome){ for (let i = 0; i < S.domeBands.length; i++){ const m = S.domeBands[i]; if (!m || !m.color || !m.color.setHSL) continue;
+      const ph = i / Math.max(1, S.domeBands.length);
+      const b = 0.55 + 0.45 * Math.sin(S.t * 2.2 - ph * 6.0);                    // a wave rolling up the dome
+      m.color.setHSL((TH.h0 + ph * TH.hsp + S.t * 0.08) % 1, TH.sat, Math.min(LED_EMIS, TH.lit * I * b)); m.opacity = 0.5 + 0.4 * b; } }
+    // ---- BRIDGE: a bright pulse travels across the span (a light running the cables left→right, then repeats) ----
+    if (S.bridge){ const head = (S.t * 0.35) % 1;                               // chase head position 0..1 across span
+      for (let i = 0; i < S.cables.length; i++){ const cb = S.cables[i]; const m = cb.mat; if (!m || !m.color || !m.color.setHSL) continue;
+        let d = Math.abs(cb.k - head); d = Math.min(d, 1 - d);                   // wrap distance to the chase head
+        const glow = Math.max(0, 1 - d * 5.0);                                  // sharp bright crest near the head
+        const L = Math.min(LED_EMIS, TH.lit * I * (0.4 + 0.6 * glow));
+        m.color.setHSL((TH.h0 + cb.k * TH.hsp) % 1, TH.sat, L); m.opacity = 0.5 + 0.45 * glow; } }
+    // mirror the live readout into the DOM sim panel (if open on this section)
+    try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){}
+  }
+
   /* animateSmartFactory(dt) — advance the ENCLOSED HALL's motion: loop goods circulate the CLOSED conveyor
    * loops, AGVs + FORKLIFTS track their fixed circuits, AMRs hop their flexible waypoints (with a dwell at
    * each), robot arms oscillate (guarded if a model swapped them), workers walk the aisles (limb swing + bob).
@@ -5524,6 +5771,10 @@
     // clock: advance only when motion is allowed AND not manually paused; else hold a daytime.
     if (reduceMotion){ todPhase = TOD_FIXED; }
     else if (!todPaused && dt > 0){ todPhase = (todPhase + dt / TOD_PERIOD) % 1; if (todPhase < 0) todPhase += 1; }
+    // SMART CITY is a NIGHT light-show: pin its sky to deep night so the LED landmarks + drone swarm dominate and
+    // the mundane skyline recedes. View-only (a constant sky phase — deterministic), scoped to this section only;
+    // the global clock resumes from here on exit. Other world sections (incl. Smart City II) keep the live cycle.
+    if (activeSection === 'smart-city') todPhase = 0.83;
     const s = _todSample(todPhase, C);
     // SUN: colour + intensity from the palette; swing elevation/azimuth across the sky so the
     // long shadows of dawn/dusk read (kept above the horizon at night so nothing flips to lit-from-below).
@@ -6034,6 +6285,9 @@
         // active (and the swarm is shown). Gated by this !reduceMotion block too ⇒ the show freezes under reduced
         // motion (drones hold their last formed pose; only the animation stops). Deterministic + alloc-free.
         if (activeSection === 'smart-city' && uavSwarmOn){ try { animateUavSwarm(dt); } catch(_){} }
+        // SMART CITY · LANDMARK LIGHT SHOW — advance the 101 facade marquee + dome/bridge colour-chases ONLY while
+        // smart-city is active. Frozen under reduced-motion (this block is !reduceMotion-gated). Deterministic.
+        if (activeSection === 'smart-city' && cityShowOn){ try { animateCityLightShow(dt); } catch(_){} }
         // SMART CITY II — the traffic micro-sim (cars flowing the fixed central grid). Factory is a WORLD theme,
         // so it's driven here in the world-animate block (not the diorama block above). Frozen under reduced-motion.
         if (activeSection === 'factory'){ try { animateTrafficTwin(dt); } catch(_){} }
@@ -11251,6 +11505,7 @@
           // the UAV (drone) SWARM LIGHT-SHOW group — one selectable group target for smart-city, available once the
           // swarm is built (lazily on first reveal). VIEW-ONLY (decorative sky overlay; nothing pickable inside it).
           if (section === 'smart-city' && typeof uavSwarmGrp !== 'undefined' && uavSwarmGrp) add('grp:uav-swarm', '🛸 UAV swarm light-show (group)', uavSwarmGrp, true);
+          if (section === 'smart-city' && typeof cityShowGrp !== 'undefined' && cityShowGrp) add('grp:city-show', '🌃 Landmark light show (group)', cityShowGrp, true);
         } else if (section === 'network'){
           const st = sceneState.network;
           const nodeGrps = [];
@@ -13893,7 +14148,7 @@
       // origin metropolis + the UAV light-show in the sky above it. Look UP into the sky-band (raised look-at) and
       // pull back so the swarm (centred ~UAV_SKY_Y) sits in the OPEN centre of the frame — clear of the top sim
       // panel — with the city skyline filling the lower third. polar a touch higher = a more horizon-ward gaze.
-      fx = 0; fz = 0; fy = 64; dist = 205; polar = 1.0;
+      fx = 0; fz = 0; fy = 56; dist = 218; polar = 1.0;
     }
     if (useOrbit && controls){
       controls.autoRotate = false;            // focused world views don't auto-spin (that's the diorama flourish)
@@ -13951,6 +14206,10 @@
     // show/hide path the way the city-utility twin / smart-city HUD are toggled. VIEW-ONLY; never disturbs the
     // streamed economy / centralBuildings / chunkSignature / any gate vector.
     if (typeof applyUavSwarm === 'function') applyUavSwarm(activeSection === 'smart-city');
+    // SMART CITY · LANDMARK LIGHT SHOW — the 101 media-facade tower + dome + cable-stayed bridge spectacle. Shown
+    // ONLY while smart-city is active (built lazily on first reveal; fully reversible). Same view-only contract as
+    // the swarm above: never disturbs the streamed economy / chunkSignature / any gate vector.
+    if (typeof applyCityLightShow === 'function') applyCityLightShow(activeSection === 'smart-city');
     // VFX LAB workbench — now available in EVERY section. Its Target panel binds added effects to the
     // current section's objects (click-to-pick / list / group); only the lab pedestal target is lab-specific.
     // Built lazily on first show in a real browser; entirely guarded so the headless harness never throws.
@@ -13987,10 +14246,11 @@
     else if (activeSection === 'crm'){ const st = S.crm; if (st){ const closed = (st.won || 0) + (st.lost || 0); const winRate = closed ? (st.won || 0) / closed : 0;
       let wip = 0, stuck = 0; if (st.machines){ for (const m of st.machines){ if (m.isSink) continue; const b = (m.buf || []).length; wip += b + (m.holding ? 1 : 0); if (b >= Math.max(3, (st.bufCap || 6) - 1)) stuck += b; } }
       r.textContent = 'Win rate ' + Math.round(winRate * 100) + '%  ·  Open pipeline ' + crmK(st.pipeVal || 0) + '  ·  Velocity ' + ((st.velEMA || 0) * 60).toFixed(0) + ' won/min  ·  WIP ' + wip + '  ·  Stuck ' + stuck; } }
-    else if (activeSection === 'smart-city'){ const G = cityGrid; const U = uavShow;
+    else if (activeSection === 'smart-city'){ const G = cityGrid; const U = uavShow; const C = cityShow;
       const fLabel = (UAV_FORMATIONS[U.cur] || UAV_FORMATIONS[0]).label;
-      r.textContent = 'Grid load ' + G.loadPct + '%  ·  Reserve ' + G.reserve + '%  ·  Risk ' + G.outageRisk + '%  ·  Carbon ' + G.carbon + ' g/kWh' + (G.outageT > 0 ? '  ·  ⚠ OUTAGE' : '')
-        + '  ·  🛸 ' + fLabel + (U.phase === 'morph' ? ' (morphing)' : '') + '  ·  ' + U.airborne + ' airborne'; }
+      const marks = [C.tower ? '101' : null, C.dome ? 'Dome' : null, C.bridge ? 'Bridge' : null].filter(Boolean).join('+') || 'off';
+      r.textContent = '🌃 Light show: ' + marks + '  ·  🛸 ' + fLabel + (U.phase === 'morph' ? ' (morphing)' : '') + '  ·  ' + U.airborne + ' airborne'
+        + '  ·  Grid ' + G.loadPct + '%  ·  Reserve ' + G.reserve + '%' + (G.outageT > 0 ? '  ·  ⚠ OUTAGE' : ''); }
     else r.textContent = '';   // generic Scene-randomize sections have no live readout
   }
   function buildSimPanel(sec){
@@ -14345,9 +14605,20 @@
     } else if (sec === 'smart-city'){
       // CITY GRID — POWER / ENERGY OPERATIONS levers (generation mix · demand-response · capacity · inject outage).
       // KPIs (grid load % · reserve margin · outage risk · carbon) come from the live cityGrid sim via the readout.
-      if (title) title.textContent = 'Smart City · Power & Energy Operations';
-      const G = cityGrid;
+      if (title) title.textContent = 'Smart City · Night Light Show';
+      const G = cityGrid; const LS = cityShow;
       body.innerHTML =
+        // ---- LANDMARK LIGHT-SHOW levers (this story): the 101 media-facade message + palette + intensity + marquee
+        //      speed + per-landmark toggles. The headline spectacle controls; power/UAV levers follow below. ----
+        '<div class="simctl"><label>📺 101 facade message</label><input type="text" id="led-msg" maxlength="60" aria-label="Tower LED facade scrolling message" style="width:100%;box-sizing:border-box;background:#0b1622;border:1px solid rgba(120,180,255,.3);color:#cfe6ff;border-radius:6px;padding:4px 6px;font:inherit"></div>' +
+        '<div class="simctl"><label>🎨 Show palette <b id="led-theme-v"></b></label><select id="led-theme" aria-label="Light show colour palette">' +
+          UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
+        '<div class="simctl"><label>💡 Brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="140" step="5" aria-label="Light show master brightness"></div>' +
+        '<div class="simctl"><label>🏃 Marquee speed <b id="led-spd-v"></b></label><input type="range" id="led-spd" min="2" max="14" step="1" aria-label="Tower facade scroll speed"></div>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="led-twr"> 🏙️ 101 tower</label>' +
+          '<label class="chk"><input type="checkbox" id="led-dome"> 🛖 Dome</label>' +
+          '<label class="chk"><input type="checkbox" id="led-brg"> 🌉 Bridge</label></div>' +
+        '<div class="simctl" style="border-top:1px solid rgba(120,180,255,.18);padding-top:8px"><label>⚡ Power &amp; energy operations</label></div>' +
         '<div class="simctl"><label>🌱 Renewable mix <b id="cg-ren-v"></b></label><input type="range" id="cg-ren" min="0" max="90" step="5" aria-label="Renewable generation mix percent"></div>' +
         '<div class="simctl"><label>📉 Demand-response shed <b id="cg-dr-v"></b></label><input type="range" id="cg-dr" min="0" max="40" step="2" aria-label="Demand-response peak shed percent"></div>' +
         '<div class="simctl"><label>🏭 Generation capacity <b id="cg-cap-v"></b></label><input type="range" id="cg-cap" min="70" max="140" step="5" aria-label="Total generation capacity percent of nominal"></div>' +
@@ -14363,6 +14634,19 @@
         '<div class="simctl"><label>🎨 Colour theme <b id="uav-theme-v"></b></label><select id="uav-theme" aria-label="UAV swarm colour theme">' +
           UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
         '<button class="simbtn" id="uav-next" type="button">⏭ Next formation</button>';
+      // ---- LANDMARK LIGHT-SHOW lever wiring (VIEW-ONLY; rebuilds the marquee bitmap on message change) ----
+      const lMsg = $('led-msg'), lTheme = $('led-theme'), lInt = $('led-int'), lSpd = $('led-spd');
+      const lTwr = $('led-twr'), lDome = $('led-dome'), lBrg = $('led-brg');
+      const setLTheme = (i) => { const e = $('led-theme-v'); if (e) e.textContent = (UAV_THEMES[i] || UAV_THEMES[0]).name; };
+      const setLInt = (v) => { const e = $('led-int-v'); if (e) e.textContent = v + '%'; };
+      const setLSpd = (v) => { const e = $('led-spd-v'); if (e) e.textContent = v + ' col/s'; };
+      if (lMsg){ lMsg.value = LS.msg; lMsg.oninput = () => { LS.msg = lMsg.value || ' '; if (typeof ledRebuildCols === 'function') ledRebuildCols(); }; }
+      if (lTheme){ lTheme.value = String(LS.theme); lTheme.onchange = () => { LS.theme = (+lTheme.value) | 0; setLTheme(LS.theme); }; setLTheme(LS.theme); }
+      if (lInt){ lInt.value = Math.round(LS.intensity * 100); lInt.oninput = () => { const v = +lInt.value || 100; LS.intensity = v / 100; setLInt(v); }; setLInt(+lInt.value); }
+      if (lSpd){ lSpd.value = Math.round(LS.speed); lSpd.oninput = () => { const v = +lSpd.value || 6; LS.speed = v; setLSpd(v); }; setLSpd(+lSpd.value); }
+      if (lTwr){  lTwr.checked  = !!LS.tower;  lTwr.onchange  = () => { LS.tower  = lTwr.checked;  if (LS.gTower)  LS.gTower.visible  = LS.tower; }; }
+      if (lDome){ lDome.checked = !!LS.dome;   lDome.onchange = () => { LS.dome   = lDome.checked; if (LS.gDome)   LS.gDome.visible   = LS.dome; }; }
+      if (lBrg){  lBrg.checked  = !!LS.bridge; lBrg.onchange  = () => { LS.bridge = lBrg.checked; if (LS.gBridge) LS.gBridge.visible = LS.bridge; }; }
       const ren = $('cg-ren'), dr = $('cg-dr'), cap = $('cg-cap'), day = $('cg-day');
       const setRen = (v) => { const e = $('cg-ren-v'); if (e) e.textContent = v + '%'; };
       const setDr  = (v) => { const e = $('cg-dr-v');  if (e) e.textContent = v + '%'; };
