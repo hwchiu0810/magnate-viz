@@ -4275,7 +4275,7 @@
   const cityShow = {
     msg: 'SMART CITY  *  WELCOME TO 101  *  LUXURY NIGHT LIGHT SHOW  *  ',
     theme: 0,            // palette index (reuses UAV_THEMES hue base/spread/sat/lit)
-    intensity: 1.0,      // 0.6..1.4 master brightness multiplier (still capped sub-white)
+    intensity: 1.35,     // master brightness multiplier (0.6..2.0 via the slider; per-cell still capped sub-white)
     speed: 6.0,          // facade marquee scroll speed (columns / sec)
     tower: true, dome: true, bridge: true,   // landmark visibility toggles
     t: 0, scroll: 0,
@@ -4288,7 +4288,7 @@
     edges: [],           // tower vertical-edge LED strip materials
     beacon: null,        // crown beacon material
     npc: [],             // pooled market-data tower records { laser, strips:[], off }  (LED+laser NPC skyline)
-    gTower: null, gDome: null, gBridge: null, gNpc: null
+    gTower: null, gDome: null, gBridge: null, gNpc: null, gFill: null
   };
   // Vegas-Sphere image set — procedural (deterministic, computed per cell from u,v ∈ [-1,1]); cycled on a timer.
   const SPHERE_IMG = ['eye', 'smiley', 'heart', 'globe', 'pulse'];
@@ -4425,21 +4425,21 @@
       const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(SR * 0.66, SR * 0.66, 1.2, 36, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false }));
       baseRing.position.y = 8; DOME.add(baseRing); cityShow.edges.push(baseRing.material);
     }
-    // LED IMAGE SURFACE — pooled cells covering the WHOLE front-facing hemisphere (lon/lat ∈ ±FOV), so the entire
-    // visible face of the globe glows (not just a central disc). The image maps onto the inner patch (|u|,|v|≤1);
-    // a thin outer border ring glows ambient. ~26×22 cells (bounded). −Z = front (toward the camera).
-    const NLON = 26, NLAT = 22, FOV = 1.34, IMGANG = 1.16, dotGeo = new THREE.BoxGeometry(1.7, 1.7, 1.7);
-    for (let iy = 0; iy < NLAT; iy++){
-      const lat = ((iy / (NLAT - 1)) * 2 - 1) * FOV;
-      for (let ix = 0; ix < NLON; ix++){
-        const lon = ((ix / (NLON - 1)) * 2 - 1) * FOV;
-        const px =  SR * Math.sin(lon) * Math.cos(lat);
-        const py =  SR * Math.sin(lat);
-        const pz = -SR * Math.cos(lon) * Math.cos(lat);           // −Z = front (toward camera)
-        const m = new THREE.MeshBasicMaterial({ color: 0x12283c, transparent: true, opacity: 0.4, blending: ADD, depthWrite: false });
-        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(px, SCY + py, pz - 0.3); DOME.add(cell);
-        const iu = lon / IMGANG, iv = lat / IMGANG;               // image-space coord (the inner patch carries the picture)
-        cityShow.sphereCells.push({ mat: m, u: iu, v: iv, img: (Math.abs(iu) <= 1 && Math.abs(iv) <= 1) });
+    // LED IMAGE SURFACE — pooled cells laid in CONCENTRIC RINGS over the front-pole spherical cap, all the way out to
+    // the LIMB (θ→90°), so the cells fill the ENTIRE visible disc edge-to-edge (no dark rim → reads as a full sphere,
+    // not a cap). The image maps onto the inner cap (θ ≤ IMGTH); the outer rings glow ambient. −Z = front pole.
+    const dotGeo = new THREE.BoxGeometry(2.0, 2.0, 2.0);
+    const NR = 16, IMGTH = 1.30, sinImg = Math.sin(IMGTH);        // rings to ~90°; picture within θ≤IMGTH (~74°)
+    for (let r = 0; r <= NR; r++){
+      const th = (r / NR) * (Math.PI / 2) * 0.995;                // 0 (front pole) → ~90° (silhouette limb)
+      const rr = Math.sin(th), cz = Math.cos(th);
+      const ring = Math.max(1, Math.round(48 * rr));              // cell count grows with ring radius (even spacing)
+      for (let j = 0; j < ring; j++){
+        const phi = (j / ring) * Math.PI * 2;
+        const sx = rr * Math.cos(phi), sy = rr * Math.sin(phi);   // screen-plane unit direction
+        const m = new THREE.MeshBasicMaterial({ color: 0x12283c, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
+        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(SR * sx, SCY + SR * sy, -SR * cz - 0.3); DOME.add(cell);
+        cityShow.sphereCells.push({ mat: m, u: sx / sinImg, v: sy / sinImg, img: (th <= IMGTH) });
       }
     }
 
@@ -4504,6 +4504,28 @@
       cityShow.npc.push({ laser: lmat, strips: strips, off: i * 0.55 });
     }
 
+    // ---------- BOUNDARYLESS CITY FILL — a wide field of lit modern blocks fanning OUT to the horizon (radius
+    // 80→400) so the metropolis reads as endless rather than a small stage. Static emissive glow + bright rooftop
+    // LED caps + edge strips (no per-frame cost). Skips the foreground hero wedge so it never blocks the landmarks.
+    const FILL = new THREE.Group(); grp.add(FILL); cityShow.gFill = FILL;
+    const FH = [0x1c4066, 0x274a6e, 0x16324c, 0x303a66, 0x1f5470];
+    const fr2 = (n) => flowFrac(Math.sin(n) * 43758.5453);
+    for (let i = 0; i < 60; i++){
+      const a = fr2((i + 1) * 12.9898) * Math.PI * 2;
+      const R = 80 + fr2((i + 1) * 78.233) * 320;                 // 80..400 (near ring → far horizon)
+      const x = Math.cos(a) * R, z = Math.sin(a) * R;
+      if (z < -34 && Math.abs(x) < 95) continue;                  // keep the foreground hero wedge clear
+      const h = 22 + fr2((i + 1) * 37.71) * 128, w = 8 + fr2((i + 1) * 9.7) * 13;
+      const hex = FH[i % FH.length];
+      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: 0x0b1622, emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.42, metalness: 0.62 }));
+      body.position.set(x, h / 2, z); FILL.add(body);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 1.4, w + 0.8), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false }));
+      cap.position.set(x, h, z); FILL.add(cap);
+      // 2 bright vertical LED edge strips on the camera-facing (−Z) face
+      for (const sx of [-w * 0.34, w * 0.34]){ const st = new THREE.Mesh(new THREE.BoxGeometry(0.7, h * 0.88, 0.5), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.8, blending: ADD, depthWrite: false }));
+        st.position.set(x + sx, h * 0.5, z - w / 2 - 0.25); FILL.add(st); }
+    }
+
     ledRebuildCols();
     cityShowBuilt = true;
   }
@@ -4528,7 +4550,7 @@
     if (!cityShowOn || !cityShowGrp || !cityShowBuilt) return;
     const S = cityShow; S.t += dt; S.scroll += dt * S.speed;
     const TH = UAV_THEMES[(S.theme | 0) % UAV_THEMES.length];
-    const I = Math.max(0.3, Math.min(1.4, S.intensity));
+    const I = Math.max(0.3, Math.min(2.0, S.intensity));
     // landmark toggles (cheap — just visibility)
     if (S.gTower)  S.gTower.visible  = !!S.tower;
     if (S.gDome)   S.gDome.visible   = !!S.dome;
@@ -4543,7 +4565,7 @@
           const m = S.cells[c * LEDH + row]; if (!m || !m.color) continue;
           const lit = colbits[row] === '1';
           if (lit){ const sh = 0.85 + 0.15 * Math.sin(S.t * 3 + c * 0.4 + row * 0.2);
-            if (m.color.setHSL) m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, TH.lit * I * sh)); m.opacity = 0.92; }
+            if (m.color.setHSL) m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.5 + 0.3 * sh) * I)); m.opacity = 0.97; }
           else { if (m.color.setHSL) m.color.setHSL(0.6, 0.4, 0.05); m.opacity = 0.14; }
         }
       }
@@ -4570,7 +4592,7 @@
           const lvl = a + (b - a) * ease;                                        // blended pixel intensity 0..1
           if (lvl > 0.08){
             const hue = (TH.h0 + (c.u * 0.5 + 0.5) * TH.hsp + S.t * 0.05) % 1;    // themed colour wave across the face
-            m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.18 + 0.62 * lvl) * I)); m.opacity = 0.3 + 0.62 * lvl;
+            m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.34 + 0.5 * lvl) * I)); m.opacity = 0.45 + 0.5 * lvl;
           } else { m.color.setHSL(0.6, 0.35, 0.05); m.opacity = 0.14; }
         } else {                                                                 // outer border ring → ambient theme glow
           const g = 0.45 + 0.35 * Math.sin(S.t * 1.6 + (c.u + c.v) * 2.0);
@@ -14739,7 +14761,7 @@
         '<div class="simctl"><label>📺 101 facade message</label><input type="text" id="led-msg" maxlength="60" aria-label="Tower LED facade scrolling message" style="width:100%;box-sizing:border-box;background:#0b1622;border:1px solid rgba(120,180,255,.3);color:#cfe6ff;border-radius:6px;padding:4px 6px;font:inherit"></div>' +
         '<div class="simctl"><label>🎨 Show palette <b id="led-theme-v"></b></label><select id="led-theme" aria-label="Light show colour palette">' +
           UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
-        '<div class="simctl"><label>💡 Brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="140" step="5" aria-label="Light show master brightness"></div>' +
+        '<div class="simctl"><label>💡 Brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="200" step="5" aria-label="Light show master brightness"></div>' +
         '<div class="simctl"><label>🏃 Marquee speed <b id="led-spd-v"></b></label><input type="range" id="led-spd" min="2" max="14" step="1" aria-label="Tower facade scroll speed"></div>' +
         '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="led-twr"> 🏙️ Taipei 101</label>' +
           '<label class="chk"><input type="checkbox" id="led-dome"> 🔮 Vegas Sphere</label>' +
