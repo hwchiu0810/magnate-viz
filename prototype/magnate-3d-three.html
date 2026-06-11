@@ -1083,7 +1083,7 @@
   </aside>
 
   <!-- ===== right: leaderboard + price ticker ===== -->
-  <aside class="panel" aria-label="Section data and market prices">
+  <aside class="panel" id="hud-right" aria-label="Section data and market prices">
     <h3 id="hud-board-title">Leaderboard · net worth</h3>
     <table aria-label="Section data matrix">
       <thead id="hud-board-head"><tr><th>#</th><th>Firm</th><th>Makes</th><th class="num">Net worth</th></tr></thead>
@@ -1096,7 +1096,7 @@
   </aside>
 
   <!-- ===== bottom-left: ledger + conservation ===== -->
-  <section class="ledger" aria-label="System ledger and conservation invariant">
+  <section class="ledger" id="hud-ledger" aria-label="System ledger and conservation invariant">
     <h3>Ledger · system accounts (cents → $)</h3>
     <div class="lrow"><span class="k">WORLD_FAUCET (minted out)</span><span id="led-faucet">$0</span></div>
     <div class="lrow"><span class="k">SINK_BURN (fees/upkeep)</span><span id="led-burn">$0</span></div>
@@ -1121,7 +1121,7 @@
   </section>
 
   <!-- ===== bottom-right: B2B contracts ===== -->
-  <section class="contracts" aria-label="Business to business supply contracts">
+  <section class="contracts" id="hud-contracts" aria-label="Business to business supply contracts">
     <h3>Sign B2B contract (PLAYER → desk)</h3>
     <form class="cform" id="ct-form">
       <label>Good
@@ -4276,12 +4276,47 @@
     t: 0, scroll: 0,
     cols: [],            // message column bitmap (each entry = 7-char '0'/'1' string for one source column)
     cells: [],           // pooled facade cell materials, row-major [col*LEDH + row]
-    domeBands: [],       // pooled dome ring materials (chase)
+    domeBands: [],       // (legacy) pooled ring materials — unused by the Vegas-Sphere build
+    sphereCells: [],     // pooled Vegas-Sphere LED records { mat, u, v } over the front hemisphere (image surface)
+    img: { t: 0, cur: 0, next: 1, f: 0, phase: 'hold', holdLen: 4.2, fadeLen: 1.6 },  // sphere image-cycle state
     cables: [],          // pooled bridge cable records { mat, k }  (k = anchor position along span 0..1)
     edges: [],           // tower vertical-edge LED strip materials
     beacon: null,        // crown beacon material
     gTower: null, gDome: null, gBridge: null
   };
+  // Vegas-Sphere image set — procedural (deterministic, computed per cell from u,v ∈ [-1,1]); cycled on a timer.
+  const SPHERE_IMG = ['eye', 'smiley', 'heart', 'globe', 'pulse'];
+  // intensity 0..1 of image `id` at normalised surface coord (u,v) and show-clock t. Pure maths (no bitmaps/RNG).
+  function sphereImg(id, u, v, t){
+    if (id === 'eye'){
+      const blink = 0.5 + 0.5 * Math.sin(t * 1.1); const lid = 0.62 * (0.35 + 0.65 * blink);   // eyelid open amount
+      const almond = lid * Math.sqrt(Math.max(0, 1 - (u / 0.95) * (u / 0.95)));
+      if (Math.abs(v) > almond) return 0;
+      const d = Math.hypot(u, v); if (d < 0.13) return 0.15;   // pupil (dark)
+      if (d < 0.34) return 1;                                   // iris (bright)
+      return 0.45;                                              // sclera
+    }
+    if (id === 'smiley'){
+      const d = Math.hypot(u, v);
+      if (Math.abs(d - 0.9) < 0.09) return 1;                                  // face ring
+      if (Math.hypot(u - 0.34, v - 0.32) < 0.13 || Math.hypot(u + 0.34, v - 0.32) < 0.13) return 1;  // eyes
+      if (v < 0.0 && Math.abs(Math.hypot(u, v + 0.05) - 0.52) < 0.09) return 1;  // smile arc
+      return 0;
+    }
+    if (id === 'heart'){
+      const x = u / 1.12, y = -v / 1.12 + 0.15; const f = (x * x + y * y - 1); return (f * f * f - x * x * y * y * y < 0) ? 1 : 0;
+    }
+    if (id === 'globe'){
+      const d = Math.hypot(u, v); if (d > 0.92) return 0;
+      const lat = Math.asin(Math.max(-1, Math.min(1, v / 0.92)));               // latitude lines
+      if (Math.abs(Math.sin(lat * 5 - t * 0.3)) < 0.16) return 1;
+      const lon = u / Math.max(0.2, Math.cos(lat) * 0.92);                       // longitude lines
+      if (Math.abs(lon) <= 1 && Math.abs(Math.sin(Math.asin(Math.max(-1, Math.min(1, lon))) * 4)) < 0.16) return 1;
+      return 0.3;                                                               // ocean fill
+    }
+    // 'pulse' — concentric rings expanding out (a radar/firework pulse)
+    const d = Math.hypot(u, v); const fr = (d * 3.0 - t * 0.8); return ((fr - Math.floor(fr)) < 0.42 && d < 1) ? 1 : 0.0;
+  }
   // rebuild the scrolling message → column bitmap (called at build + whenever the message lever changes)
   function ledRebuildCols(){
     const cols = []; const msg = (cityShow.msg || ' ').toUpperCase();
@@ -4316,34 +4351,45 @@
     const litMat = () => new THREE.MeshBasicMaterial({ color: 0x123048, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
     const darkGlass = (hex) => new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(0x0a1722), emissiveIntensity: 0.12, roughness: 0.45, metalness: 0.65 });
 
-    // ---------- LANDMARK 1: the "101" tower (tapered stacked segments) + LED media facade ----------
+    // ---------- LANDMARK 1: TAIPEI 101 — wide retail podium + slender tapered trunk + 8 flared "ruyi" tiers + pinnacle.
+    // Built from SQUARE FRUSTA (CylinderGeometry with 4 radial segments, rotated 45° so the flat faces align to the
+    // axes; radiusTop≠radiusBottom gives the upward-flaring trapezoid wall). The signature: each of the 8 tiers is an
+    // INVERTED trapezoid (narrow bottom → wide top) that steps back IN at the next tier's base, making the bamboo /
+    // upturned-pagoda silhouette. Blue-green glass. The LED character show mounts on the podium's front face. -----
     const TWR = new THREE.Group(); TWR.position.set(28, 0, -42); grp.add(TWR); cityShow.gTower = TWR;
-    const SEG = 6, segH = 13, baseW = 52;                          // 6 flared "ruyi" segments on a wide footprint
-    // tapered plinth + shaft segments (each flares slightly outward toward its top — the Taipei-101 silhouette)
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(baseW + 10, 16, baseW + 10), darkGlass(0x1b2733));
-    plinth.position.y = 8; TWR.add(plinth);
-    for (let s = 0; s < SEG; s++){
-      const w0 = baseW * (1 - s * 0.045), w1 = w0 * 1.14;          // bottom narrow → top wide (inverted taper)
-      const y0 = 16 + s * segH;
-      const seg = new THREE.Mesh(new THREE.BoxGeometry(w1, segH - 1.4, w1), darkGlass(0x16212c));
-      seg.position.y = y0 + segH / 2; TWR.add(seg);
-      // a thin emissive ledge cap between segments (the signature notch)
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(w1 + 1.2, 0.9, w1 + 1.2), new THREE.MeshBasicMaterial({ color: 0x2a5a7a, transparent: true, opacity: 0.6, blending: ADD, depthWrite: false }));
-      cap.position.y = y0 + segH - 0.4; TWR.add(cap); cityShow.edges.push(cap.material);
+    const ROOT2 = Math.SQRT2;
+    const glass = (hex, em) => new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(em || 0x0a1c22), emissiveIntensity: 0.16, roughness: 0.34, metalness: 0.7 });
+    // square frustum helper: side lengths sBot→sTop over height h, centred at y=cy; rotated 45° to face the axes.
+    const frustum = (sBot, sTop, h, cy, mat) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(sTop / ROOT2, sBot / ROOT2, h, 4, 1), mat); m.rotation.y = Math.PI / 4; m.position.y = cy; TWR.add(m); return m; };
+    const capMat = () => new THREE.MeshBasicMaterial({ color: 0x2f7fa6, transparent: true, opacity: 0.62, blending: ADD, depthWrite: false });
+    const GLS = 0x16323a, GLS2 = 0x1a3c44;                         // Taipei-101 blue-green glass tints
+    // wide multi-storey PODIUM (the mall skirt)
+    frustum(66, 60, 26, 13, glass(0x18303a));
+    const podCap = new THREE.Mesh(new THREE.BoxGeometry(62, 1.1, 62), capMat()); podCap.position.y = 26; TWR.add(podCap); cityShow.edges.push(podCap.material);
+    // slender tapered TRUNK from the podium up to the first tier (narrows going up)
+    frustum(40, 28, 20, 36, glass(GLS));
+    // 8 flared "ruyi" tiers — each narrow→wide, stepping back in at the next base (the notched bamboo profile)
+    const T0 = 46, tierH = 7.0, NT = 8, sBot = 27, sTop = 31.5;
+    for (let s = 0; s < NT; s++){
+      const cy = T0 + s * tierH + tierH / 2;
+      frustum(sBot, sTop, tierH, cy, glass(s % 2 ? GLS2 : GLS));
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(sTop + 1.0, 0.8, sTop + 1.0), capMat());   // emissive notch ledge at each tier top
+      cap.position.y = T0 + (s + 1) * tierH; TWR.add(cap); cityShow.edges.push(cap.material);
     }
-    // spire + crown beacon
-    const spireBase = 16 + SEG * segH;
-    const spire = new THREE.Mesh(new THREE.BoxGeometry(2.2, 26, 2.2), darkGlass(0x223340)); spire.position.y = spireBase + 13; TWR.add(spire);
+    // top setback block + the pinnacle SPIRE (the antenna mast) + crown beacon
+    const topY = T0 + NT * tierH;                                  // ≈ 102
+    frustum(24, 18, 6, topY + 3, glass(GLS2));
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.6, 26, 8), glass(0x244a52)); spire.position.y = topY + 6 + 13; TWR.add(spire);
     const beaconMat = new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.95, blending: ADD, depthWrite: false });
-    if (typeof THREE.SphereGeometry === 'function'){ const bc = new THREE.Mesh(new THREE.SphereGeometry(2.6, 10, 10), beaconMat); bc.position.y = spireBase + 27; TWR.add(bc); }
+    if (typeof THREE.SphereGeometry === 'function'){ const bc = new THREE.Mesh(new THREE.SphereGeometry(2.4, 10, 10), beaconMat); bc.position.y = topY + 6 + 27; TWR.add(bc); }
     cityShow.beacon = beaconMat;
-    // LED MEDIA FACADE — a window of LED_COLS × LEDH emissive cells on the tower's −Z face (toward the camera).
-    // Big chunky cells so the marquee reads from the wide city shot. col 0 = screen-LEFT (camera at azimuth π ⇒
-    // local +X is screen-left), cells laid +X→−X so glyph columns read left→right (verified by screenshot).
-    const facade = new THREE.Group(); const fz = -(baseW * 1.16 / 2) - 1.2;   // just outside the front face, toward camera
-    const cellW = 2.3, cellH = 3.4, fGapX = 0.22, fGapY = 0.3;
+    // LED MEDIA FACADE — a window of LED_COLS × LEDH emissive cells on the PODIUM's −Z face (toward the camera).
+    // col 0 = screen-LEFT (camera at azimuth π ⇒ local +X is screen-left); cells laid +X→−X so glyph columns read
+    // left→right (verified by screenshot). The character show now rides the wide podium, not the slender trunk.
+    const facade = new THREE.Group(); const fz = -32.5;            // just outside the podium front face
+    const cellW = 2.3, cellH = 3.0, fGapX = 0.22, fGapY = 0.26;
     const fw = LED_COLS * (cellW + fGapX), fh = LEDH * (cellH + fGapY);
-    facade.position.set(0, 50, fz); TWR.add(facade);
+    facade.position.set(0, 14, fz); TWR.add(facade);
     // a dark screen backing so unlit cells read as a panel, not floating dots
     const back = new THREE.Mesh(new THREE.BoxGeometry(fw + 3, fh + 3, 0.5), new THREE.MeshStandardMaterial({ color: 0x05090f, emissive: new THREE.Color(0x040a12), emissiveIntensity: 0.1, roughness: 0.6, metalness: 0.3 }));
     back.position.z = -0.6; facade.add(back);
@@ -4357,28 +4403,37 @@
       }
     }
 
-    // ---------- LANDMARK 2: geodesic DOME ringed with chasing LED bands ----------
-    const DOME = new THREE.Group(); DOME.position.set(-44, 0, -8); grp.add(DOME); cityShow.gDome = DOME;
-    const R = 24;
+    // ---------- LANDMARK 2: the VEGAS SPHERE (Exosphere) — a giant elevated globe whose front hemisphere is an LED
+    // image surface that cycles big procedural visuals (an eye / smiley / heart / globe / pulse). Built from a dark
+    // sphere shell + a pooled grid of emissive cells laid over the camera-facing hemisphere; each cell is lit per the
+    // current image bitmap (animateCityLightShow), wrapping the picture onto the curved face like the real Sphere. -
+    const DOME = new THREE.Group(); DOME.position.set(-46, 0, -6); grp.add(DOME); cityShow.gDome = DOME;
+    const SR = 32, SCY = SR + 4;                                   // sphere radius + centre height (raised off the plaza)
     if (typeof THREE.SphereGeometry === 'function'){
-      const shell = new THREE.Mesh(new THREE.SphereGeometry(R, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x0e1822, emissive: new THREE.Color(0x0a141e), emissiveIntensity: 0.12, roughness: 0.4, metalness: 0.6, side: THREE.DoubleSide !== undefined ? THREE.DoubleSide : 2 }));
-      DOME.add(shell);
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(SR, 40, 28), new THREE.MeshStandardMaterial({ color: 0x070b12, emissive: new THREE.Color(0x05070d), emissiveIntensity: 0.1, roughness: 0.5, metalness: 0.5 }));
+      shell.position.y = SCY; DOME.add(shell);
     }
-    // latitude LED rings (TorusGeometry) that chase colour up the dome
-    if (typeof THREE.TorusGeometry === 'function'){
-      const NB = 6;
-      for (let b = 0; b < NB; b++){
-        const ph = (b + 0.5) / NB * (Math.PI / 2);                // latitude angle
-        const ry = Math.sin(ph) * R, rr = Math.cos(ph) * R;
-        const m = new THREE.MeshBasicMaterial({ color: 0x1f7fae, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false });
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.55, 8, 40), m);
-        ring.rotation.x = Math.PI / 2; ring.position.y = ry; DOME.add(ring); cityShow.domeBands.push(m);
-      }
-    }
-    // a bright base ring + plaza disc
+    // a short cylindrical base/pedestal the Sphere rests on
     if (typeof THREE.CylinderGeometry === 'function'){
-      const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(R + 2, R + 2, 1.4, 36, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false }));
-      baseRing.position.y = 0.7; DOME.add(baseRing); cityShow.domeBands.push(baseRing.material);
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(SR * 0.62, SR * 0.74, 8, 32), darkGlass(0x141e28)); ped.position.y = 4; DOME.add(ped);
+      const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(SR * 0.66, SR * 0.66, 1.2, 36, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false }));
+      baseRing.position.y = 8; DOME.add(baseRing); cityShow.edges.push(baseRing.material);
+    }
+    // LED IMAGE SURFACE — pooled cells over the front hemisphere (facing −Z, the camera). (u,v)∈[-1,1] is image space;
+    // mapped to a spherical patch (half-angle ANG) so the picture curves onto the globe. ~22×22 cells (bounded pool).
+    const IMG_N = 22, ANG = 1.18, dotGeo = new THREE.BoxGeometry(1.7, 1.7, 1.7);
+    for (let iy = 0; iy < IMG_N; iy++){
+      for (let ix = 0; ix < IMG_N; ix++){
+        const u = (ix / (IMG_N - 1)) * 2 - 1, v = (iy / (IMG_N - 1)) * 2 - 1;
+        if (u * u + v * v > 1.04) continue;                       // clip to a disc → a round screen on the globe
+        const lon = u * ANG, lat = v * ANG;
+        const px =  SR * Math.sin(lon) * Math.cos(lat);
+        const py =  SR * Math.sin(lat);
+        const pz = -SR * Math.cos(lon) * Math.cos(lat);           // −Z = front (toward camera)
+        const m = new THREE.MeshBasicMaterial({ color: 0x12283c, transparent: true, opacity: 0.4, blending: ADD, depthWrite: false });
+        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(px, SCY + py, pz - 0.4); DOME.add(cell);
+        cityShow.sphereCells.push({ mat: m, u: u, v: v });
+      }
     }
 
     // ---------- LANDMARK 3: cable-stayed BRIDGE with a travelling light-chase ----------
@@ -4460,11 +4515,24 @@
       if (S.beacon && S.beacon.color && S.beacon.color.setHSL){ const fl = 0.5 + 0.5 * Math.sin(S.t * 4.0);
         S.beacon.color.setHSL((TH.h0 + 0.5) % 1, 0.5, Math.min(LED_EMIS, 0.4 + 0.42 * fl)); S.beacon.opacity = 0.6 + 0.38 * fl; }
     }
-    // ---- DOME: chase colour UP the latitude rings ----
-    if (S.dome){ for (let i = 0; i < S.domeBands.length; i++){ const m = S.domeBands[i]; if (!m || !m.color || !m.color.setHSL) continue;
-      const ph = i / Math.max(1, S.domeBands.length);
-      const b = 0.55 + 0.45 * Math.sin(S.t * 2.2 - ph * 6.0);                    // a wave rolling up the dome
-      m.color.setHSL((TH.h0 + ph * TH.hsp + S.t * 0.08) % 1, TH.sat, Math.min(LED_EMIS, TH.lit * I * b)); m.opacity = 0.5 + 0.4 * b; } }
+    // ---- VEGAS SPHERE: cycle the procedural image set (HOLD → cross-FADE → next) + light the front-hemisphere cells ----
+    if (S.dome && S.sphereCells.length){
+      const IM = S.img; IM.t += dt; IM.f += dt;
+      const nImg = SPHERE_IMG.length;
+      if (IM.phase === 'hold'){ if (IM.f >= IM.holdLen){ IM.phase = 'fade'; IM.f = 0; IM.next = (IM.cur + 1) % nImg; } }
+      else { if (IM.f >= IM.fadeLen){ IM.phase = 'hold'; IM.f = 0; IM.cur = IM.next; } }
+      const k = IM.phase === 'fade' ? Math.min(1, IM.f / Math.max(0.2, IM.fadeLen)) : 0;
+      const ease = k * k * (3 - 2 * k);                                          // smoothstep cross-fade
+      const idA = SPHERE_IMG[IM.cur], idB = SPHERE_IMG[IM.next];
+      for (let i = 0; i < S.sphereCells.length; i++){ const c = S.sphereCells[i]; const m = c.mat; if (!m || !m.color || !m.color.setHSL) continue;
+        const a = sphereImg(idA, c.u, c.v, IM.t), b = sphereImg(idB, c.u, c.v, IM.t);
+        const lvl = a + (b - a) * ease;                                          // blended pixel intensity 0..1
+        if (lvl > 0.08){
+          const hue = (TH.h0 + (c.u * 0.5 + 0.5) * TH.hsp + S.t * 0.05) % 1;      // themed colour wave across the face
+          m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.18 + 0.62 * lvl) * I)); m.opacity = 0.3 + 0.62 * lvl;
+        } else { m.color.setHSL(0.6, 0.35, 0.045); m.opacity = 0.12; }
+      }
+    }
     // ---- BRIDGE: a bright pulse travels across the span (a light running the cables left→right, then repeats) ----
     if (S.bridge){ const head = (S.t * 0.35) % 1;                               // chase head position 0..1 across span
       for (let i = 0; i < S.cables.length; i++){ const cb = S.cables[i]; const m = cb.mat; if (!m || !m.color || !m.color.setHSL) continue;
@@ -14210,6 +14278,11 @@
     // ONLY while smart-city is active (built lazily on first reveal; fully reversible). Same view-only contract as
     // the swarm above: never disturbs the streamed economy / chunkSignature / any gate vector.
     if (typeof applyCityLightShow === 'function') applyCityLightShow(activeSection === 'smart-city');
+    // SMART CITY is a pure light-show stage: hide the stale economy HUD (leaderboard/market ticker, B2B contracts,
+    // system ledger) so the spectacle plays unobstructed. All return for every other section. View-only DOM toggle.
+    try { const hide = (activeSection === 'smart-city');
+      for (const eid of ['hud-right', 'hud-contracts', 'hud-ledger']){ const el = $(eid);
+        if (el){ el.style.display = hide ? 'none' : ''; el.setAttribute('aria-hidden', hide ? 'true' : 'false'); } } } catch(_){}
     // VFX LAB workbench — now available in EVERY section. Its Target panel binds added effects to the
     // current section's objects (click-to-pick / list / group); only the lab pedestal target is lab-specific.
     // Built lazily on first show in a real browser; entirely guarded so the headless harness never throws.
@@ -14248,7 +14321,7 @@
       r.textContent = 'Win rate ' + Math.round(winRate * 100) + '%  ·  Open pipeline ' + crmK(st.pipeVal || 0) + '  ·  Velocity ' + ((st.velEMA || 0) * 60).toFixed(0) + ' won/min  ·  WIP ' + wip + '  ·  Stuck ' + stuck; } }
     else if (activeSection === 'smart-city'){ const G = cityGrid; const U = uavShow; const C = cityShow;
       const fLabel = (UAV_FORMATIONS[U.cur] || UAV_FORMATIONS[0]).label;
-      const marks = [C.tower ? '101' : null, C.dome ? 'Dome' : null, C.bridge ? 'Bridge' : null].filter(Boolean).join('+') || 'off';
+      const marks = [C.tower ? '101' : null, C.dome ? 'Sphere' : null, C.bridge ? 'Bridge' : null].filter(Boolean).join('+') || 'off';
       r.textContent = '🌃 Light show: ' + marks + '  ·  🛸 ' + fLabel + (U.phase === 'morph' ? ' (morphing)' : '') + '  ·  ' + U.airborne + ' airborne'
         + '  ·  Grid ' + G.loadPct + '%  ·  Reserve ' + G.reserve + '%' + (G.outageT > 0 ? '  ·  ⚠ OUTAGE' : ''); }
     else r.textContent = '';   // generic Scene-randomize sections have no live readout
@@ -14615,8 +14688,8 @@
           UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
         '<div class="simctl"><label>💡 Brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="140" step="5" aria-label="Light show master brightness"></div>' +
         '<div class="simctl"><label>🏃 Marquee speed <b id="led-spd-v"></b></label><input type="range" id="led-spd" min="2" max="14" step="1" aria-label="Tower facade scroll speed"></div>' +
-        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="led-twr"> 🏙️ 101 tower</label>' +
-          '<label class="chk"><input type="checkbox" id="led-dome"> 🛖 Dome</label>' +
+        '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="led-twr"> 🏙️ Taipei 101</label>' +
+          '<label class="chk"><input type="checkbox" id="led-dome"> 🔮 Vegas Sphere</label>' +
           '<label class="chk"><input type="checkbox" id="led-brg"> 🌉 Bridge</label></div>' +
         '<div class="simctl" style="border-top:1px solid rgba(120,180,255,.18);padding-top:8px"><label>⚡ Power &amp; energy operations</label></div>' +
         '<div class="simctl"><label>🌱 Renewable mix <b id="cg-ren-v"></b></label><input type="range" id="cg-ren" min="0" max="90" step="5" aria-label="Renewable generation mix percent"></div>' +
