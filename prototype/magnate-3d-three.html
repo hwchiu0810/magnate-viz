@@ -4283,7 +4283,7 @@
     cells: [],           // pooled facade cell materials, row-major [col*LEDH + row]
     domeBands: [],       // (legacy) pooled ring materials — unused by the Vegas-Sphere build
     sphereCells: [],     // pooled Vegas-Sphere LED records { mat, u, v } over the front hemisphere (image surface)
-    img: { t: 0, cur: 0, next: 1, f: 0, phase: 'hold', holdLen: 4.2, fadeLen: 1.6 },  // sphere image-cycle state
+    img: { t: 0, cur: 0, next: 1, f: 0, phase: 'hold', holdLen: 5.2, fadeLen: 0.9 },  // sphere image-cycle state
     cables: [],          // pooled bridge cable records { mat, k }  (k = anchor position along span 0..1)
     edges: [],           // tower vertical-edge LED strip materials
     beacon: null,        // crown beacon material
@@ -4298,9 +4298,10 @@
       const blink = 0.5 + 0.5 * Math.sin(t * 1.1); const lid = 0.62 * (0.35 + 0.65 * blink);   // eyelid open amount
       const almond = lid * Math.sqrt(Math.max(0, 1 - (u / 0.95) * (u / 0.95)));
       if (Math.abs(v) > almond) return 0;
-      const d = Math.hypot(u, v); if (d < 0.13) return 0.15;   // pupil (dark)
-      if (d < 0.34) return 1;                                   // iris (bright)
-      return 0.45;                                              // sclera
+      const d = Math.hypot(u, v); if (d < 0.14) return 0;       // pupil (dark)
+      if (d < 0.36) return 1;                                   // iris (bright)
+      if (Math.abs(Math.abs(v) - almond) < 0.06) return 1;      // bright eyelid rim → the eye shape reads
+      return 0.14;                                              // sclera (dim, so the iris + lids dominate)
     }
     if (id === 'smiley'){
       const d = Math.hypot(u, v);
@@ -4318,10 +4319,10 @@
       if (Math.abs(Math.sin(lat * 5 - t * 0.3)) < 0.16) return 1;
       const lon = u / Math.max(0.2, Math.cos(lat) * 0.92);                       // longitude lines
       if (Math.abs(lon) <= 1 && Math.abs(Math.sin(Math.asin(Math.max(-1, Math.min(1, lon))) * 4)) < 0.16) return 1;
-      return 0.3;                                                               // ocean fill
+      return 0;                                                                 // ocean OFF → a clean lat/long wireframe globe on the dark sphere
     }
-    // 'pulse' — concentric rings expanding out (a radar/firework pulse)
-    const d = Math.hypot(u, v); const fr = (d * 3.0 - t * 0.8); return ((fr - Math.floor(fr)) < 0.42 && d < 1) ? 1 : 0.0;
+    // 'pulse' — thin concentric rings expanding out (a radar/firework pulse) on the dark sphere
+    const d = Math.hypot(u, v); const fr = (d * 3.4 - t * 0.8); return ((fr - Math.floor(fr)) < 0.24 && d < 1) ? 1 : 0.0;
   }
   // rebuild the scrolling message → column bitmap (called at build + whenever the message lever changes)
   function ledRebuildCols(){
@@ -4517,7 +4518,7 @@
       if (z < -34 && Math.abs(x) < 95) continue;                  // keep the foreground hero wedge clear
       const h = 22 + fr2((i + 1) * 37.71) * 128, w = 8 + fr2((i + 1) * 9.7) * 13;
       const hex = FH[i % FH.length];
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: 0x0b1622, emissive: new THREE.Color(hex), emissiveIntensity: 0.5, roughness: 0.42, metalness: 0.62 }));
+      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: 0x16304a, emissive: new THREE.Color(hex), emissiveIntensity: 1.05, roughness: 0.42, metalness: 0.55 }));
       body.position.set(x, h / 2, z); FILL.add(body);
       const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 1.4, w + 0.8), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false }));
       cap.position.set(x, h, z); FILL.add(cap);
@@ -4590,10 +4591,10 @@
         if (c.img){                                                              // inner patch carries the cycling picture
           const a = sphereImg(idA, c.u, c.v, IM.t), b = sphereImg(idB, c.u, c.v, IM.t);
           const lvl = a + (b - a) * ease;                                        // blended pixel intensity 0..1
-          if (lvl > 0.08){
+          if (lvl > 0.05){
             const hue = (TH.h0 + (c.u * 0.5 + 0.5) * TH.hsp + S.t * 0.05) % 1;    // themed colour wave across the face
-            m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.34 + 0.5 * lvl) * I)); m.opacity = 0.45 + 0.5 * lvl;
-          } else { m.color.setHSL(0.6, 0.35, 0.05); m.opacity = 0.14; }
+            m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.22 + 0.6 * lvl) * I)); m.opacity = 0.06 + 0.9 * lvl;
+          } else { m.color.setHSL(0.62, 0.5, 0.03); m.opacity = 0.05; }            // OFF pixel → near-black (image reads)
         } else {                                                                 // outer border ring → ambient theme glow
           const g = 0.45 + 0.35 * Math.sin(S.t * 1.6 + (c.u + c.v) * 2.0);
           m.color.setHSL((TH.h0 + S.t * 0.05) % 1, TH.sat, Math.min(LED_EMIS, 0.22 * I * g)); m.opacity = 0.28 + 0.18 * g;
@@ -5917,7 +5918,7 @@
     // SMART CITY is a NIGHT light-show: pin its sky to deep night so the LED landmarks + drone swarm dominate and
     // the mundane skyline recedes. View-only (a constant sky phase — deterministic), scoped to this section only;
     // the global clock resumes from here on exit. Other world sections (incl. Smart City II) keep the live cycle.
-    if (activeSection === 'smart-city') todPhase = 0.83;
+    if (activeSection === 'smart-city') todPhase = 0.66;   // late dusk — a glowing blue-hour sky, not pitch black
     const s = _todSample(todPhase, C);
     // SUN: colour + intensity from the palette; swing elevation/azimuth across the sky so the
     // long shadows of dawn/dusk read (kept above the horizon at night so nothing flips to lit-from-below).
@@ -5932,12 +5933,16 @@
     }
     // HEMISPHERE + AMBIENT: cool/dim at night, neutral/bright by day, but the palette floors above
     // keep them non-zero so the dioramas stay legible at the darkest point.
+    // SMART CITY is a luminous night light-show: lift the fill lights well above the deep-night floor so the whole
+    // metropolis reads bright/glowing (not a dark stage) while the sky stays evening-dramatic for the LEDs to pop.
+    const lumCity = (activeSection === 'smart-city');
     if (lightHemi){
       if (lightHemi.color && lightHemi.color.copy) lightHemi.color.copy(C.hs);
       if (lightHemi.groundColor && lightHemi.groundColor.copy) lightHemi.groundColor.copy(C.hg);
-      lightHemi.intensity = s.hemiI;
+      lightHemi.intensity = lumCity ? Math.max(s.hemiI, 0.95) : s.hemiI;
     }
-    if (lightAmbient) lightAmbient.intensity = s.ambI;
+    if (lightAmbient) lightAmbient.intensity = lumCity ? Math.max(s.ambI, 0.72) : s.ambI;
+    if (lumCity && lightSun) lightSun.intensity = Math.max(s.sunI, 0.55);   // a soft key so facades + the skyline catch light
     // SKY: background + fog share one tone (day blue → sunset orange → deep night-blue, never black).
     // SKIP while the Digital-Twin overlay owns the backdrop (it set a fixed dark-navy bg/fog in
     // applyTwinMode); retinting here would clobber it every frame. OFF restores the saved bg/fog and
