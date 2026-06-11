@@ -796,6 +796,11 @@
               <button class="vfx-abtn" id="vfx-move-toggle" type="button" aria-pressed="false" aria-label="Toggle the move gizmo: drag the X/Y/Z handles to move, rotate or scale the selected object">✥ Move (X/Y/Z)</button>
               <button class="vfx-abtn" id="vfx-pin-toggle" type="button" aria-pressed="false" aria-label="Pin the selected object: freeze its position so a manual move sticks on animated objects">📌 Pin</button>
             </div>
+            <div class="vfx-target-btns" style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
+              <span style="font-size:10px;color:#9fc4e8;white-space:nowrap">⤢ Scale <b id="vfx-scale-v" style="color:#dff2ff">1.00×</b></span>
+              <input type="range" id="vfx-scale" min="20" max="400" value="100" step="5" style="flex:1;min-width:80px;accent-color:#4d9bff;cursor:pointer" aria-label="Uniformly scale the selected objects directly">
+              <button class="vfx-abtn" id="vfx-scale-reset" type="button" aria-label="Reset the scale of the selected objects to original">1×</button>
+            </div>
             <div class="vfx-target-btns" id="vfx-move-modes" style="display:none">
               <button class="vfx-abtn on" type="button" data-gmode="translate" aria-pressed="true">Move</button>
               <button class="vfx-abtn" type="button" data-gmode="rotate" aria-pressed="false">Rotate</button>
@@ -4288,7 +4293,8 @@
     edges: [],           // tower vertical-edge LED strip materials
     beacon: null,        // crown beacon material
     npc: [],             // pooled market-data tower records { laser, strips:[], off }  (LED+laser NPC skyline)
-    gTower: null, gDome: null, gBridge: null, gNpc: null, gFill: null
+    traffic: [],         // pooled traffic records { grp, r, cx, cz, ph, sp, dir } — cars circulating the ring avenues
+    gTower: null, gDome: null, gBridge: null, gNpc: null, gFill: null, gGround: null
   };
   // Vegas-Sphere image set — procedural (deterministic, computed per cell from u,v ∈ [-1,1]); cycled on a timer.
   const SPHERE_IMG = ['eye', 'smiley', 'heart', 'globe', 'pulse'];
@@ -4478,26 +4484,66 @@
     // (REMOVED per request: the NPC / market-data skyline — the labelled "NPCx $value" laser towers. The
     //  boundaryless backdrop below remains, providing unlabelled modern city buildings.)
 
-    // ---------- BOUNDARYLESS CITY FILL — a wide field of lit modern blocks fanning OUT to the horizon (radius
-    // 80→400) so the metropolis reads as endless rather than a small stage. Static emissive glow + bright rooftop
-    // LED caps + edge strips (no per-frame cost). Skips the foreground hero wedge so it never blocks the landmarks.
+    // ---------- ORGANIC GROUND + RING AVENUES — a big asphalt disc with NON-GRID curved boulevards (concentric +
+    // offset partial ring roads with glowing lane edges) so the ground reads like a real city, not graph paper. ----
+    const GND = new THREE.Group(); grp.add(GND); cityShow.gGround = GND;
+    const RINGS = [148, 238, 326];                                 // the circulating ring avenues (traffic runs here)
+    if (typeof THREE.CircleGeometry === 'function'){
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(430, 64), new THREE.MeshStandardMaterial({ color: 0x141c28, emissive: new THREE.Color(0x0a1018), emissiveIntensity: 0.35, roughness: 0.85, metalness: 0.1 }));
+      disc.rotation.x = -Math.PI / 2; disc.position.y = 0.06; GND.add(disc);
+    }
+    if (typeof THREE.RingGeometry === 'function'){
+      const road = (r, cx, cz, th0, thLen) => {
+        const m = new THREE.Mesh(new THREE.RingGeometry(r - 5, r + 5, 72, 1, th0 || 0, thLen || Math.PI * 2), new THREE.MeshStandardMaterial({ color: 0x0c1118, emissive: new THREE.Color(0x05080c), emissiveIntensity: 0.3, roughness: 0.9, metalness: 0.05 }));
+        m.rotation.x = -Math.PI / 2; m.position.set(cx || 0, 0.1, cz || 0); GND.add(m);
+        const lane = new THREE.Mesh(new THREE.RingGeometry(r - 0.45, r + 0.45, 72, 1, th0 || 0, thLen || Math.PI * 2), new THREE.MeshBasicMaterial({ color: 0x2a86b8, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false }));
+        lane.rotation.x = -Math.PI / 2; lane.position.set(cx || 0, 0.14, cz || 0); GND.add(lane); cityShow.edges.push(lane.material);
+      };
+      for (const r of RINGS) road(r, 0, 0);                        // the three full circulating avenues
+      road(190, 60, 70, 0.4, 2.2); road(120, -80, 60, 2.6, 2.4);   // offset partial arcs → organic, non-grid weave
+      road(285, -40, -30, 5.0, 1.9);
+    }
+
+    // ---------- BOUNDARYLESS CITY FILL — a wide field of MODERN GLASS towers fanning OUT to the horizon (radius
+    // 80→400): blue-tinted curtain-wall glass (windowTex emissive grid) + rooftop LED caps + edge strips. Skips the
+    // foreground hero wedge AND the ring avenues so towers never sit on a road. Static (no per-frame cost). ----
     const FILL = new THREE.Group(); grp.add(FILL); cityShow.gFill = FILL;
-    const FH = [0x1c4066, 0x274a6e, 0x16324c, 0x303a66, 0x1f5470];
+    const FH = [0x2a6aa8, 0x3a86c8, 0x2a8ab0, 0x4a78d0, 0x35a0c0];
     const fr2 = (n) => flowFrac(Math.sin(n) * 43758.5453);
+    const winT = (typeof windowTex === 'function') ? (() => { try { return windowTex(true); } catch(_){ return null; } })() : null;
     for (let i = 0; i < 60; i++){
       const a = fr2((i + 1) * 12.9898) * Math.PI * 2;
       const R = 80 + fr2((i + 1) * 78.233) * 320;                 // 80..400 (near ring → far horizon)
+      if (RINGS.some((rr) => Math.abs(R - rr) < 15)) continue;     // keep the ring avenues clear
       const x = Math.cos(a) * R, z = Math.sin(a) * R;
       if (z < -34 && Math.abs(x) < 95) continue;                  // keep the foreground hero wedge clear
       const h = 22 + fr2((i + 1) * 37.71) * 128, w = 8 + fr2((i + 1) * 9.7) * 13;
       const hex = FH[i % FH.length];
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: 0x16304a, emissive: new THREE.Color(hex), emissiveIntensity: 1.05, roughness: 0.42, metalness: 0.55 }));
+      // MODERN GLASS curtain wall: pale blue glass tint, high metalness/low roughness (specular sheen), the shared
+      // window texture as both map + emissive map (lit window grid), slightly transparent so it reads as glazing.
+      const glsMat = new THREE.MeshStandardMaterial({ color: 0x9fd0f0, map: winT || null, emissive: new THREE.Color(hex), emissiveMap: winT || null, emissiveIntensity: 0.9, roughness: 0.12, metalness: 0.85, transparent: true, opacity: 0.96 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), glsMat);
       body.position.set(x, h / 2, z); FILL.add(body);
       const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 1.4, w + 0.8), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.85, blending: ADD, depthWrite: false }));
       cap.position.set(x, h, z); FILL.add(cap);
       // 2 bright vertical LED edge strips on the camera-facing (−Z) face
       for (const sx of [-w * 0.34, w * 0.34]){ const st = new THREE.Mesh(new THREE.BoxGeometry(0.7, h * 0.88, 0.5), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.8, blending: ADD, depthWrite: false }));
         st.position.set(x + sx, h * 0.5, z - w / 2 - 0.25); FILL.add(st); }
+    }
+
+    // ---------- TRAFFIC — pooled cars circulating the ring avenues (headlights + glowing tail-lights), so the
+    // streets live like a real city. Deterministic (positions derive from the accumulated show clock only). ----
+    const CARC = [0xd8e4f0, 0x8ab8e0, 0xe0c890, 0x90e0c0, 0xc9a0e8];
+    for (let i = 0; i < 26; i++){
+      const ring = RINGS[i % RINGS.length];
+      const carG = new THREE.Group();
+      const bodyM = new THREE.MeshStandardMaterial({ color: CARC[i % CARC.length], emissive: new THREE.Color(0x202830), emissiveIntensity: 0.25, roughness: 0.35, metalness: 0.7 });
+      const cb = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.9, 3.4), bodyM); cb.position.y = 0.65; carG.add(cb);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 1.7), new THREE.MeshStandardMaterial({ color: 0x1a2836, roughness: 0.2, metalness: 0.8 })); cabin.position.set(0, 1.35, -0.2); carG.add(cabin);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.3, 0.25), new THREE.MeshBasicMaterial({ color: 0xfff2c8, transparent: true, opacity: 0.95, blending: ADD, depthWrite: false })); head.position.set(0, 0.6, -1.72); carG.add(head);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.3, 0.25), new THREE.MeshBasicMaterial({ color: 0xff3a2a, transparent: true, opacity: 0.9, blending: ADD, depthWrite: false })); tail.position.set(0, 0.6, 1.72); carG.add(tail);
+      GND.add(carG);
+      cityShow.traffic.push({ grp: carG, r: ring + (i % 2 ? 2.6 : -2.6), ph: fr2((i + 7) * 5.77) * Math.PI * 2, sp: (0.05 + fr2((i + 3) * 3.31) * 0.05), dir: (i % 2 ? 1 : -1) });
     }
 
     ledRebuildCols();
@@ -4581,6 +4627,13 @@
         const glow = Math.max(0, 1 - d * 5.0);                                  // sharp bright crest near the head
         const L = Math.min(LED_EMIS, TH.lit * I * (0.4 + 0.6 * glow));
         m.color.setHSL((TH.h0 + cb.k * TH.hsp) % 1, TH.sat, L); m.opacity = 0.5 + 0.45 * glow; } }
+    // ---- TRAFFIC: cars circulate the ring avenues (angle = phase + show-clock × speed; heading = tangent) ----
+    for (let i = 0; i < S.traffic.length; i++){ const c = S.traffic[i]; const g = c.grp; if (!g || !g.position) continue;
+      const a = c.ph + S.t * c.sp * c.dir;
+      g.position.set(Math.cos(a) * c.r, 0.12, Math.sin(a) * c.r);
+      const vx = -Math.sin(a) * c.dir, vz = Math.cos(a) * c.dir;
+      if (g.rotation) g.rotation.y = Math.atan2(vx, vz) + Math.PI;   // nose (−Z) into the direction of travel
+    }
     // ---- NPC / MARKET-DATA SKYLINE: cycle each tower's roof LASER + facade LED strips (per-tower phase offset) ----
     for (let i = 0; i < S.npc.length; i++){ const n = S.npc[i];
       const hue = (TH.h0 + i * 0.07 + S.t * 0.06) % 1;
@@ -12618,6 +12671,16 @@
         const tmodes = $('vfx-move-modes'); if (tmodes && tmodes.querySelectorAll) tmodes.querySelectorAll('[data-gmode]').forEach((btn) => { btn.onclick = () => setGizmoMode(btn.getAttribute('data-gmode')); });
         const tany = $('vfx-pickany'); if (tany) tany.onclick = () => setFreePick(!freePickArmed);
         const tpin = $('vfx-pin-toggle'); if (tpin) tpin.onclick = () => { const o = pinTargets(); setPinned(!(o.length && o.every((x) => pinned.has(x)))); };
+        // ---- 3D SCALER: a direct uniform-scale slider for the current selection (no gizmo needed). Each object
+        //      scales relative to its CAPTURED original (so re-dragging is stable, and 1× restores exactly).
+        //      Pin/layout-aware: the new scale sticks on animated objects + persists via the layout store. ----
+        const scaleObjs = () => selection.length ? selection.slice() : ((sceneTarget && sceneTarget.obj) ? [sceneTarget.obj] : []);
+        const applyScale = (k) => { const v = $('vfx-scale-v'); if (v) v.textContent = k.toFixed(2) + '×';
+          scaleObjs().forEach((o) => { try { captureOrig(o); const og = origMap.get(o); const s = (og && og.s) ? og.s : [1, 1, 1];
+            o.scale.set(s[0] * k, s[1] * k, s[2] * k); snapshotPin(o); recordLayout(o); } catch(_){} }); };
+        const tscale = $('vfx-scale');
+        if (tscale) tscale.oninput = () => applyScale(Math.max(0.2, (+tscale.value || 100) / 100));
+        const tsr = $('vfx-scale-reset'); if (tsr) tsr.onclick = () => { if (tscale) tscale.value = '100'; applyScale(1); };
         // scene-layout config (save / export / import / reset) — persist gizmo adjustments
         try { loadLayoutFromStore(); } catch(_){}
         const rgo = $('vfx-rnd-go'); if (rgo) rgo.onclick = () => randomizeSelection({
