@@ -189,10 +189,15 @@
     backdrop-filter:blur(6px);box-shadow:0 0 0 1px rgba(80,230,255,.12),0 10px 32px rgba(0,0,0,.5);
     color:#bfeaff;font-variant-numeric:tabular-nums}
   /* SIMULATION PARAMETER PANEL — top-centre control strip; shown only for sim sections (.on) */
-  .simpanel{position:absolute;top:52px;left:50%;transform:translateX(-50%);z-index:7;display:none;min-width:360px;max-width:560px;
-    background:#04111ce6;border:1px solid #2a5a44;border-radius:12px;padding:9px 13px;backdrop-filter:blur(6px);
+  .simpanel{position:absolute;top:52px;right:12px;left:auto;transform:none;z-index:12;display:none;width:312px;max-width:90vw;max-height:84vh;overflow:auto;
+    background:#04111cf2;border:1px solid #2a5a44;border-radius:12px;padding:9px 13px;backdrop-filter:blur(6px);
     box-shadow:0 0 0 1px rgba(80,230,160,.14),0 10px 30px rgba(0,0,0,.5);color:#dff1e8;font-variant-numeric:tabular-nums}
   .simpanel.on{display:block}
+  .simpanel.folded{max-height:none;overflow:visible}
+  .simpanel.folded .simbody{display:none}
+  .simfold{margin-left:6px;background:transparent;border:1px solid rgba(120,200,160,.45);color:#bfeada;border-radius:6px;cursor:pointer;font:600 12px/1 'Segoe UI',sans-serif;padding:2px 7px}
+  .simfold:hover{background:rgba(80,230,160,.12)}
+  .simfold:focus-visible{outline:2px solid #3fe07a;outline-offset:1px}
   .simhead{display:flex;align-items:center;gap:8px;font:600 12px/1.3 'Segoe UI',sans-serif;margin-bottom:7px;color:#bfeada}
   .simdot{width:8px;height:8px;border-radius:50%;background:#3fe07a;box-shadow:0 0 8px #3fe07a}
   .simread{margin-left:auto;color:#9fe9c4;font-weight:500;font-size:11px}
@@ -745,7 +750,7 @@
   <!-- ===== SIMULATION PARAMETER PANEL — interactive levers for the active section's simulation (ERP TOC now;
        extensible). Shown only when the active section HAS a sim. Crisp DOM, top-centre, outside the canvas. ===== -->
   <aside class="simpanel" id="sim-panel" aria-label="Simulation parameters" aria-hidden="true">
-    <div class="simhead"><span class="simdot" aria-hidden="true"></span><span id="sim-title">Simulation</span><span class="simread" id="sim-read"></span></div>
+    <div class="simhead"><span class="simdot" aria-hidden="true"></span><span id="sim-title">Simulation</span><span class="simread" id="sim-read"></span><button class="simfold" id="sim-fold" type="button" aria-label="Collapse parameters panel" aria-expanded="true">▾</button></div>
     <div id="sim-body" class="simbody"></div>
   </aside>
 
@@ -3987,7 +3992,7 @@
   ];
 
   // SKY placement of the billboard plane (LOCAL frame; the group is at the origin so these are world-ish coords).
-  const UAV_SKY_Y = 70;            // centre height of the image in the sky (above the towers; framed below the top panel)
+  const UAV_SKY_Y = 132;           // centre height of the sky image — high, ABOVE the Taipei-101 spire (top panel moved off-centre)
   const UAV_SCALE = 2.1;           // dot pitch — spacing between adjacent formation points (sky-plane units)
 
   /* uavFormationPoints(id) — return an ARRAY of LOCAL {x,y,z} target points (centred on the billboard, z≈0) for a
@@ -4282,7 +4287,8 @@
     cables: [],          // pooled bridge cable records { mat, k }  (k = anchor position along span 0..1)
     edges: [],           // tower vertical-edge LED strip materials
     beacon: null,        // crown beacon material
-    gTower: null, gDome: null, gBridge: null
+    npc: [],             // pooled market-data tower records { laser, strips:[], off }  (LED+laser NPC skyline)
+    gTower: null, gDome: null, gBridge: null, gNpc: null
   };
   // Vegas-Sphere image set — procedural (deterministic, computed per cell from u,v ∈ [-1,1]); cycled on a timer.
   const SPHERE_IMG = ['eye', 'smiley', 'heart', 'globe', 'pulse'];
@@ -4356,7 +4362,7 @@
     // axes; radiusTop≠radiusBottom gives the upward-flaring trapezoid wall). The signature: each of the 8 tiers is an
     // INVERTED trapezoid (narrow bottom → wide top) that steps back IN at the next tier's base, making the bamboo /
     // upturned-pagoda silhouette. Blue-green glass. The LED character show mounts on the podium's front face. -----
-    const TWR = new THREE.Group(); TWR.position.set(28, 0, -42); grp.add(TWR); cityShow.gTower = TWR;
+    const TWR = new THREE.Group(); TWR.position.set(0, 0, -46); grp.add(TWR); cityShow.gTower = TWR;
     const ROOT2 = Math.SQRT2;
     const glass = (hex, em) => new THREE.MeshStandardMaterial({ color: hex, emissive: new THREE.Color(em || 0x0a1c22), emissiveIntensity: 0.16, roughness: 0.34, metalness: 0.7 });
     // square frustum helper: side lengths sBot→sTop over height h, centred at y=cy; rotated 45° to face the axes.
@@ -4407,8 +4413,8 @@
     // image surface that cycles big procedural visuals (an eye / smiley / heart / globe / pulse). Built from a dark
     // sphere shell + a pooled grid of emissive cells laid over the camera-facing hemisphere; each cell is lit per the
     // current image bitmap (animateCityLightShow), wrapping the picture onto the curved face like the real Sphere. -
-    const DOME = new THREE.Group(); DOME.position.set(-46, 0, -6); grp.add(DOME); cityShow.gDome = DOME;
-    const SR = 32, SCY = SR + 4;                                   // sphere radius + centre height (raised off the plaza)
+    const DOME = new THREE.Group(); DOME.position.set(-74, 0, -6); grp.add(DOME); cityShow.gDome = DOME;
+    const SR = 33, SCY = SR + 6;                                   // sphere radius + centre height (raised off the plaza)
     if (typeof THREE.SphereGeometry === 'function'){
       const shell = new THREE.Mesh(new THREE.SphereGeometry(SR, 40, 28), new THREE.MeshStandardMaterial({ color: 0x070b12, emissive: new THREE.Color(0x05070d), emissiveIntensity: 0.1, roughness: 0.5, metalness: 0.5 }));
       shell.position.y = SCY; DOME.add(shell);
@@ -4419,26 +4425,28 @@
       const baseRing = new THREE.Mesh(new THREE.CylinderGeometry(SR * 0.66, SR * 0.66, 1.2, 36, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false }));
       baseRing.position.y = 8; DOME.add(baseRing); cityShow.edges.push(baseRing.material);
     }
-    // LED IMAGE SURFACE — pooled cells over the front hemisphere (facing −Z, the camera). (u,v)∈[-1,1] is image space;
-    // mapped to a spherical patch (half-angle ANG) so the picture curves onto the globe. ~22×22 cells (bounded pool).
-    const IMG_N = 22, ANG = 1.18, dotGeo = new THREE.BoxGeometry(1.7, 1.7, 1.7);
-    for (let iy = 0; iy < IMG_N; iy++){
-      for (let ix = 0; ix < IMG_N; ix++){
-        const u = (ix / (IMG_N - 1)) * 2 - 1, v = (iy / (IMG_N - 1)) * 2 - 1;
-        if (u * u + v * v > 1.04) continue;                       // clip to a disc → a round screen on the globe
-        const lon = u * ANG, lat = v * ANG;
+    // LED IMAGE SURFACE — pooled cells covering the WHOLE front-facing hemisphere (lon/lat ∈ ±FOV), so the entire
+    // visible face of the globe glows (not just a central disc). The image maps onto the inner patch (|u|,|v|≤1);
+    // a thin outer border ring glows ambient. ~26×22 cells (bounded). −Z = front (toward the camera).
+    const NLON = 26, NLAT = 22, FOV = 1.34, IMGANG = 1.16, dotGeo = new THREE.BoxGeometry(1.7, 1.7, 1.7);
+    for (let iy = 0; iy < NLAT; iy++){
+      const lat = ((iy / (NLAT - 1)) * 2 - 1) * FOV;
+      for (let ix = 0; ix < NLON; ix++){
+        const lon = ((ix / (NLON - 1)) * 2 - 1) * FOV;
         const px =  SR * Math.sin(lon) * Math.cos(lat);
         const py =  SR * Math.sin(lat);
         const pz = -SR * Math.cos(lon) * Math.cos(lat);           // −Z = front (toward camera)
         const m = new THREE.MeshBasicMaterial({ color: 0x12283c, transparent: true, opacity: 0.4, blending: ADD, depthWrite: false });
-        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(px, SCY + py, pz - 0.4); DOME.add(cell);
-        cityShow.sphereCells.push({ mat: m, u: u, v: v });
+        const cell = new THREE.Mesh(dotGeo, m); cell.position.set(px, SCY + py, pz - 0.3); DOME.add(cell);
+        const iu = lon / IMGANG, iv = lat / IMGANG;               // image-space coord (the inner patch carries the picture)
+        cityShow.sphereCells.push({ mat: m, u: iu, v: iv, img: (Math.abs(iu) <= 1 && Math.abs(iv) <= 1) });
       }
     }
 
-    // ---------- LANDMARK 3: cable-stayed BRIDGE with a travelling light-chase ----------
-    const BR = new THREE.Group(); BR.position.set(0, 4, -66); grp.add(BR); cityShow.gBridge = BR;
-    const span = 132, deckY = 8, deckHalf = span / 2, pylX = 30, pylTop = 50;
+    // ---------- LANDMARK 3: cable-stayed BRIDGE — pushed to the foreground (low + forward) so it spans across the
+    // FRONT of the scene without overlapping the central Taipei-101 tower (shorter pylons keep it below the tiers). -
+    const BR = new THREE.Group(); BR.position.set(0, 2, -116); grp.add(BR); cityShow.gBridge = BR;
+    const span = 158, deckY = 8, deckHalf = span / 2, pylX = 44, pylTop = 32;
     const deckMat = darkGlass(0x18242e);
     const deck = new THREE.Mesh(new THREE.BoxGeometry(span, 2.2, 12), deckMat); deck.position.y = deckY; BR.add(deck);
     // deck-edge LED runners (two long emissive strips)
@@ -4462,6 +4470,38 @@
           cityShow.cables.push({ mat: m, k: (ax / deckHalf + 1) / 2 });
         }
       }
+    }
+
+    // ---------- LANDMARK 4: NPC / MARKET-DATA SKYLINE — a wide backdrop arc of modern LED+laser towers, one per
+    // firm (NPC), HEIGHT ∝ net worth so the market reads as a 3D skyline. Each tower: dark-glass body + vertical LED
+    // facade strips + a roof LASER beam (colour-cycles, INV-3 capped) + a floating "id $value" label. Placed in the
+    // boundaryless city BEHIND the three hero landmarks (z>0, radius 96-141) so it frames the show without occluding.
+    const SKY = new THREE.Group(); grp.add(SKY); cityShow.gNpc = SKY;
+    const firms = (typeof world !== 'undefined' && world && world.firms) ? world.firms : [];
+    const N = Math.min(12, Math.max(8, firms.length || 12));
+    const nwOf = (id) => { try { return (typeof nwForHeight === 'function') ? nwForHeight(id) : 0; } catch(_){ return 0; } };
+    let lo = Infinity, hi = -Infinity; const data = [];
+    for (let i = 0; i < N; i++){ const f = firms[i]; const id = f ? f.id : ('NPC' + i);
+      let v = f ? nwOf(id) : 0; if (!(v > 0)) v = 60 + flowFrac(Math.sin((i + 3) * 12.9898) * 43758.5453) * 160;
+      data.push({ id: id, v: v }); if (v < lo) lo = v; if (v > hi) hi = v; }
+    const vspan = Math.max(1, hi - lo);
+    const npcBody = () => new THREE.MeshStandardMaterial({ color: 0x0c1a26, emissive: new THREE.Color(0x0a1620), emissiveIntensity: 0.14, roughness: 0.4, metalness: 0.72 });
+    const fmtV = (v) => v >= 1000 ? ('$' + (v / 1000).toFixed(1) + 'M') : ('$' + Math.round(v) + 'k');
+    for (let i = 0; i < N; i++){
+      const a = (12 + (i / (N - 1)) * 156) * Math.PI / 180;        // 12°..168° → z>0 (behind origin), x sweeps full width
+      const R = 96 + (i % 4) * 15;                                 // 96..141 staggered depth rings
+      const x = Math.cos(a) * R, z = Math.sin(a) * R;
+      const t = (data[i].v - lo) / vspan; const h = 48 + t * 92;   // 48..140 by net worth
+      const w = 11 + (i % 3) * 3.5;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), npcBody()); body.position.set(x, h / 2, z); SKY.add(body);
+      const strips = [];                                           // 3 vertical LED facade strips on the −Z (camera) face
+      for (let k = -1; k <= 1; k++){ const m = new THREE.MeshBasicMaterial({ color: 0x1f6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false });
+        const st = new THREE.Mesh(new THREE.BoxGeometry(0.8, h * 0.9, 0.5), m); st.position.set(x + k * w * 0.32, h * 0.5, z - w / 2 - 0.3); SKY.add(st); strips.push(m); }
+      const beamH = 60 + t * 70;                                   // roof LASER beam (taller for richer firms)
+      const lmat = new THREE.MeshBasicMaterial({ color: 0x39e0ff, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.95, beamH, 6), lmat); beam.position.set(x, h + beamH / 2, z); SKY.add(beam);
+      try { const lab = labelSpriteSafe(data[i].id + '  ' + fmtV(data[i].v), '#bfe8ff', 12, x, h + beamH + 7, z); if (lab) SKY.add(lab); } catch(_){}
+      cityShow.npc.push({ laser: lmat, strips: strips, off: i * 0.55 });
     }
 
     ledRebuildCols();
@@ -4525,12 +4565,17 @@
       const ease = k * k * (3 - 2 * k);                                          // smoothstep cross-fade
       const idA = SPHERE_IMG[IM.cur], idB = SPHERE_IMG[IM.next];
       for (let i = 0; i < S.sphereCells.length; i++){ const c = S.sphereCells[i]; const m = c.mat; if (!m || !m.color || !m.color.setHSL) continue;
-        const a = sphereImg(idA, c.u, c.v, IM.t), b = sphereImg(idB, c.u, c.v, IM.t);
-        const lvl = a + (b - a) * ease;                                          // blended pixel intensity 0..1
-        if (lvl > 0.08){
-          const hue = (TH.h0 + (c.u * 0.5 + 0.5) * TH.hsp + S.t * 0.05) % 1;      // themed colour wave across the face
-          m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.18 + 0.62 * lvl) * I)); m.opacity = 0.3 + 0.62 * lvl;
-        } else { m.color.setHSL(0.6, 0.35, 0.045); m.opacity = 0.12; }
+        if (c.img){                                                              // inner patch carries the cycling picture
+          const a = sphereImg(idA, c.u, c.v, IM.t), b = sphereImg(idB, c.u, c.v, IM.t);
+          const lvl = a + (b - a) * ease;                                        // blended pixel intensity 0..1
+          if (lvl > 0.08){
+            const hue = (TH.h0 + (c.u * 0.5 + 0.5) * TH.hsp + S.t * 0.05) % 1;    // themed colour wave across the face
+            m.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.18 + 0.62 * lvl) * I)); m.opacity = 0.3 + 0.62 * lvl;
+          } else { m.color.setHSL(0.6, 0.35, 0.05); m.opacity = 0.14; }
+        } else {                                                                 // outer border ring → ambient theme glow
+          const g = 0.45 + 0.35 * Math.sin(S.t * 1.6 + (c.u + c.v) * 2.0);
+          m.color.setHSL((TH.h0 + S.t * 0.05) % 1, TH.sat, Math.min(LED_EMIS, 0.22 * I * g)); m.opacity = 0.28 + 0.18 * g;
+        }
       }
     }
     // ---- BRIDGE: a bright pulse travels across the span (a light running the cables left→right, then repeats) ----
@@ -4540,6 +4585,14 @@
         const glow = Math.max(0, 1 - d * 5.0);                                  // sharp bright crest near the head
         const L = Math.min(LED_EMIS, TH.lit * I * (0.4 + 0.6 * glow));
         m.color.setHSL((TH.h0 + cb.k * TH.hsp) % 1, TH.sat, L); m.opacity = 0.5 + 0.45 * glow; } }
+    // ---- NPC / MARKET-DATA SKYLINE: cycle each tower's roof LASER + facade LED strips (per-tower phase offset) ----
+    for (let i = 0; i < S.npc.length; i++){ const n = S.npc[i];
+      const hue = (TH.h0 + i * 0.07 + S.t * 0.06) % 1;
+      const lb = 0.5 + 0.5 * Math.sin(S.t * 2.3 + n.off);
+      if (n.laser && n.laser.color && n.laser.color.setHSL){ n.laser.color.setHSL(hue, TH.sat, Math.min(LED_EMIS, (0.4 + 0.38 * lb) * I)); n.laser.opacity = 0.4 + 0.4 * lb; }
+      for (let k = 0; k < n.strips.length; k++){ const m = n.strips[k]; if (!m || !m.color || !m.color.setHSL) continue;
+        const b = 0.5 + 0.5 * Math.sin(S.t * 1.7 + n.off + k * 0.9);
+        m.color.setHSL((hue + 0.09 * k) % 1, TH.sat * 0.85, Math.min(LED_EMIS, (0.3 + 0.32 * b) * I)); m.opacity = 0.45 + 0.32 * b; } }
     // mirror the live readout into the DOM sim panel (if open on this section)
     try { if (typeof updateSimReadout === 'function') updateSimReadout(); } catch(_){}
   }
@@ -14216,7 +14269,7 @@
       // origin metropolis + the UAV light-show in the sky above it. Look UP into the sky-band (raised look-at) and
       // pull back so the swarm (centred ~UAV_SKY_Y) sits in the OPEN centre of the frame — clear of the top sim
       // panel — with the city skyline filling the lower third. polar a touch higher = a more horizon-ward gaze.
-      fx = 0; fz = 0; fy = 56; dist = 218; polar = 1.0;
+      fx = 0; fz = 0; fy = 76; dist = 248; polar = 1.02;
     }
     if (useOrbit && controls){
       controls.autoRotate = false;            // focused world views don't auto-spin (that's the diorama flourish)
@@ -14795,6 +14848,11 @@
     if (panel.setAttribute) panel.setAttribute('aria-hidden', show ? 'false' : 'true');
     if (!show) return;
     if (panel.getAttribute && panel.getAttribute('data-built') !== sec){ buildSimPanel(sec); if (panel.setAttribute) panel.setAttribute('data-built', sec); }
+    // wire the fold/collapse toggle once — collapses to just the header bar (params hidden) so the right-side panel
+    // can be tucked away during the light show / any scene. View-only DOM state.
+    const fb = $('sim-fold');
+    if (fb && fb.getAttribute('data-wired') !== '1'){ fb.setAttribute('data-wired', '1');
+      fb.onclick = () => { const folded = panel.classList.toggle('folded'); fb.textContent = folded ? '▸' : '▾'; fb.setAttribute('aria-expanded', folded ? 'false' : 'true'); }; }
     updateSimReadout();
   }
   // map a scene OBJECT (or any descendant) onto the Smart-Factory machine whose cell-group contains it.
