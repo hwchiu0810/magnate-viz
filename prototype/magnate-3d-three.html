@@ -4473,37 +4473,8 @@
       }
     }
 
-    // ---------- LANDMARK 4: NPC / MARKET-DATA SKYLINE — a wide backdrop arc of modern LED+laser towers, one per
-    // firm (NPC), HEIGHT ∝ net worth so the market reads as a 3D skyline. Each tower: dark-glass body + vertical LED
-    // facade strips + a roof LASER beam (colour-cycles, INV-3 capped) + a floating "id $value" label. Placed in the
-    // boundaryless city BEHIND the three hero landmarks (z>0, radius 96-141) so it frames the show without occluding.
-    const SKY = new THREE.Group(); grp.add(SKY); cityShow.gNpc = SKY;
-    const firms = (typeof world !== 'undefined' && world && world.firms) ? world.firms : [];
-    const N = Math.min(12, Math.max(8, firms.length || 12));
-    const nwOf = (id) => { try { return (typeof nwForHeight === 'function') ? nwForHeight(id) : 0; } catch(_){ return 0; } };
-    let lo = Infinity, hi = -Infinity; const data = [];
-    for (let i = 0; i < N; i++){ const f = firms[i]; const id = f ? f.id : ('NPC' + i);
-      let v = f ? nwOf(id) : 0; if (!(v > 0)) v = 60 + flowFrac(Math.sin((i + 3) * 12.9898) * 43758.5453) * 160;
-      data.push({ id: id, v: v }); if (v < lo) lo = v; if (v > hi) hi = v; }
-    const vspan = Math.max(1, hi - lo);
-    const npcBody = () => new THREE.MeshStandardMaterial({ color: 0x0c1a26, emissive: new THREE.Color(0x0a1620), emissiveIntensity: 0.14, roughness: 0.4, metalness: 0.72 });
-    const fmtV = (v) => v >= 1000 ? ('$' + (v / 1000).toFixed(1) + 'M') : ('$' + Math.round(v) + 'k');
-    for (let i = 0; i < N; i++){
-      const a = (12 + (i / (N - 1)) * 156) * Math.PI / 180;        // 12°..168° → z>0 (behind origin), x sweeps full width
-      const R = 96 + (i % 4) * 15;                                 // 96..141 staggered depth rings
-      const x = Math.cos(a) * R, z = Math.sin(a) * R;
-      const t = (data[i].v - lo) / vspan; const h = 48 + t * 92;   // 48..140 by net worth
-      const w = 11 + (i % 3) * 3.5;
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), npcBody()); body.position.set(x, h / 2, z); SKY.add(body);
-      const strips = [];                                           // 3 vertical LED facade strips on the −Z (camera) face
-      for (let k = -1; k <= 1; k++){ const m = new THREE.MeshBasicMaterial({ color: 0x1f6fae, transparent: true, opacity: 0.7, blending: ADD, depthWrite: false });
-        const st = new THREE.Mesh(new THREE.BoxGeometry(0.8, h * 0.9, 0.5), m); st.position.set(x + k * w * 0.32, h * 0.5, z - w / 2 - 0.3); SKY.add(st); strips.push(m); }
-      const beamH = 60 + t * 70;                                   // roof LASER beam (taller for richer firms)
-      const lmat = new THREE.MeshBasicMaterial({ color: 0x39e0ff, transparent: true, opacity: 0.5, blending: ADD, depthWrite: false });
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.95, beamH, 6), lmat); beam.position.set(x, h + beamH / 2, z); SKY.add(beam);
-      try { const lab = labelSpriteSafe(data[i].id + '  ' + fmtV(data[i].v), '#bfe8ff', 12, x, h + beamH + 7, z); if (lab) SKY.add(lab); } catch(_){}
-      cityShow.npc.push({ laser: lmat, strips: strips, off: i * 0.55 });
-    }
+    // (REMOVED per request: the NPC / market-data skyline — the labelled "NPCx $value" laser towers. The
+    //  boundaryless backdrop below remains, providing unlabelled modern city buildings.)
 
     // ---------- BOUNDARYLESS CITY FILL — a wide field of lit modern blocks fanning OUT to the horizon (radius
     // 80→400) so the metropolis reads as endless rather than a small stage. Static emissive glow + bright rooftop
@@ -14183,7 +14154,7 @@
     builtChunkTheme = null;
   }
   function applyThemeVisibility(theme){
-    const econ   = (theme === 'smart-city');              // the live economy district lives in Smart City now
+    const econ   = false;                                 // economy district (all firm towers + NPC_DESK exchange + plaza) REMOVED from the Smart City light-show scene
     const retail = (theme === 'factory');                 // the streamed retail district shows only in the everything-on factory world now (the Mall is its own diorama twin)
     const prod   = (theme === 'factory');                 // streamed CITY-GRID world ONLY for the factory (Smart City II) theme
     const hall   = (theme === 'smart-factory');           // the enclosed bounded factory hall ONLY for smart-factory
