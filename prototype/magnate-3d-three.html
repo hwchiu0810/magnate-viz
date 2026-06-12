@@ -6066,6 +6066,15 @@
     if (scene && !twinMode){
       if (scene.background && scene.background.copy) scene.background.copy(C.sky);
       if (scene.fog && scene.fog.color && scene.fog.color.copy) scene.fog.color.copy(C.sky);
+      // SMART CITY — give the SKY ambient light: lift the dusk backdrop + fog toward a luminous blue-hour glow so
+      // the sky itself reads bright (not a dark void). Scaled by the '☀️ Ambient light' lever, so it tracks the
+      // user's lightness control. View-only; auto-reverts next frame for any other section (fresh C.sky copy).
+      if (lumCity && THREE && THREE.Color){
+        if (!updateDayNight._skyGlow) updateDayNight._skyGlow = new THREE.Color(0x4664a4);
+        const g = updateDayNight._skyGlow, k = Math.max(0, Math.min(0.85, 0.22 + 0.26 * LL));
+        if (scene.background && scene.background.lerp) scene.background.lerp(g, k);
+        if (scene.fog && scene.fog.color && scene.fog.color.lerp) scene.fog.color.lerp(g, k);
+      }
     }
   }
 
