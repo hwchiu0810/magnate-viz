@@ -4288,7 +4288,8 @@
   const cityShow = {
     msg: 'SMART CITY  *  WELCOME TO 101  *  LUXURY NIGHT LIGHT SHOW  *  ',
     theme: 0,            // palette index (reuses UAV_THEMES hue base/spread/sat/lit)
-    intensity: 1.35,     // master brightness multiplier (0.6..2.0 via the slider; per-cell still capped sub-white)
+    intensity: 1.35,     // LED master brightness multiplier (0.6..2.0 via the slider; per-cell still capped sub-white)
+    ambient: 1.55,       // SCENE AMBIENT/fill-light multiplier for smart-city (slider 0.6..2.6 in the right panel)
     speed: 6.0,          // facade marquee scroll speed (columns / sec)
     tower: true, dome: true, bridge: true,   // landmark visibility toggles
     t: 0, scroll: 0,
@@ -6019,14 +6020,16 @@
     // keep them non-zero so the dioramas stay legible at the darkest point.
     // SMART CITY is a luminous night light-show: lift the fill lights well above the deep-night floor so the whole
     // metropolis reads bright/glowing (not a dark stage) while the sky stays evening-dramatic for the LEDs to pop.
+    // The floor is scaled by the user's "☀️ Ambient light" lever (cityShow.ambient) — the right-panel control.
     const lumCity = (activeSection === 'smart-city');
+    const LL = (typeof cityShow !== 'undefined' && cityShow && cityShow.ambient) ? cityShow.ambient : 1.5;
     if (lightHemi){
       if (lightHemi.color && lightHemi.color.copy) lightHemi.color.copy(C.hs);
       if (lightHemi.groundColor && lightHemi.groundColor.copy) lightHemi.groundColor.copy(C.hg);
-      lightHemi.intensity = lumCity ? Math.max(s.hemiI, 1.35) : s.hemiI;
+      lightHemi.intensity = lumCity ? Math.max(s.hemiI, 1.1 * LL) : s.hemiI;
     }
-    if (lightAmbient) lightAmbient.intensity = lumCity ? Math.max(s.ambI, 1.05) : s.ambI;
-    if (lumCity && lightSun) lightSun.intensity = Math.max(s.sunI, 0.9);    // a strong key so facades + the skyline shine
+    if (lightAmbient) lightAmbient.intensity = lumCity ? Math.max(s.ambI, 0.85 * LL) : s.ambI;
+    if (lumCity && lightSun) lightSun.intensity = Math.max(s.sunI, 0.7 * LL);   // a strong key so facades + the skyline shine
     // SKY: background + fog share one tone (day blue → sunset orange → deep night-blue, never black).
     // SKIP while the Digital-Twin overlay owns the backdrop (it set a fixed dark-navy bg/fog in
     // applyTwinMode); retinting here would clobber it every frame. OFF restores the saved bg/fog and
@@ -14873,7 +14876,8 @@
         '<div class="simctl"><label>📺 101 facade message</label><input type="text" id="led-msg" maxlength="60" aria-label="Tower LED facade scrolling message" style="width:100%;box-sizing:border-box;background:#0b1622;border:1px solid rgba(120,180,255,.3);color:#cfe6ff;border-radius:6px;padding:4px 6px;font:inherit"></div>' +
         '<div class="simctl"><label>🎨 Show palette <b id="led-theme-v"></b></label><select id="led-theme" aria-label="Light show colour palette">' +
           UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
-        '<div class="simctl"><label>💡 Brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="200" step="5" aria-label="Light show master brightness"></div>' +
+        '<div class="simctl"><label>💡 LED brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="200" step="5" aria-label="Light show LED master brightness"></div>' +
+        '<div class="simctl"><label>☀️ Ambient light <b id="led-amb-v"></b></label><input type="range" id="led-amb" min="60" max="260" step="5" aria-label="Smart city ambient / scene fill-light level"></div>' +
         '<div class="simctl"><label>🏃 Marquee speed <b id="led-spd-v"></b></label><input type="range" id="led-spd" min="2" max="14" step="1" aria-label="Tower facade scroll speed"></div>' +
         '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="led-twr"> 🏙️ Taipei 101</label>' +
           '<label class="chk"><input type="checkbox" id="led-dome"> 🔮 Vegas Sphere</label>' +
@@ -14895,14 +14899,17 @@
           UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
         '<button class="simbtn" id="uav-next" type="button">⏭ Next formation</button>';
       // ---- LANDMARK LIGHT-SHOW lever wiring (VIEW-ONLY; rebuilds the marquee bitmap on message change) ----
-      const lMsg = $('led-msg'), lTheme = $('led-theme'), lInt = $('led-int'), lSpd = $('led-spd');
+      const lMsg = $('led-msg'), lTheme = $('led-theme'), lInt = $('led-int'), lSpd = $('led-spd'), lAmb = $('led-amb');
       const lTwr = $('led-twr'), lDome = $('led-dome'), lBrg = $('led-brg');
       const setLTheme = (i) => { const e = $('led-theme-v'); if (e) e.textContent = (UAV_THEMES[i] || UAV_THEMES[0]).name; };
       const setLInt = (v) => { const e = $('led-int-v'); if (e) e.textContent = v + '%'; };
+      const setLAmb = (v) => { const e = $('led-amb-v'); if (e) e.textContent = v + '%'; };
       const setLSpd = (v) => { const e = $('led-spd-v'); if (e) e.textContent = v + ' col/s'; };
       if (lMsg){ lMsg.value = LS.msg; lMsg.oninput = () => { LS.msg = lMsg.value || ' '; if (typeof ledRebuildCols === 'function') ledRebuildCols(); }; }
       if (lTheme){ lTheme.value = String(LS.theme); lTheme.onchange = () => { LS.theme = (+lTheme.value) | 0; setLTheme(LS.theme); }; setLTheme(LS.theme); }
       if (lInt){ lInt.value = Math.round(LS.intensity * 100); lInt.oninput = () => { const v = +lInt.value || 100; LS.intensity = v / 100; setLInt(v); }; setLInt(+lInt.value); }
+      // ☀️ Ambient light — drives cityShow.ambient; updateDayNight reads it each frame to scale the smart-city fill lights
+      if (lAmb){ lAmb.value = Math.round(LS.ambient * 100); lAmb.oninput = () => { const v = +lAmb.value || 150; LS.ambient = v / 100; setLAmb(v); }; setLAmb(+lAmb.value); }
       if (lSpd){ lSpd.value = Math.round(LS.speed); lSpd.oninput = () => { const v = +lSpd.value || 6; LS.speed = v; setLSpd(v); }; setLSpd(+lSpd.value); }
       if (lTwr){  lTwr.checked  = !!LS.tower;  lTwr.onchange  = () => { LS.tower  = lTwr.checked;  if (LS.gTower)  LS.gTower.visible  = LS.tower; }; }
       if (lDome){ lDome.checked = !!LS.dome;   lDome.onchange = () => { LS.dome   = lDome.checked; if (LS.gDome)   LS.gDome.visible   = LS.dome; }; }
