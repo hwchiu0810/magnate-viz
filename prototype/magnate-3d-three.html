@@ -4289,7 +4289,7 @@
     msg: 'SMART CITY  *  WELCOME TO 101  *  LUXURY NIGHT LIGHT SHOW  *  ',
     theme: 0,            // palette index (reuses UAV_THEMES hue base/spread/sat/lit)
     intensity: 1.35,     // LED master brightness multiplier (0.6..2.0 via the slider; per-cell still capped sub-white)
-    ambient: 1.55,       // SCENE AMBIENT/fill-light multiplier for smart-city (slider 0.6..2.6 in the right panel)
+    ambient: 2.0,        // SCENE AMBIENT/fill-light multiplier for smart-city (slider 0.6..3.2 in the right panel)
     speed: 6.0,          // facade marquee scroll speed (columns / sec)
     tower: true, dome: true, bridge: true,   // landmark visibility toggles
     t: 0, scroll: 0,
@@ -4595,6 +4595,35 @@
       GND.add(pg);
       const lane = (i % 3 === 0) ? 60 : (148 + (i % 2 ? 19 : -19)); // plaza edge + both sidewalks of the inner avenue
       cityShow.peds.push({ grp: pg, r: lane, ph: fr2((i + 11) * 7.13) * Math.PI * 2, sp: 0.014 + fr2((i + 5) * 2.97) * 0.012, dir: (i % 2 ? 1 : -1), off: i * 0.7 });
+    }
+
+    // ---------- STREET LAMPS — warm glowing lamp posts EVERYWHERE (every avenue edge + a scatter across the whole
+    // ground) so the city reads as genuinely LIT at night. Each = a dark post + arm + a bright warm emissive bulb +
+    // a soft glow halo. A handful of REAL warm PointLights (bounded) co-located with the clusters cast actual fill
+    // light onto the nearby buildings/ground — the lamps make the scene bright, not just decorated. ----
+    const lampPostMat = new THREE.MeshStandardMaterial({ color: 0x1a2230, roughness: 0.6, metalness: 0.7 });
+    const postGeo = new THREE.CylinderGeometry(0.32, 0.5, 9, 6);
+    const armGeo  = new THREE.BoxGeometry(2.2, 0.3, 0.3);
+    const bulbGeo = (typeof THREE.SphereGeometry === 'function') ? new THREE.SphereGeometry(0.72, 8, 8) : new THREE.BoxGeometry(1.1, 1.1, 1.1);
+    const haloGeo = (typeof THREE.SphereGeometry === 'function') ? new THREE.SphereGeometry(2.4, 8, 8) : null;
+    const placeLamp = (x, z) => {
+      const lg = new THREE.Group(); lg.position.set(x, 0, z);
+      const post = new THREE.Mesh(postGeo, lampPostMat); post.position.y = 4.5; lg.add(post);
+      const arm  = new THREE.Mesh(armGeo, lampPostMat);  arm.position.set(0.85, 8.9, 0); lg.add(arm);
+      const bulb = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: 0xffe6b0, transparent: true, opacity: 0.97, blending: ADD, depthWrite: false })); bulb.position.set(1.85, 8.6, 0); lg.add(bulb);
+      if (haloGeo){ const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: 0xffd58a, transparent: true, opacity: 0.3, blending: ADD, depthWrite: false })); halo.position.copy(bulb.position); lg.add(halo); }
+      GND.add(lg);
+    };
+    for (const r of RINGS){ const n = Math.max(12, Math.round(r / 18));   // evenly spaced along each ring avenue
+      for (let i = 0; i < n; i++){ const a = (i / n) * Math.PI * 2; placeLamp(Math.cos(a) * (r + 7), Math.sin(a) * (r + 7)); } }
+    for (let i = 0; i < 52; i++){ const a = fr2((i + 21) * 4.13) * Math.PI * 2; const R = 70 + fr2((i + 21) * 9.7) * 280;
+      if (R < 124 && Math.abs(Math.sin(a) * R) < 34 && Math.abs(Math.cos(a) * R) < 95) continue;   // keep the hero wedge clear
+      placeLamp(Math.cos(a) * R, Math.sin(a) * R); }
+    // GENUINE warm fill — a small bounded set of PointLights over the avenues + landmarks (one-time shader recompile
+    // when smart-city first reveals; hidden with the group otherwise). Sized for soft falloff, not white-out.
+    if (typeof THREE.PointLight === 'function'){
+      const pls = [[0, 46, -30], [-74, 50, -6], [0, 34, -110], [150, 44, 10], [-150, 44, 40], [70, 46, 160], [-90, 44, -150]];
+      for (const p of pls){ const pl = new THREE.PointLight(0xffe2b4, 2.1, 260, 1.5); pl.position.set(p[0], p[1], p[2]); GND.add(pl); }
     }
 
     ledRebuildCols();
@@ -14877,7 +14906,7 @@
         '<div class="simctl"><label>🎨 Show palette <b id="led-theme-v"></b></label><select id="led-theme" aria-label="Light show colour palette">' +
           UAV_THEMES.map((t, i) => '<option value="' + i + '">' + t.name + '</option>').join('') + '</select></div>' +
         '<div class="simctl"><label>💡 LED brightness <b id="led-int-v"></b></label><input type="range" id="led-int" min="60" max="200" step="5" aria-label="Light show LED master brightness"></div>' +
-        '<div class="simctl"><label>☀️ Ambient light <b id="led-amb-v"></b></label><input type="range" id="led-amb" min="60" max="260" step="5" aria-label="Smart city ambient / scene fill-light level"></div>' +
+        '<div class="simctl"><label>☀️ Ambient light <b id="led-amb-v"></b></label><input type="range" id="led-amb" min="60" max="320" step="5" aria-label="Smart city ambient / scene fill-light level"></div>' +
         '<div class="simctl"><label>🏃 Marquee speed <b id="led-spd-v"></b></label><input type="range" id="led-spd" min="2" max="14" step="1" aria-label="Tower facade scroll speed"></div>' +
         '<div class="simctl simchk"><label class="chk"><input type="checkbox" id="led-twr"> 🏙️ Taipei 101</label>' +
           '<label class="chk"><input type="checkbox" id="led-dome"> 🔮 Vegas Sphere</label>' +
