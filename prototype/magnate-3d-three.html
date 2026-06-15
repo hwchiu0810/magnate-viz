@@ -11220,8 +11220,10 @@
     const cx = (xmin + xmax) / 2, span = (xmax - xmin) + 64;
     // polished concourse tiles under each node
     for (const p of mpos){ const zone = dioBox(13, 0.05, 11, 0x33384a, 0x14161f); zone.position.set(p.x, 0.42, p.z); g.add(zone); }
-    // support columns at the floor corners
-    for (const px of [xmin - 18, xmax + 18]) for (const pz of [-(zmax + 16), zmax + 16]){ const pil = dioBox(2.4, MALL_L2 + 14, 2.4, 0x3a4252, 0x141a22); pil.position.set(px, (MALL_L2 + 14) / 2, pz); g.add(pil); }
+    // support columns — taller, framing a wide-open soaring atrium (corners + mid-span pairs)
+    const PILH = MALL_L2 + 40;
+    for (const px of [xmin - 30, cx, xmax + 30]) for (const pz of [-(zmax + 30), zmax + 30]){ const pil = dioBox(3.0, PILH, 3.0, 0x3a4252, 0x141a22); pil.position.set(px, PILH / 2, pz); g.add(pil);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.0, 4.2), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD })); cap.position.set(px, PILH - 0.5, pz); g.add(cap); }
     // UPPER CONCOURSE mezzanine deck (the second level) — a balcony walkway around the back with a railing +
     // a row of upper storefront fascias in varied colours, so the mall reads as multi-level.
     const upZ = -(zmax + 10);
@@ -11232,9 +11234,13 @@
     for (let i = 0; i < 6; i++){ const ux = cx - (span - 30) / 2 + i * ((span - 30) / 5);
       const unit = dioBox(span / 9, 7, 8, 0x2a3344, 0x0e151f); unit.position.set(ux, MALL_L2 + 4.0, upZ - 3); g.add(unit);
       const fascia = new THREE.Mesh(new THREE.BoxGeometry(span / 9 - 1, 1.6, 0.5), new THREE.MeshBasicMaterial({ color: brightenHex(upHues[i % upHues.length], 0.42), transparent: true, opacity: 0.95 })); fascia.position.set(ux, MALL_L2 + 7.0, upZ + 1.1); g.add(fascia); }
-    // SKYLIGHT TRUSS ROOF (open lattice) over the concourse
-    const roofY = MALL_L2 + 18; for (const rz of [-(zmax + 4), 0, zmax + 4]){ const beam = dioBox(span, 0.5, 0.6, 0x46566c, 0x141c28); beam.position.set(cx, roofY, rz); g.add(beam); }
-    for (let i = 0; i <= 10; i++){ const xb = xmin - 16 + i * ((xmax - xmin + 32) / 10); const beam = dioBox(0.5, 0.5, (zmax + 4) * 2, 0x46566c, 0x141c28); beam.position.set(xb, roofY, 0); g.add(beam); }
+    // SOARING SKYLIGHT TRUSS ROOF (open lattice) high over the wide concourse + a bright central skylight OCULUS
+    const roofY = MALL_L2 + 38, roofHalf = zmax + 24;
+    for (const rz of [-roofHalf, -roofHalf / 2, 0, roofHalf / 2, roofHalf]){ const beam = dioBox(span + 40, 0.6, 0.7, 0x46566c, 0x141c28); beam.position.set(cx, roofY, rz); g.add(beam); }
+    for (let i = 0; i <= 16; i++){ const xb = xmin - 30 + i * ((xmax - xmin + 60) / 16); const beam = dioBox(0.6, 0.6, roofHalf * 2, 0x46566c, 0x141c28); beam.position.set(xb, roofY, 0); g.add(beam); }
+    // central skylight: a luminous glazed panel + a bright glow that washes daylight down into the open atrium
+    const skylight = new THREE.Mesh(new THREE.BoxGeometry(span * 0.42, 0.4, roofHalf * 1.1), new THREE.MeshBasicMaterial({ color: 0xcfeaff, transparent: true, opacity: 0.6, depthWrite: false, blending: FLOW_ADD })); skylight.position.set(cx, roofY - 0.6, 0); g.add(skylight);
+    if (typeof THREE.PointLight === 'function'){ const sky = new THREE.PointLight(0xdff0ff, 0.95, 700, 2); sky.position.set(cx, roofY - 6, 0); g.add(sky); }
     // PLANTERS + BENCHES lining the concourse centre line
     const greens = [];
     for (let i = 0; i < mpos.length + 2; i++){ const px = xmin - 8 + i * ((xmax - xmin + 16) / (mpos.length + 1)); const pz = (i % 2 === 0) ? -2 : 2;
@@ -11252,10 +11258,10 @@
   function buildMallScene(section){
     const g = buildSceneRoot(section);
     g.add(labelSpriteSafe('🛍 Shopping Mall · Retail-Operations Twin — entrances · concourse/anchor stores · food court · checkouts · exit', '#cfe0ff', 22, 0, 80, 0));
-    const floor = dioBox(330, 0.5, 200, 0x2b3142, 0x12161f); floor.position.y = 0.15; g.add(floor);
-    g.add(new THREE.HemisphereLight(0xeef3ff, 0x202838, 0.9));
-    const pl = new THREE.PointLight(0xeaf2ff, 0.6, 980, 2); pl.position.set(0, 175, 40); g.add(pl);
-    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(330, 66, 0x4a5a82, 0x303c56); grid.position.y = 0.4;
+    const floor = dioBox(384, 0.5, 232, 0x2b3142, 0x12161f); floor.position.y = 0.15; g.add(floor);
+    g.add(new THREE.HemisphereLight(0xeef3ff, 0x202838, 1.05));
+    const pl = new THREE.PointLight(0xeaf2ff, 0.7, 1100, 2); pl.position.set(0, 200, 40); g.add(pl);
+    if (typeof THREE.GridHelper === 'function'){ try { const grid = new THREE.GridHelper(384, 76, 0x4a5a82, 0x303c56); grid.position.y = 0.4;
       const ms = grid.material ? (Array.isArray(grid.material) ? grid.material : [grid.material]) : []; ms.forEach((m) => { if (m){ m.transparent = true; m.opacity = 0.18; m.depthWrite = false; } }); g.add(grid); } catch(_){} }
     const C = MALL_OPS, beltTop = 3.0, fr = (v) => v - Math.floor(v);
     // NODE GRAPH: 2 ENTRANCES (sources) → 3 ANCHOR/concourse stores (browse — one on the UPPER level via escalator)
@@ -11330,8 +11336,9 @@
       stations.push(nd); mi++; }
     const env = mallBuildEnv(g, stations.map((m) => ({ x: m.x, z: m.z })), beltTop);
     // POLISHED CONCOURSE FLOOR runner (light marble) down the centre so it reads as an indoor mall, not a dark plant
-    { const floorRun = dioBox(252, 0.2, 80, 0x4a5570, 0x20283a); floorRun.position.set(2, 0.36, 0); g.add(floorRun);
-      const inlay = dioBox(244, 0.22, 8, 0x5e6c8e, 0x262f44); inlay.position.set(2, 0.4, 0); g.add(inlay); }
+    { const floorRun = dioBox(392, 0.2, 140, 0x4a5570, 0x20283a); floorRun.position.set(2, 0.36, 0); g.add(floorRun);
+      const inlay = dioBox(384, 0.22, 12, 0x5e6c8e, 0x262f44); inlay.position.set(2, 0.4, 0); g.add(inlay);
+      const inlay2 = dioBox(12, 0.22, 132, 0x5e6c8e, 0x262f44); inlay2.position.set(2, 0.4, 0); g.add(inlay2); }   // cross-axis inlay → grand plaza feel
     // DENSE STOREFRONT STREET — two long rows of shop facades framing the concourse (perimeter, clear of the flow
     // nodes which sit within z=±36). Glass fronts + awnings + signage + interior racks → reads as a shopping street.
     const SHOP_HUE = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a, 0x49e0ff, 0xffd35a, 0x9ae06e, 0xff7a5a];
@@ -11347,12 +11354,28 @@
     // (browsing → cart → bagged) instead of OEE workpieces.
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
       parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1, morph: MALL_PART }); }
-    const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 62, 0); g.add(dashA);
-    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 56, 0); g.add(dashB);
+    // RANDOM-WALK SHOPPERS — a crowd of free-wandering pedestrians strolling the wide-open concourse (independent of
+    // the flow engine): each drifts with a slow seeded heading-wander + walk-bob and bounces off the floor bounds.
+    const WALKC = [0xd8c8a8, 0x9ab8d0, 0xc89898, 0x98c8a8, 0xb0a0d8, 0xe0b890, 0xa8c0e0, 0xd0a8b8];
+    const walkBounds = { minx: -150, maxx: 110, minz: -44, maxz: 44 };
+    const walkers = [];
+    const headG = (typeof THREE.SphereGeometry === 'function') ? new THREE.SphereGeometry(0.5, 8, 8) : new THREE.BoxGeometry(0.8, 0.8, 0.8);
+    for (let k = 0; k < 60; k++){
+      const wg = new THREE.Group(); const hue = WALKC[k % WALKC.length];
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 2.8, 6), new THREE.MeshStandardMaterial({ color: hue, roughness: 0.7, metalness: 0.1 })); body.position.y = 1.8; wg.add(body);
+      const head = new THREE.Mesh(headG, new THREE.MeshStandardMaterial({ color: 0xe0c2a8, roughness: 0.8, metalness: 0 })); head.position.y = 3.6; wg.add(head);
+      const fr = (n) => flowFrac(Math.sin(n) * 43758.5453);
+      const wx = walkBounds.minx + fr((k + 1) * 12.9898) * (walkBounds.maxx - walkBounds.minx);
+      const wz = walkBounds.minz + fr((k + 1) * 78.233) * (walkBounds.maxz - walkBounds.minz);
+      wg.position.set(wx, 0.6, wz); g.add(wg);
+      walkers.push({ grp: wg, x: wx, z: wz, ang: fr((k + 1) * 5.31) * Math.PI * 2, sp: 0.05 + fr((k + 1) * 3.17) * 0.06, ph: fr((k + 1) * 9.7) * Math.PI * 2 });
+    }
+    const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 78, 0); g.add(dashA);
+    const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 72, 0); g.add(dashB);
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
     let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
     const tills = stations.filter((m) => m.type === 'till');
-    sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, beltTop, env, tills,
+    sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, beltTop, env, tills, walkers, walkBounds,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
       perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 1), noBuyFrac: qn ? qf / qn : 0.2, qcFail: qn ? qf / qn : 0.2,
       count: new Array(MALL_PART.length).fill(0), val: new Array(MALL_PART.length).fill(0),
@@ -11417,6 +11440,16 @@
     // ENVIRONMENT motion: foliage sway, fountain jet bob
     if (st.env){ if (st.env.greens) for (let i = 0; i < st.env.greens.length; i++){ const f = st.env.greens[i]; f.rotation.y = Math.sin(T * 0.4 + i) * 0.12; }
       if (st.env.jet){ st.env.jet.scale.y = 1 + 0.18 * Math.sin(T * 3.0); st.env.jet.material.opacity = 0.3 + 0.12 * (0.5 + 0.5 * Math.sin(T * 3.0)); } }
+    // RANDOM-WALK SHOPPERS: each wanderer drifts its heading (seeded slow turn), steps forward, bounces off the
+    // concourse bounds, and bobs as it walks. Deterministic (accumulated phase + seeded per-walker offset; no RNG).
+    if (st.walkers && st.walkBounds){ const wb = st.walkBounds;
+      for (let i = 0; i < st.walkers.length; i++){ const w = st.walkers[i];
+        w.ang += Math.sin(T * 0.6 + w.ph) * dt * 1.1;                     // gentle meander (no fixed path)
+        w.x += Math.cos(w.ang) * w.sp * dt * 16; w.z += Math.sin(w.ang) * w.sp * dt * 16;
+        if (w.x < wb.minx){ w.x = wb.minx; w.ang = Math.PI - w.ang; } else if (w.x > wb.maxx){ w.x = wb.maxx; w.ang = Math.PI - w.ang; }
+        if (w.z < wb.minz){ w.z = wb.minz; w.ang = -w.ang; } else if (w.z > wb.maxz){ w.z = wb.maxz; w.ang = -w.ang; }
+        const bob = Math.abs(Math.sin(T * 5 + w.ph)) * 0.2;
+        w.grp.position.set(w.x, 0.6 + bob, w.z); if (w.grp.rotation) w.grp.rotation.y = -w.ang + Math.PI / 2; } }
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
       // KPIs: Footfall (visitors/min from the spawn EMA), Occupancy (shoppers in the mall / capacity), Avg queue
       // (mean checkout-line length), Checkout utilisation (running tills / open tills), Conversion % (bought / footfall).
@@ -14298,8 +14331,8 @@
     // rotate-to flourish runs as controls.autoRotate (frame loop disables it under reduced-motion).
     if (useOrbit && controls){
       const isSF = (section === 'smart-factory' || section === 'warehouse' || section === 'shopping-mall');
-      const dist = (section === 'warehouse') ? 300 : (section === 'shopping-mall') ? 235 : (isSF ? 290 : (section === 'erp') ? 230 : (section === 'crm') ? 240 : stageCam.dist);   // the multi-bay DC is broad; the mall reads better closer; the plant is tall; the O2C + sales-pipeline lines are wide
-      const pivotY = stageCam.pivot.y + (isSF ? 16 : (section === 'shopping-mall') ? 10 : (section === 'erp') ? 6 : (section === 'crm') ? 4 : 0);   // raise the look-at so the tall racks/floors/concourse/desks frame
+      const dist = (section === 'warehouse') ? 300 : (section === 'shopping-mall') ? 262 : (isSF ? 290 : (section === 'erp') ? 230 : (section === 'crm') ? 240 : stageCam.dist);   // the multi-bay DC is broad; the mall is a wide-open atrium; the plant is tall; the O2C + sales-pipeline lines are wide
+      const pivotY = stageCam.pivot.y + (isSF ? 16 : (section === 'shopping-mall') ? 14 : (section === 'erp') ? 6 : (section === 'crm') ? 4 : 0);   // raise the look-at so the tall racks/floors/soaring concourse/desks frame
       const polar = (section === 'warehouse') ? 0.72 : (section === 'shopping-mall') ? 0.92 : (section === 'erp') ? 0.88 : (section === 'crm') ? 0.86 : ORBIT_DEFAULT.polar;   // mall = lower/eye-level 3-4 angle to read the storefronts; warehouse top-down; erp + crm slightly raised
       orbitTo(stageCam.pivot.x, pivotY, stageCam.pivot.z, dist, polar, sectionToYaw);
       controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
