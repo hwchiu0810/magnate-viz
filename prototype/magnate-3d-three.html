@@ -11228,7 +11228,10 @@
     // through) covering the footprint EXCEPT a central rectangular ATRIUM HOLLOW left open for the UP/DOWN
     // escalators (and to see the ground floor below). Balustrades ring the hollow; upper storefronts line it. =====
     const DX0 = xmin - 12, DX1 = xmax + 12, DZ = zmax + 12;          // second-floor footprint
-    const HX0 = cx - 26, HX1 = cx + 26, HZ0 = -16, HZ1 = 16;         // the atrium hollow (escalator well)
+    // the atrium hollow is positioned over the EXISTING entrance→A0 escalators (the upper anchor A0 is at (-64,0),
+    // fed by inclined escalators rising from both entrances at z≈±22) so the deck opens exactly where they rise and
+    // shoppers ride them L1↔L2. A0 lands on the right-wing deck just east of the opening.
+    const HX0 = -104, HX1 = -68, HZ0 = -26, HZ1 = 26;
     const deckStrip = (x0, x1, z0, z1) => { const w = x1 - x0, d = z1 - z0; if (w <= 0 || d <= 0) return;
       const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, d), new THREE.MeshStandardMaterial({ color: 0x3a4560, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.14, roughness: 0.5, metalness: 0.4, transparent: true, opacity: 0.9 }));
       s.position.set((x0 + x1) / 2, MALL_L2, (z0 + z1) / 2); g.add(s); };
@@ -11245,16 +11248,7 @@
       const glass = new THREE.Mesh(new THREE.BoxGeometry(len, 1.4, 0.18), new THREE.MeshStandardMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.22, metalness: 0.5, roughness: 0.2 })); glass.position.set((x0 + x1) / 2, MALL_L2 + 1.1, (z0 + z1) / 2); glass.rotation.y = -ang; g.add(glass);
       const hr = new THREE.Mesh(new THREE.BoxGeometry(len, 0.4, 0.5), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.95, depthWrite: false, blending: FLOW_ADD })); hr.position.set((x0 + x1) / 2, MALL_L2 + 1.9, (z0 + z1) / 2); hr.rotation.y = -ang; g.add(hr); };
     railSeg(HX0, HZ0, HX1, HZ0); railSeg(HX0, HZ1, HX1, HZ1); railSeg(HX0, HZ0, HX0, HZ1); railSeg(HX1, HZ0, HX1, HZ1);
-    // UP / DOWN ESCALATORS rising through the hollow from L1 (beltTop) to the back edge of L2
-    const escalator = (ex, dir) => { const z0 = HZ1 - 2, z1 = HZ0 + 2, y0 = beltTop, y1 = MALL_L2, len3 = Math.hypot(z1 - z0, y1 - y0);
-      const rx = -Math.atan2(y1 - y0, z0 - z1), midY = (y0 + y1) / 2, midZ = (z0 + z1) / 2;
-      const ramp = new THREE.Mesh(new THREE.BoxGeometry(7, 0.5, len3), new THREE.MeshStandardMaterial({ color: 0x46566c, emissive: new THREE.Color(0x141c28), emissiveIntensity: 0.2, roughness: 0.5, metalness: 0.5 })); ramp.position.set(ex, midY, midZ); ramp.rotation.x = rx; g.add(ramp);
-      const steps = Math.max(8, Math.round(len3 / 2.2));
-      for (let k = 0; k < steps; k++){ const t = (k + 0.5) / steps; const tr = dioBox(6, 0.5, 1.4, 0x55607a, 0x141c28); tr.position.set(ex, y0 + (y1 - y0) * t + 0.4, z0 + (z1 - z0) * t); tr.rotation.x = rx; g.add(tr); }
-      for (const off of [-3.6, 3.6]){ const rl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.4, len3), new THREE.MeshStandardMaterial({ color: 0x8a98ac, roughness: 0.4, metalness: 0.5 })); rl.position.set(ex + off, midY + 1.0, midZ); rl.rotation.x = rx; g.add(rl);
-        const hr = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, len3), new THREE.MeshBasicMaterial({ color: dir > 0 ? 0x6ee07a : 0xff9a3a, transparent: true, opacity: 0.85, depthWrite: false, blending: FLOW_ADD })); hr.position.set(ex + off, midY + 1.8, midZ); hr.rotation.x = rx; g.add(hr); }
-      try { g.add(labelSpriteSafe(dir > 0 ? '▲ UP' : '▼ DOWN', dir > 0 ? '#8ff0a0' : '#ffc080', 8, ex, MALL_L2 + 3.5, z1)); } catch(_){} };
-    escalator(cx - 8, 1); escalator(cx + 8, -1);
+    // (the EXISTING entrance→A0 escalators rise through this opening — no separate escalator is added)
     // UPPER-LEVEL STOREFRONTS lining the back + front bands of the second floor (facing the atrium hollow)
     const upHues = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a];
     const upShop = (sx, sz, faceZ, hue) => { const unit = dioBox(20, 7, 9, 0x2a3344, 0x0e151f); unit.position.set(sx, MALL_L2 + 4.2, sz); g.add(unit);
