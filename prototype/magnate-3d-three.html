@@ -11213,6 +11213,73 @@
   // mall ENVIRONMENT: the concourse floor, support columns, an UPPER CONCOURSE mezzanine deck with a railing +
   // upper storefront fascias, a skylight truss roof, planters + benches lining the concourse, and a feature
   // fountain at the centre. The escalators are built as incline conveyor segments by the scene (reused ramp idea).
+  // ---- MALL MERCHANDISE: each store sells a DIFFERENT category, rendered with characteristic goods. Module-level
+  //      so both the ground storefronts and the upper-level shops share it. (sxc,sz)=shop centre; baseY=floor height;
+  //      inZ=unit direction from the front toward the back wall; shopW=interior width; cat=category; seed=variation. ----
+  const MALL_CATS = ['fashion', 'shoes', 'electronics', 'books', 'grocery', 'toys', 'sports', 'cafe', 'jewelry', 'home'];
+  const MALL_CAT_HUE = { fashion: 0xff6f91, shoes: 0xffb13b, electronics: 0x4d9bff, books: 0x6ee07a, grocery: 0x9ae06e, toys: 0xff7a5a, sports: 0x36e0e0, cafe: 0xe0a060, jewelry: 0xb86bff, home: 0x5ad1c8 };
+  const MALL_PAL = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a, 0x49e0ff, 0xffd35a, 0x9ae06e, 0xff7a5a];
+  function mallStock(g, sxc, sz, baseY, inZ, shopW, cat, seed){
+    if (typeof THREE === 'undefined') return;
+    const HW = shopW / 2 - 1.8;
+    const shelfZ = sz + inZ * 3.4, midZ = sz + inZ * 0.4, frontZ = sz - inZ * 1.6, backZ = sz + inZ * 3.9;
+    const ph = (n) => MALL_PAL[(((seed + n) % MALL_PAL.length) + MALL_PAL.length) % MALL_PAL.length];
+    const sf = (n) => flowFrac(Math.sin((seed * 9.7 + n) * 12.9898) * 43758.5453);
+    const sm = (h, ro) => new THREE.MeshStandardMaterial({ color: brightenHex(h, 0.16), roughness: ro == null ? 0.62 : ro, metalness: 0.15 });
+    const em = (h, op) => new THREE.MeshBasicMaterial({ color: brightenHex(h, 0.42), transparent: true, opacity: op == null ? 0.9 : op });
+    const box = (w, hh, d, x, y, z, m) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, hh, d), m); b.position.set(x, baseY + y, z); g.add(b); return b; };
+    const cyl = (rt, rb, hh, x, y, z, m) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, hh, 9), m); c.position.set(x, baseY + y, z); g.add(c); return c; };
+    const sph = (r, x, y, z, m) => { const s = new THREE.Mesh(new THREE.SphereGeometry(r, 9, 7), m); s.position.set(x, baseY + y, z); g.add(s); return s; };
+    const cone = (r, hh, x, y, z, m) => { const c = new THREE.Mesh(new THREE.ConeGeometry(r, hh, 8), m); c.position.set(x, baseY + y, z); g.add(c); return c; };
+    const colAt = (c, NC) => sxc - HW + 0.6 + c * ((2 * HW - 1.2) / Math.max(1, NC - 1));
+    const boards = (rows) => { for (let r = 0; r < rows; r++) box(shopW - 4, 0.18, 1.0, sxc, 1.7 + r * 1.9 - 0.5, shelfZ, sm(0x4a5268, 0.8)); };
+    if (cat === 'fashion'){
+      box(shopW - 8, 0.2, 0.2, sxc, 4.0, midZ, sm(0x8a98ac, 0.4));
+      for (let h = 0; h < 8; h++) box(0.7, 2.1, 0.34, colAt(h, 8), 2.9, midZ, sm(ph(h), 0.78));
+      for (let t = 0; t < 2; t++){ const tx = sxc - 4 + t * 8; box(4.0, 1.1, 1.8, tx, 0.95, frontZ, sm(0x3a4252));
+        for (let s2 = 0; s2 < 3; s2++) box(1.0, 0.5, 1.0, tx - 1 + s2, 1.75, frontZ, sm(ph(t + s2 + 1), 0.8)); }
+      cyl(0.5, 0.62, 2.2, sxc + HW - 1, 1.5, frontZ, sm(0xd8c2a8, 0.5)); sph(0.42, sxc + HW - 1, 2.9, frontZ, sm(0xd8c2a8, 0.7));
+    } else if (cat === 'shoes'){
+      boards(3);
+      for (let r = 0; r < 3; r++){ const sy = 1.7 + r * 1.9; for (let c = 0; c < 7; c++) box(1.3, 0.7, 0.9, colAt(c, 7), sy, shelfZ, sm(ph(r + c), 0.7)); }
+      for (let t = 0; t < 4; t++){ const tx = sxc - HW + 1.5 + t * ((2 * HW - 3) / 3); box(1.5, 0.4, 0.8, tx, 1.0, frontZ, sm(0x3a4252)); const sh = box(1.2, 0.4, 0.6, tx, 1.45, frontZ, sm(ph(t + 2), 0.5)); sh.rotation.x = 0.3 * inZ; }
+    } else if (cat === 'electronics'){
+      for (let r = 0; r < 2; r++){ const sy = 2.5 + r * 2.3; for (let c = 0; c < 4; c++){ const sx2 = sxc - HW + 1.5 + c * ((2 * HW - 3) / 3);
+        box(2.6, 1.7, 0.25, sx2, sy, backZ, sm(0x10151c, 0.4)); box(2.3, 1.45, 0.06, sx2, sy, backZ - inZ * 0.14, em([0x6ad0ff, 0xff6f91, 0x6ee07a, 0xffd35a][(r * 4 + c) % 4], 0.62)); } }
+      for (let t = 0; t < 3; t++){ const tx = sxc - 5 + t * 5; box(3.2, 1.0, 1.6, tx, 0.9, frontZ, sm(0x2a3344)); box(1.6, 0.08, 0.95, tx, 1.5, frontZ, em(0x9fd6ff, 0.7)); box(0.5, 0.95, 0.1, tx + 1, 1.6, frontZ, sm(0x20242c)); }
+    } else if (cat === 'books'){
+      boards(3);
+      for (let r = 0; r < 3; r++){ const sy = 1.7 + r * 1.9; const N = 13; for (let c = 0; c < N; c++) box(0.34, 1.2 + sf(r * 20 + c) * 0.5, 0.7, sxc - HW + 0.4 + c * ((2 * HW - 0.8) / (N - 1)), sy, shelfZ, sm(ph(r * 3 + c), 0.85)); }
+      box(4, 1.0, 2.4, sxc, 0.9, frontZ, sm(0x3a4252));
+    } else if (cat === 'grocery'){
+      boards(3);
+      for (let r = 0; r < 3; r++){ const sy = 1.7 + r * 1.9; const N = 9; for (let c = 0; c < N; c++){ const sx2 = sxc - HW + 0.8 + c * ((2 * HW - 1.6) / (N - 1));
+        if ((r + c) % 2) cyl(0.32, 0.32, 0.95, sx2, sy, shelfZ, sm(ph(r + c), 0.6)); else cyl(0.24, 0.3, 1.25, sx2, sy + 0.15, shelfZ, sm(ph(r + c + 3), 0.4)); } }
+      box(3.0, 1.0, 2.0, sxc - HW + 2, 0.7, frontZ, sm(0x3a4252)); for (let p = 0; p < 7; p++) sph(0.42, sxc - HW + 1 + (p % 4) * 1.0, 1.45 + (p < 4 ? 0 : 0.45), frontZ + (p % 2 ? 0.4 : -0.4), sm([0xff7a3a, 0x6ee07a, 0xffd35a][p % 3], 0.7));
+    } else if (cat === 'toys'){
+      boards(3);
+      for (let r = 0; r < 3; r++){ const sy = 1.7 + r * 1.9; for (let c = 0; c < 6; c++){ const sx2 = colAt(c, 6), k = (r + c) % 3, h2 = ph(r + c);
+        if (k === 0) sph(0.6, sx2, sy, shelfZ, sm(h2, 0.6)); else if (k === 1) box(1.0, 1.0, 0.8, sx2, sy, shelfZ, sm(h2, 0.6)); else cone(0.6, 1.2, sx2, sy, shelfZ, sm(h2, 0.6)); } }
+      box(3.2, 1.1, 2.2, sxc, 0.75, frontZ, sm(0x3a4252)); for (let p = 0; p < 8; p++) sph(0.45, sxc - 2.4 + (p % 4) * 1.6, 1.4 + (p < 4 ? 0 : 0.5), frontZ + (p % 2 ? 0.5 : -0.5), sm(ph(p), 0.6));
+    } else if (cat === 'sports'){
+      for (let r = 0; r < 2; r++){ const sy = 2.0 + r * 2.0; box(shopW - 4, 0.18, 1.0, sxc, sy - 0.5, shelfZ, sm(0x4a5268, 0.8)); for (let c = 0; c < 7; c++) sph(0.5, colAt(c, 7), sy + 0.5, shelfZ, sm(ph(r + c), 0.5)); }
+      for (let q = 0; q < 5; q++) cyl(0.13, 0.13, 3.2, sxc - HW + 1 + q * ((2 * HW - 2) / 4), 1.8, midZ, sm(ph(q), 0.4));
+      box(2.0, 2.6, 0.2, sxc, 2.2, backZ, sm(ph(0), 0.7));
+    } else if (cat === 'cafe'){
+      box(shopW - 5, 1.3, 1.5, sxc, 1.0, backZ, sm(0x5a4636)); box(1.0, 1.0, 0.8, sxc - 2, 2.1, backZ, sm(0x9aa6b6, 0.4)); box(0.6, 0.8, 0.6, sxc - 2, 2.95, backZ, sm(0xcfd8e0, 0.3));
+      box(3.0, 1.0, 1.2, sxc + 3, 1.7, backZ, em(0x9fd6ff, 0.25)); for (let p = 0; p < 4; p++) box(0.5, 0.35, 0.5, sxc + 1.8 + p * 0.8, 1.95, backZ, sm([0xffd35a, 0xff9a3a, 0x8a5a36][p % 3], 0.6));
+      for (let t = 0; t < 2; t++){ const tx = sxc - 3.5 + t * 7; cyl(1.0, 1.0, 1.0, tx, 0.6, frontZ, sm(0x6a5640)); cyl(0.95, 0.95, 0.12, tx, 1.15, frontZ, sm(0x8a7050)); for (const ch of [-1, 1]) cyl(0.4, 0.4, 1.0, tx + ch * 1.7, 0.55, frontZ, sm(0x3a4252)); }
+    } else if (cat === 'jewelry'){
+      for (let t = 0; t < 3; t++){ const tx = sxc - 5 + t * 5; box(3.6, 1.0, 1.6, tx, 0.95, frontZ, em(0x9fd6ff, 0.22)); box(3.4, 0.6, 1.4, tx, 1.45, frontZ, sm(0x10151c, 0.3));
+        for (let s2 = 0; s2 < 3; s2++) sph(0.18, tx - 1 + s2, 1.85, frontZ, em([0xfff0a0, 0x9fe8ff, 0xff9fd0][s2 % 3], 0.95)); }
+      boards(2); for (let r = 0; r < 2; r++){ const sy = 1.7 + r * 1.9; for (let c = 0; c < 6; c++) sph(0.22, colAt(c, 6), sy, shelfZ, em(ph(r + c), 0.85)); }
+      box(1.6, 3.0, 0.1, sxc + HW - 1, 2.2, backZ, em(0xcfe0f0, 0.3));
+    } else { // home
+      box(5.0, 1.4, 2.2, sxc - 3, 0.9, frontZ, sm(ph(0), 0.7)); box(5.0, 0.9, 0.6, sxc - 3, 1.95, frontZ - inZ * 0.8, sm(ph(0), 0.7));
+      cyl(0.13, 0.16, 3.0, sxc + 4.5, 1.5, frontZ, sm(0x8a98ac, 0.4)); sph(0.7, sxc + 4.5, 3.2, frontZ, em(0xffe9b0, 0.7));
+      boards(3); for (let r = 0; r < 3; r++){ const sy = 1.7 + r * 1.9; for (let c = 0; c < 6; c++){ const sx2 = colAt(c, 6); if ((r + c) % 2) cyl(0.35, 0.45, 1.0, sx2, sy, shelfZ, sm(ph(r + c), 0.5)); else box(0.9, 0.9, 0.8, sx2, sy, shelfZ, sm(ph(r + c + 2), 0.6)); } }
+    }
+  }
   function mallBuildEnv(g, mpos, beltTop){
     let xmin = 1e9, xmax = -1e9, zmax = 1;
     for (const p of mpos){ if (p.x < xmin) xmin = p.x; if (p.x > xmax) xmax = p.x; zmax = Math.max(zmax, Math.abs(p.z)); }
@@ -11259,7 +11326,8 @@
     }
     // UPPER-LEVEL STOREFRONTS lining the back + front bands of the second floor (facing the atrium hollow)
     const upHues = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a];
-    const upShop = (sx, sz, faceZ, hue) => {
+    const upShop = (sx, sz, faceZ, cat, seed) => {
+      const hue = MALL_CAT_HUE[cat] || upHues[seed % upHues.length];
       // open shell (back wall + side walls + ceiling) instead of a SOLID block — so the merchandise inside is VISIBLE
       const backW = dioBox(20, 7, 0.8, 0x2a3344, 0x0e151f); backW.position.set(sx, MALL_L2 + 4.2, sz - faceZ * 4.3); g.add(backW);
       for (const sgn of [-1, 1]){ const sw = dioBox(0.8, 7, 9, 0x262e3c, 0x0c1018); sw.position.set(sx + sgn * 10, MALL_L2 + 4.2, sz); g.add(sw); }
@@ -11270,18 +11338,11 @@
         const pane = new THREE.Mesh(new THREE.BoxGeometry(paneW, 4.4, 0.25), new THREE.MeshStandardMaterial({ color: brightenHex(hue, 0.08), transparent: true, opacity: 0.3, metalness: 0.5, roughness: 0.2 })); pane.position.set(gx, MALL_L2 + 3.4, fz); g.add(pane);
         const post = dioBox(0.45, 5.4, 0.6, brightenHex(hue, 0.2), 0x141a22); post.position.set(sx + sgn * doorW / 2, MALL_L2 + 3.0, fz); g.add(post); }
       const spill = new THREE.Mesh(new THREE.BoxGeometry(doorW, 0.1, 2.6), new THREE.MeshBasicMaterial({ color: 0xffe9c0, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD })); spill.position.set(sx, baseY, fz + faceZ * 1.3); g.add(spill);
-      // goods: a display table with product stacks + a back garment rail
-      const table = dioBox(8, 1.4, 1.6, 0x3a4252, 0x141a22); table.position.set(sx, MALL_L2 + 1.05, sz + faceZ * 1.4); g.add(table);
-      for (let p = 0; p < 4; p++){ const prod = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.9), new THREE.MeshStandardMaterial({ color: brightenHex(upHues[(p + 1) % upHues.length], 0.2), roughness: 0.6 })); prod.position.set(sx - 3 + p * 2, MALL_L2 + 2.15, sz + faceZ * 1.4); g.add(prod); }
-      const rail = dioBox(14, 0.2, 0.2, 0x8a98ac, 0x1a2430); rail.position.set(sx, MALL_L2 + 3.9, sz - faceZ * 2.6); g.add(rail);
-      for (let h = 0; h < 6; h++){ const garm = new THREE.Mesh(new THREE.BoxGeometry(0.8, 2.0, 0.35), new THREE.MeshStandardMaterial({ color: brightenHex(upHues[(h + 2) % upHues.length], 0.18), roughness: 0.75 })); garm.position.set(sx - 7 + h * 2.8, MALL_L2 + 2.8, sz - faceZ * 2.6); g.add(garm); }
-      // BACK SHELF WALL — 2 shelves × 6 stocked products against the rear
-      for (let rrow = 0; rrow < 2; rrow++){ const sy = MALL_L2 + 1.7 + rrow * 1.9;
-        const board = dioBox(15, 0.18, 1.0, 0x4a5268, 0x161c26); board.position.set(sx, sy - 0.5, sz - faceZ * 3.4); g.add(board);
-        for (let c = 0; c < 6; c++){ const prod = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.1, 0.7), new THREE.MeshStandardMaterial({ color: brightenHex(upHues[(rrow * 2 + c) % upHues.length], 0.2), roughness: 0.65 })); prod.position.set(sx - 6.5 + c * 2.6, sy, sz - faceZ * 3.4); g.add(prod); } } };
+      mallStock(g, sx, sz, MALL_L2, -faceZ, 18, cat, seed);   // category-specific merchandise (inZ = -faceZ → toward the back wall)
+    };
     for (let i = 0; i < 7; i++){ const sx = DX0 + 22 + i * ((DX1 - DX0 - 44) / 6);
-      upShop(sx, -DZ + 6, +1, upHues[i % upHues.length]);
-      upShop(sx, DZ - 6, -1, upHues[(i + 4) % upHues.length]); }
+      upShop(sx, -DZ + 6, +1, MALL_CATS[(i * 2) % MALL_CATS.length], i + 1);
+      upShop(sx, DZ - 6, -1, MALL_CATS[(i * 2 + 1) % MALL_CATS.length], i + 11); }
     const L2 = { DX0, DX1, DZ, hzMin: HZMIN, hzMax: HZMAX, y: MALL_L2 };   // bounds for the upper-level random walkers
     // SOARING SKYLIGHT TRUSS ROOF (open lattice) high over the wide concourse + a bright central skylight OCULUS
     const roofY = MALL_L2 + 38, roofHalf = zmax + 24;
@@ -11395,7 +11456,7 @@
     // nodes which sit within z=±36). Glass fronts + awnings + signage + interior racks → reads as a shopping street.
     const SHOP_HUE = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a, 0x49e0ff, 0xffd35a, 0x9ae06e, 0xff7a5a];
     const NSHOP = 12, sx0 = -112, sxs = 19;
-    for (const side of [-1, 1]) for (let i = 0; i < NSHOP; i++){ const sxc = sx0 + i * sxs, sz = side * 46, hue = SHOP_HUE[(i + (side < 0 ? 0 : 6)) % SHOP_HUE.length];
+    for (const side of [-1, 1]) for (let i = 0; i < NSHOP; i++){ const sxc = sx0 + i * sxs, sz = side * 46, cat = MALL_CATS[(i * 2 + (side < 0 ? 0 : 1)) % MALL_CATS.length], hue = MALL_CAT_HUE[cat];
       // back wall pushed deep + thin side walls → a real, visible interior to stock
       const wall = dioBox(sxs - 1.5, 9.5, 4, 0x2a3344, 0x0e151f); wall.position.set(sxc, 4.9, sz + side * 4); g.add(wall);
       for (const sgn of [-1, 1]){ const sw = dioBox(0.8, 9.5, 11, 0x262e3c, 0x0c1018); sw.position.set(sxc + sgn * (sxs - 1.5) / 2, 4.9, sz + side * 0.6); g.add(sw); }
@@ -11410,25 +11471,8 @@
       const spill = new THREE.Mesh(new THREE.BoxGeometry(doorW, 0.1, 3.4), new THREE.MeshBasicMaterial({ color: 0xffe9c0, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD })); spill.position.set(sxc, 0.46, frontZ + side * 1.6); g.add(spill);
       const awning = new THREE.Mesh(new THREE.BoxGeometry(sxs - 1.5, 0.5, 2.4), new THREE.MeshStandardMaterial({ color: hue, roughness: 0.6 })); awning.position.set(sxc, 5.8, sz - side * 4.1); g.add(awning);
       const sign = new THREE.Mesh(new THREE.BoxGeometry(sxs - 5, 1.5, 0.3), new THREE.MeshBasicMaterial({ color: brightenHex(hue, 0.42), transparent: true, opacity: 0.95 })); sign.position.set(sxc, 7.7, sz - side * 5.0); g.add(sign);
-      // ===== WELL-STOCKED INTERIOR =====
-      // BACK SHELF WALL — 3 shelves × 6 stocked products (a fully merchandised wall)
-      const shW = sxs - 4, shZ = sz + side * 1.8;
-      for (let rrow = 0; rrow < 3; rrow++){ const sy = 1.8 + rrow * 1.95;
-        const board = dioBox(shW, 0.2, 1.1, 0x4a5268, 0x161c26); board.position.set(sxc, sy - 0.55, shZ); g.add(board);
-        for (let c = 0; c < 6; c++){ const px = sxc - shW / 2 + 1.2 + c * ((shW - 2.4) / 5);
-          const prod = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.25, 0.8), new THREE.MeshStandardMaterial({ color: brightenHex(SHOP_HUE[(i + rrow * 2 + c) % SHOP_HUE.length], 0.2), roughness: 0.65 })); prod.position.set(px, sy, shZ); g.add(prod); } }
-      // 2 DISPLAY TABLES, each with a row of 3 products
-      for (let r = 0; r < 2; r++){ const rxc = sxc - 4.5 + r * 9; const table = dioBox(4.2, 1.2, 2.0, 0x3a4252, 0x141a22); table.position.set(rxc, 1.0, sz - side * 1.0); g.add(table);
-        for (let p = 0; p < 3; p++){ const prod = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.7 + 0.4 * (p % 2), 0.85), new THREE.MeshStandardMaterial({ color: brightenHex(SHOP_HUE[(i + r + p) % SHOP_HUE.length], 0.22), roughness: 0.6 })); prod.position.set(rxc - 1.3 + p * 1.3, 1.95, sz - side * 1.0); g.add(prod); } }
-      // GARMENT RAIL — 6 hanging items (mid)
-      const rail = dioBox(sxs - 9, 0.22, 0.22, 0x8a98ac, 0x1a2430); rail.position.set(sxc, 4.2, sz + side * 0.4); g.add(rail);
-      for (let h = 0; h < 6; h++){ const garm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.1, 0.34), new THREE.MeshStandardMaterial({ color: brightenHex(SHOP_HUE[(i + h) % SHOP_HUE.length], 0.18), roughness: 0.75 })); garm.position.set(sxc - (sxs - 11) / 2 + h * ((sxs - 11) / 5), 3.0, sz + side * 0.4); g.add(garm); }
-      // FLOOR SALE BIN with a heap of products (front-left corner)
-      const bin = dioBox(2.8, 1.0, 2.0, brightenHex(hue, 0.02), 0x141a22); bin.position.set(sxc - 6.0, 0.7, sz - side * 2.4); g.add(bin);
-      for (let b = 0; b < 4; b++){ const it = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.7), new THREE.MeshStandardMaterial({ color: brightenHex(SHOP_HUE[(i + b + 4) % SHOP_HUE.length], 0.25), roughness: 0.6 })); it.position.set(sxc - 6.5 + (b % 2) * 1.0, 1.35 + (b < 2 ? 0 : 0.5), sz - side * 2.4 + ((b % 2) ? 0.5 : -0.5)); g.add(it); }
-      // mannequin (front-right corner)
-      const mqB = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.62, 2.2, 8), new THREE.MeshStandardMaterial({ color: brightenHex(hue, 0.25), roughness: 0.5 })); mqB.position.set(sxc + 6.0, 1.5, sz - side * 2.4); g.add(mqB);
-      const mqH = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd8c2a8, roughness: 0.7 })); mqH.position.set(sxc + 6.0, 2.95, sz - side * 2.4); g.add(mqH); }
+      // category-specific merchandise (inZ = side → toward the back wall)
+      mallStock(g, sxc, sz, 0, side, sxs - 1.5, cat, i + (side < 0 ? 0 : 17)); }
     // SHOPPER POOL — each part carries the MALL_PART morph table so the shared flow engine renders shoppers
     // (browsing → cart → bagged) instead of OEE workpieces.
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
