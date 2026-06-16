@@ -11249,10 +11249,12 @@
     deckStrip(8, DX1, -DZ, DZ);                    // east wing (the concourse + checkouts sit beneath)
     // per-hollow balustrade (kerb + frosted glass + glowing handrail) + a dark ground-floor well so each opening
     // reads as a void down to L1 (not blended with the bright deck).
+    // balustrade ≈ half a customer's height (shoppers stand ~4 units tall on the deck) so it actually guards the
+    // opening: a foot kerb + a tall frosted-glass panel (~2 high) + a glowing handrail capping it at ~deck+2.3.
     const railSeg = (x0, z0, x1, z1) => { const len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
       const kerb = dioBox(len + 0.6, 0.7, 0.7, 0x2a3344, 0x0e151f); kerb.position.set((x0 + x1) / 2, MALL_L2 + 0.5, (z0 + z1) / 2); kerb.rotation.y = -ang; g.add(kerb);
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(len, 1.4, 0.18), new THREE.MeshStandardMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.22, metalness: 0.5, roughness: 0.2 })); glass.position.set((x0 + x1) / 2, MALL_L2 + 1.1, (z0 + z1) / 2); glass.rotation.y = -ang; g.add(glass);
-      const hr = new THREE.Mesh(new THREE.BoxGeometry(len, 0.4, 0.5), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.95, depthWrite: false, blending: FLOW_ADD })); hr.position.set((x0 + x1) / 2, MALL_L2 + 1.9, (z0 + z1) / 2); hr.rotation.y = -ang; g.add(hr); };
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(len, 2.1, 0.18), new THREE.MeshStandardMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.22, metalness: 0.5, roughness: 0.2 })); glass.position.set((x0 + x1) / 2, MALL_L2 + 1.25, (z0 + z1) / 2); glass.rotation.y = -ang; g.add(glass);
+      const hr = new THREE.Mesh(new THREE.BoxGeometry(len, 0.4, 0.5), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.95, depthWrite: false, blending: FLOW_ADD })); hr.position.set((x0 + x1) / 2, MALL_L2 + 2.35, (z0 + z1) / 2); hr.rotation.y = -ang; g.add(hr); };
     for (const h of HOLES){
       const well = dioBox(h.x1 - h.x0, 0.3, h.z1 - h.z0, 0x12161f, 0x070a0e); well.position.set((h.x0 + h.x1) / 2, 0.55, (h.z0 + h.z1) / 2); g.add(well);
       railSeg(h.x0, h.z0, h.x1, h.z0); railSeg(h.x0, h.z1, h.x1, h.z1); railSeg(h.x0, h.z0, h.x0, h.z1); railSeg(h.x1, h.z0, h.x1, h.z1);
