@@ -11228,27 +11228,30 @@
     // through) covering the footprint EXCEPT a central rectangular ATRIUM HOLLOW left open for the UP/DOWN
     // escalators (and to see the ground floor below). Balustrades ring the hollow; upper storefronts line it. =====
     const DX0 = xmin - 12, DX1 = xmax + 12, DZ = zmax + 12;          // second-floor footprint
-    // the atrium hollow is positioned over the EXISTING entrance→A0 escalators (the upper anchor A0 is at (-64,0),
-    // fed by inclined escalators rising from both entrances at z≈±22) so the deck opens exactly where they rise and
-    // shoppers ride them L1↔L2. A0 lands on the right-wing deck just east of the opening.
-    const HX0 = -104, HX1 = -68, HZ0 = -26, HZ1 = 26;
-    const deckStrip = (x0, x1, z0, z1) => { const w = x1 - x0, d = z1 - z0; if (w <= 0 || d <= 0) return;
+    // TWO narrow atrium hollows — ONE PER entrance→A0 escalator (the −z escalator + the +z escalator), each sized to
+    // fit its escalator run; the deck stays solid between + around them. The escalators rise through these openings
+    // and land on the right-wing deck at the upper anchor A0 (x≈−64), so shoppers ride them L1↔L2.
+    const MX0 = -98, MX1 = -68;                                      // shared x-span of both escalator wells
+    const HOLES = [ { x0: MX0, x1: MX1, z0: -18, z1: -3 }, { x0: MX0, x1: MX1, z0: 3, z1: 18 } ];
+    const HZMIN = -18, HZMAX = 18;
+    const deckStrip = (x0, x1, z0, z1) => { const w = x1 - x0, d = z1 - z0; if (w <= 0.5 || d <= 0.5) return;
       const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, d), new THREE.MeshStandardMaterial({ color: 0x3a4560, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.14, roughness: 0.5, metalness: 0.4, transparent: true, opacity: 0.9 }));
       s.position.set((x0 + x1) / 2, MALL_L2, (z0 + z1) / 2); g.add(s); };
-    deckStrip(DX0, HX0, -DZ, DZ);          // left wing (full depth)
-    deckStrip(HX1, DX1, -DZ, DZ);          // right wing
-    deckStrip(HX0, HX1, -DZ, HZ0);         // back band (behind the hollow)
-    deckStrip(HX0, HX1, HZ1, DZ);          // front band (in front of the hollow)
-    // BALUSTRADE around the atrium hollow — frosted-glass panels + a glowing handrail on all four edges
-    // a dark GROUND-floor patch directly under the hollow so the opening reads as a void down to L1 (not blended
-    // with the bright deck) — the escalators rise from this darker landing up to the upper deck.
-    { const well = dioBox(HX1 - HX0, 0.3, HZ1 - HZ0, 0x12161f, 0x070a0e); well.position.set((HX0 + HX1) / 2, 0.55, (HZ0 + HZ1) / 2); g.add(well); }
+    deckStrip(DX0, MX0, -DZ, DZ);                  // left wing (full depth)
+    deckStrip(MX1, DX1, -DZ, DZ);                  // right wing (A0 + the concourse sit here)
+    deckStrip(MX0, MX1, -DZ, HOLES[0].z0);         // middle: back band
+    deckStrip(MX0, MX1, HOLES[0].z1, HOLES[1].z0); // middle: solid divider between the two wells
+    deckStrip(MX0, MX1, HOLES[1].z1, DZ);          // middle: front band
+    // per-hollow balustrade (kerb + frosted glass + glowing handrail) + a dark ground-floor well so each opening
+    // reads as a void down to L1 (not blended with the bright deck).
     const railSeg = (x0, z0, x1, z1) => { const len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
-      const kerb = dioBox(len + 0.6, 0.7, 0.7, 0x2a3344, 0x0e151f); kerb.position.set((x0 + x1) / 2, MALL_L2 + 0.5, (z0 + z1) / 2); kerb.rotation.y = -ang; g.add(kerb);   // raised edge kerb framing the opening
+      const kerb = dioBox(len + 0.6, 0.7, 0.7, 0x2a3344, 0x0e151f); kerb.position.set((x0 + x1) / 2, MALL_L2 + 0.5, (z0 + z1) / 2); kerb.rotation.y = -ang; g.add(kerb);
       const glass = new THREE.Mesh(new THREE.BoxGeometry(len, 1.4, 0.18), new THREE.MeshStandardMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.22, metalness: 0.5, roughness: 0.2 })); glass.position.set((x0 + x1) / 2, MALL_L2 + 1.1, (z0 + z1) / 2); glass.rotation.y = -ang; g.add(glass);
       const hr = new THREE.Mesh(new THREE.BoxGeometry(len, 0.4, 0.5), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.95, depthWrite: false, blending: FLOW_ADD })); hr.position.set((x0 + x1) / 2, MALL_L2 + 1.9, (z0 + z1) / 2); hr.rotation.y = -ang; g.add(hr); };
-    railSeg(HX0, HZ0, HX1, HZ0); railSeg(HX0, HZ1, HX1, HZ1); railSeg(HX0, HZ0, HX0, HZ1); railSeg(HX1, HZ0, HX1, HZ1);
-    // (the EXISTING entrance→A0 escalators rise through this opening — no separate escalator is added)
+    for (const h of HOLES){
+      const well = dioBox(h.x1 - h.x0, 0.3, h.z1 - h.z0, 0x12161f, 0x070a0e); well.position.set((h.x0 + h.x1) / 2, 0.55, (h.z0 + h.z1) / 2); g.add(well);
+      railSeg(h.x0, h.z0, h.x1, h.z0); railSeg(h.x0, h.z1, h.x1, h.z1); railSeg(h.x0, h.z0, h.x0, h.z1); railSeg(h.x1, h.z0, h.x1, h.z1);
+    }
     // UPPER-LEVEL STOREFRONTS lining the back + front bands of the second floor (facing the atrium hollow)
     const upHues = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a];
     const upShop = (sx, sz, faceZ, hue) => { const unit = dioBox(20, 7, 9, 0x2a3344, 0x0e151f); unit.position.set(sx, MALL_L2 + 4.2, sz); g.add(unit);
@@ -11257,7 +11260,7 @@
     for (let i = 0; i < 7; i++){ const sx = DX0 + 22 + i * ((DX1 - DX0 - 44) / 6);
       upShop(sx, -DZ + 6, +1, upHues[i % upHues.length]);
       upShop(sx, DZ - 6, -1, upHues[(i + 4) % upHues.length]); }
-    const L2 = { DX0, DX1, DZ, HX0, HX1, HZ0, HZ1, y: MALL_L2 };   // bounds for the upper-level random walkers
+    const L2 = { DX0, DX1, DZ, hzMin: HZMIN, hzMax: HZMAX, y: MALL_L2 };   // bounds for the upper-level random walkers
     // SOARING SKYLIGHT TRUSS ROOF (open lattice) high over the wide concourse + a bright central skylight OCULUS
     const roofY = MALL_L2 + 38, roofHalf = zmax + 24;
     for (const rz of [-roofHalf, -roofHalf / 2, 0, roofHalf / 2, roofHalf]){ const beam = dioBox(span + 40, 0.6, 0.7, 0x46566c, 0x141c28); beam.position.set(cx, roofY, rz); g.add(beam); }
@@ -11341,7 +11344,10 @@
       if (s.incline){ const steps = Math.max(4, Math.round(len3 / 4));
         for (let k = 0; k < steps; k++){ const t = (k + 0.5) / steps; const tr = dioBox(1.2, 0.4, 5.4, 0x46566c, 0x141c28); tr.position.set(s.ax + (s.bx - s.ax) * t, s.say + (s.sby - s.say) * t + 0.3, s.az + (s.bz - s.az) * t); orient3(tr, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(tr); }
         for (const off of [-3.0, 3.0]){ const px = -Math.sin(s.ang) * off, pz = Math.cos(s.ang) * off; const rl = dioBox(len3, 1.6, 0.4, 0x8a98ac, 0x1a2430);
-          rl.position.set((s.ax + s.bx) / 2 + px, (s.say + s.sby) / 2 + 1.1, (s.az + s.bz) / 2 + pz); orient3(rl, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(rl); } } });
+          rl.position.set((s.ax + s.bx) / 2 + px, (s.say + s.sby) / 2 + 1.1, (s.az + s.bz) / 2 + pz); orient3(rl, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(rl);
+          // moving HANDRAIL cap (dark rubber rail) riding the top of each balustrade + a thin glowing accent line
+          const hand = dioBox(len3, 0.42, 0.66, 0x20242c, 0x0a0c10); hand.position.set((s.ax + s.bx) / 2 + px, (s.say + s.sby) / 2 + 2.0, (s.az + s.bz) / 2 + pz); orient3(hand, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(hand);
+          const acc = new THREE.Mesh(new THREE.BoxGeometry(len3, 0.12, 0.18), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.8, depthWrite: false, blending: FLOW_ADD })); acc.position.set((s.ax + s.bx) / 2 + px, (s.say + s.sby) / 2 + 2.24, (s.az + s.bz) / 2 + pz); orient3(acc, s.ax, s.say, s.az, s.bx, s.sby, s.bz); g.add(acc); } } });
     // STORE BRAND HUES — varied signage colours per anchor + food + till
     const BRAND = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a];
     const stations = []; let mi = 0;
@@ -11399,8 +11405,8 @@
     for (let k = 0; k < 46; k++) mkWalker(k, L1B, 0);
     // SECOND FLOOR — 12 on the back band, 12 on the front band (both clear of the central hollow)
     if (L2){
-      for (let k = 0; k < 12; k++) mkWalker(100 + k, { minx: L2.DX0 + 6, maxx: L2.DX1 - 6, minz: -L2.DZ + 4, maxz: L2.HZ0 - 3 }, L2.y);
-      for (let k = 0; k < 12; k++) mkWalker(200 + k, { minx: L2.DX0 + 6, maxx: L2.DX1 - 6, minz: L2.HZ1 + 3, maxz: L2.DZ - 4 }, L2.y);
+      for (let k = 0; k < 12; k++) mkWalker(100 + k, { minx: L2.DX0 + 6, maxx: L2.DX1 - 6, minz: -L2.DZ + 4, maxz: L2.hzMin - 3 }, L2.y);
+      for (let k = 0; k < 12; k++) mkWalker(200 + k, { minx: L2.DX0 + 6, maxx: L2.DX1 - 6, minz: L2.hzMax + 3, maxz: L2.DZ - 4 }, L2.y);
     }
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 78, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 72, 0); g.add(dashB);
