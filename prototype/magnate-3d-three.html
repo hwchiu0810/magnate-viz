@@ -11224,16 +11224,46 @@
     const PILH = MALL_L2 + 40;
     for (const px of [xmin - 30, cx, xmax + 30]) for (const pz of [-(zmax + 30), zmax + 30]){ const pil = dioBox(3.0, PILH, 3.0, 0x3a4252, 0x141a22); pil.position.set(px, PILH / 2, pz); g.add(pil);
       const cap = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.0, 4.2), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.5, depthWrite: false, blending: FLOW_ADD })); cap.position.set(px, PILH - 0.5, pz); g.add(cap); }
-    // UPPER CONCOURSE mezzanine deck (the second level) — a balcony walkway around the back with a railing +
-    // a row of upper storefront fascias in varied colours, so the mall reads as multi-level.
-    const upZ = -(zmax + 10);
-    const deck = dioBox(span - 10, 0.7, 14, 0x2c3344, 0x10151f); deck.position.set(cx, MALL_L2, upZ); g.add(deck);
-    for (let i = 0; i < 24; i++){ const post = dioBox(0.18, 2.0, 0.18, 0x6577a0, 0x1a2230); post.position.set(cx - (span - 14) / 2 + i * ((span - 14) / 23), MALL_L2 + 1.4, upZ + 6.8); g.add(post); }
-    const rail = dioBox(span - 12, 0.25, 0.25, 0x8a98ac, 0x1a2230); rail.position.set(cx, MALL_L2 + 2.4, upZ + 6.8); g.add(rail);
-    const upHues = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a];
-    for (let i = 0; i < 6; i++){ const ux = cx - (span - 30) / 2 + i * ((span - 30) / 5);
-      const unit = dioBox(span / 9, 7, 8, 0x2a3344, 0x0e151f); unit.position.set(ux, MALL_L2 + 4.0, upZ - 3); g.add(unit);
-      const fascia = new THREE.Mesh(new THREE.BoxGeometry(span / 9 - 1, 1.6, 0.5), new THREE.MeshBasicMaterial({ color: brightenHex(upHues[i % upHues.length], 0.42), transparent: true, opacity: 0.95 })); fascia.position.set(ux, MALL_L2 + 7.0, upZ + 1.1); g.add(fascia); }
+    // ===== SECOND FLOOR — a full upper level (polished semi-transparent deck so the ground-floor ops still glow
+    // through) covering the footprint EXCEPT a central rectangular ATRIUM HOLLOW left open for the UP/DOWN
+    // escalators (and to see the ground floor below). Balustrades ring the hollow; upper storefronts line it. =====
+    const DX0 = xmin - 12, DX1 = xmax + 12, DZ = zmax + 12;          // second-floor footprint
+    const HX0 = cx - 26, HX1 = cx + 26, HZ0 = -16, HZ1 = 16;         // the atrium hollow (escalator well)
+    const deckStrip = (x0, x1, z0, z1) => { const w = x1 - x0, d = z1 - z0; if (w <= 0 || d <= 0) return;
+      const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, d), new THREE.MeshStandardMaterial({ color: 0x3a4560, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.14, roughness: 0.5, metalness: 0.4, transparent: true, opacity: 0.9 }));
+      s.position.set((x0 + x1) / 2, MALL_L2, (z0 + z1) / 2); g.add(s); };
+    deckStrip(DX0, HX0, -DZ, DZ);          // left wing (full depth)
+    deckStrip(HX1, DX1, -DZ, DZ);          // right wing
+    deckStrip(HX0, HX1, -DZ, HZ0);         // back band (behind the hollow)
+    deckStrip(HX0, HX1, HZ1, DZ);          // front band (in front of the hollow)
+    // BALUSTRADE around the atrium hollow — frosted-glass panels + a glowing handrail on all four edges
+    // a dark GROUND-floor patch directly under the hollow so the opening reads as a void down to L1 (not blended
+    // with the bright deck) — the escalators rise from this darker landing up to the upper deck.
+    { const well = dioBox(HX1 - HX0, 0.3, HZ1 - HZ0, 0x12161f, 0x070a0e); well.position.set((HX0 + HX1) / 2, 0.55, (HZ0 + HZ1) / 2); g.add(well); }
+    const railSeg = (x0, z0, x1, z1) => { const len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
+      const kerb = dioBox(len + 0.6, 0.7, 0.7, 0x2a3344, 0x0e151f); kerb.position.set((x0 + x1) / 2, MALL_L2 + 0.5, (z0 + z1) / 2); kerb.rotation.y = -ang; g.add(kerb);   // raised edge kerb framing the opening
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(len, 1.4, 0.18), new THREE.MeshStandardMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.22, metalness: 0.5, roughness: 0.2 })); glass.position.set((x0 + x1) / 2, MALL_L2 + 1.1, (z0 + z1) / 2); glass.rotation.y = -ang; g.add(glass);
+      const hr = new THREE.Mesh(new THREE.BoxGeometry(len, 0.4, 0.5), new THREE.MeshBasicMaterial({ color: 0x6ad0ff, transparent: true, opacity: 0.95, depthWrite: false, blending: FLOW_ADD })); hr.position.set((x0 + x1) / 2, MALL_L2 + 1.9, (z0 + z1) / 2); hr.rotation.y = -ang; g.add(hr); };
+    railSeg(HX0, HZ0, HX1, HZ0); railSeg(HX0, HZ1, HX1, HZ1); railSeg(HX0, HZ0, HX0, HZ1); railSeg(HX1, HZ0, HX1, HZ1);
+    // UP / DOWN ESCALATORS rising through the hollow from L1 (beltTop) to the back edge of L2
+    const escalator = (ex, dir) => { const z0 = HZ1 - 2, z1 = HZ0 + 2, y0 = beltTop, y1 = MALL_L2, len3 = Math.hypot(z1 - z0, y1 - y0);
+      const rx = -Math.atan2(y1 - y0, z0 - z1), midY = (y0 + y1) / 2, midZ = (z0 + z1) / 2;
+      const ramp = new THREE.Mesh(new THREE.BoxGeometry(7, 0.5, len3), new THREE.MeshStandardMaterial({ color: 0x46566c, emissive: new THREE.Color(0x141c28), emissiveIntensity: 0.2, roughness: 0.5, metalness: 0.5 })); ramp.position.set(ex, midY, midZ); ramp.rotation.x = rx; g.add(ramp);
+      const steps = Math.max(8, Math.round(len3 / 2.2));
+      for (let k = 0; k < steps; k++){ const t = (k + 0.5) / steps; const tr = dioBox(6, 0.5, 1.4, 0x55607a, 0x141c28); tr.position.set(ex, y0 + (y1 - y0) * t + 0.4, z0 + (z1 - z0) * t); tr.rotation.x = rx; g.add(tr); }
+      for (const off of [-3.6, 3.6]){ const rl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.4, len3), new THREE.MeshStandardMaterial({ color: 0x8a98ac, roughness: 0.4, metalness: 0.5 })); rl.position.set(ex + off, midY + 1.0, midZ); rl.rotation.x = rx; g.add(rl);
+        const hr = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, len3), new THREE.MeshBasicMaterial({ color: dir > 0 ? 0x6ee07a : 0xff9a3a, transparent: true, opacity: 0.85, depthWrite: false, blending: FLOW_ADD })); hr.position.set(ex + off, midY + 1.8, midZ); hr.rotation.x = rx; g.add(hr); }
+      try { g.add(labelSpriteSafe(dir > 0 ? '▲ UP' : '▼ DOWN', dir > 0 ? '#8ff0a0' : '#ffc080', 8, ex, MALL_L2 + 3.5, z1)); } catch(_){} };
+    escalator(cx - 8, 1); escalator(cx + 8, -1);
+    // UPPER-LEVEL STOREFRONTS lining the back + front bands of the second floor (facing the atrium hollow)
+    const upHues = [0xff6f91, 0x5ad1c8, 0xffc24a, 0x8a6fe0, 0x6ad0ff, 0x6ee07a, 0xff9a3a, 0xe05a8a];
+    const upShop = (sx, sz, faceZ, hue) => { const unit = dioBox(20, 7, 9, 0x2a3344, 0x0e151f); unit.position.set(sx, MALL_L2 + 4.2, sz); g.add(unit);
+      const fascia = new THREE.Mesh(new THREE.BoxGeometry(18, 1.6, 0.5), new THREE.MeshBasicMaterial({ color: brightenHex(hue, 0.42), transparent: true, opacity: 0.95 })); fascia.position.set(sx, MALL_L2 + 7.2, sz + faceZ * 4.6); g.add(fascia);
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(17, 4.4, 0.25), new THREE.MeshStandardMaterial({ color: brightenHex(hue, 0.08), transparent: true, opacity: 0.34, metalness: 0.5, roughness: 0.2 })); glass.position.set(sx, MALL_L2 + 3.4, sz + faceZ * 4.5); g.add(glass); };
+    for (let i = 0; i < 7; i++){ const sx = DX0 + 22 + i * ((DX1 - DX0 - 44) / 6);
+      upShop(sx, -DZ + 6, +1, upHues[i % upHues.length]);
+      upShop(sx, DZ - 6, -1, upHues[(i + 4) % upHues.length]); }
+    const L2 = { DX0, DX1, DZ, HX0, HX1, HZ0, HZ1, y: MALL_L2 };   // bounds for the upper-level random walkers
     // SOARING SKYLIGHT TRUSS ROOF (open lattice) high over the wide concourse + a bright central skylight OCULUS
     const roofY = MALL_L2 + 38, roofHalf = zmax + 24;
     for (const rz of [-roofHalf, -roofHalf / 2, 0, roofHalf / 2, roofHalf]){ const beam = dioBox(span + 40, 0.6, 0.7, 0x46566c, 0x141c28); beam.position.set(cx, roofY, rz); g.add(beam); }
@@ -11253,7 +11283,7 @@
     const basin = new THREE.Mesh(new THREE.CylinderGeometry(4.0, 4.4, 1.0, 24), new THREE.MeshStandardMaterial({ color: 0x3a4252, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.1, roughness: 0.7, metalness: 0.3 })); basin.position.y = 0.5; fountain.add(basin);
     const water = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.6, 0.3, 24), new THREE.MeshBasicMaterial({ color: 0x49b6ff, transparent: true, opacity: 0.45, depthWrite: false, blending: FLOW_ADD })); water.position.y = 1.0; fountain.add(water);
     const jet = new THREE.Mesh(new THREE.ConeGeometry(0.8, 4.0, 10), new THREE.MeshBasicMaterial({ color: 0x9fd6ff, transparent: true, opacity: 0.35, depthWrite: false, blending: FLOW_ADD })); jet.position.y = 3.0; fountain.add(jet); g.add(fountain);
-    return { cx, span, greens, fountain, jet };
+    return { cx, span, greens, fountain, jet, L2 };
   }
   function buildMallScene(section){
     const g = buildSceneRoot(section);
@@ -11354,28 +11384,36 @@
     // (browsing → cart → bagged) instead of OEE workpieces.
     const parts = []; for (let k = 0; k < C.objN; k++){ const grp = new THREE.Group(); grp.visible = false; g.add(grp);
       parts.push({ grp, active: false, state: '', seg: -1, t: 0, node: null, vx: 0, vz: 0, vy: null, exitT: 0, stageBuilt: -1, morph: MALL_PART }); }
-    // RANDOM-WALK SHOPPERS — a crowd of free-wandering pedestrians strolling the wide-open concourse (independent of
-    // the flow engine): each drifts with a slow seeded heading-wander + walk-bob and bounces off the floor bounds.
+    // RANDOM-WALK SHOPPERS — a crowd of free-wandering pedestrians on BOTH floors (independent of the flow engine):
+    // each drifts with a slow seeded heading-wander + walk-bob and bounces off its level's bounds. L1 roams the
+    // ground concourse; L2 walkers stroll the upper-deck back/front bands (kept clear of the atrium hollow).
     const WALKC = [0xd8c8a8, 0x9ab8d0, 0xc89898, 0x98c8a8, 0xb0a0d8, 0xe0b890, 0xa8c0e0, 0xd0a8b8];
-    const walkBounds = { minx: -150, maxx: 110, minz: -44, maxz: 44 };
     const walkers = [];
     const headG = (typeof THREE.SphereGeometry === 'function') ? new THREE.SphereGeometry(0.5, 8, 8) : new THREE.BoxGeometry(0.8, 0.8, 0.8);
-    for (let k = 0; k < 60; k++){
+    const wfr = (n) => flowFrac(Math.sin(n) * 43758.5453);
+    const L2 = env && env.L2;
+    const mkWalker = (k, b, y) => {
       const wg = new THREE.Group(); const hue = WALKC[k % WALKC.length];
       const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 2.8, 6), new THREE.MeshStandardMaterial({ color: hue, roughness: 0.7, metalness: 0.1 })); body.position.y = 1.8; wg.add(body);
       const head = new THREE.Mesh(headG, new THREE.MeshStandardMaterial({ color: 0xe0c2a8, roughness: 0.8, metalness: 0 })); head.position.y = 3.6; wg.add(head);
-      const fr = (n) => flowFrac(Math.sin(n) * 43758.5453);
-      const wx = walkBounds.minx + fr((k + 1) * 12.9898) * (walkBounds.maxx - walkBounds.minx);
-      const wz = walkBounds.minz + fr((k + 1) * 78.233) * (walkBounds.maxz - walkBounds.minz);
-      wg.position.set(wx, 0.6, wz); g.add(wg);
-      walkers.push({ grp: wg, x: wx, z: wz, ang: fr((k + 1) * 5.31) * Math.PI * 2, sp: 0.05 + fr((k + 1) * 3.17) * 0.06, ph: fr((k + 1) * 9.7) * Math.PI * 2 });
+      const wx = b.minx + wfr((k + 1) * 12.9898) * (b.maxx - b.minx), wz = b.minz + wfr((k + 1) * 78.233) * (b.maxz - b.minz);
+      wg.position.set(wx, y + 0.6, wz); g.add(wg);
+      walkers.push({ grp: wg, x: wx, z: wz, y: y, b: b, ang: wfr((k + 1) * 5.31) * Math.PI * 2, sp: 0.05 + wfr((k + 1) * 3.17) * 0.06, ph: wfr((k + 1) * 9.7) * Math.PI * 2 });
+    };
+    // GROUND FLOOR — 46 wanderers across the concourse
+    const L1B = { minx: -150, maxx: 110, minz: -44, maxz: 44 };
+    for (let k = 0; k < 46; k++) mkWalker(k, L1B, 0);
+    // SECOND FLOOR — 12 on the back band, 12 on the front band (both clear of the central hollow)
+    if (L2){
+      for (let k = 0; k < 12; k++) mkWalker(100 + k, { minx: L2.DX0 + 6, maxx: L2.DX1 - 6, minz: -L2.DZ + 4, maxz: L2.HZ0 - 3 }, L2.y);
+      for (let k = 0; k < 12; k++) mkWalker(200 + k, { minx: L2.DX0 + 6, maxx: L2.DX1 - 6, minz: L2.HZ1 + 3, maxz: L2.DZ - 4 }, L2.y);
     }
     const dashA = labelSpriteSafe('', '#9fe9c4', 15, 0, 78, 0); g.add(dashA);
     const dashB = labelSpriteSafe('', '#bfeaff', 13, 0, 72, 0); g.add(dashB);
     let nSinks = 0; for (const id in N){ if (N[id].kind === 'sink') nSinks++; }
     let qf = 0, qn = 0; for (const id in N){ if (N[id].qcGate){ qf += N[id].failFrac || 0; qn++; } }
     const tills = stations.filter((m) => m.type === 'till');
-    sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, beltTop, env, tills, walkers, walkBounds,
+    sceneState[section] = { g, C, N, S, machines: stations, parts, chev, belts, selBelt: null, beltTop, env, tills, walkers,
       spawnT: 0, spawned: 0, completed: 0, compN: 0, compT: 0, perfEMA: 0, availInst: 1, phase: 0, mtbfMul: 1, bufCap: C.bufCap,
       perfRef: C.rate * 1.6 * (Math.max(1, nSinks) / 1), noBuyFrac: qn ? qf / qn : 0.2, qcFail: qn ? qf / qn : 0.2,
       count: new Array(MALL_PART.length).fill(0), val: new Array(MALL_PART.length).fill(0),
@@ -11442,14 +11480,14 @@
       if (st.env.jet){ st.env.jet.scale.y = 1 + 0.18 * Math.sin(T * 3.0); st.env.jet.material.opacity = 0.3 + 0.12 * (0.5 + 0.5 * Math.sin(T * 3.0)); } }
     // RANDOM-WALK SHOPPERS: each wanderer drifts its heading (seeded slow turn), steps forward, bounces off the
     // concourse bounds, and bobs as it walks. Deterministic (accumulated phase + seeded per-walker offset; no RNG).
-    if (st.walkers && st.walkBounds){ const wb = st.walkBounds;
-      for (let i = 0; i < st.walkers.length; i++){ const w = st.walkers[i];
+    if (st.walkers){
+      for (let i = 0; i < st.walkers.length; i++){ const w = st.walkers[i]; const wb = w.b;
         w.ang += Math.sin(T * 0.6 + w.ph) * dt * 1.1;                     // gentle meander (no fixed path)
         w.x += Math.cos(w.ang) * w.sp * dt * 16; w.z += Math.sin(w.ang) * w.sp * dt * 16;
         if (w.x < wb.minx){ w.x = wb.minx; w.ang = Math.PI - w.ang; } else if (w.x > wb.maxx){ w.x = wb.maxx; w.ang = Math.PI - w.ang; }
         if (w.z < wb.minz){ w.z = wb.minz; w.ang = -w.ang; } else if (w.z > wb.maxz){ w.z = wb.maxz; w.ang = -w.ang; }
         const bob = Math.abs(Math.sin(T * 5 + w.ph)) * 0.2;
-        w.grp.position.set(w.x, 0.6 + bob, w.z); if (w.grp.rotation) w.grp.rotation.y = -w.ang + Math.PI / 2; } }
+        w.grp.position.set(w.x, (w.y || 0) + 0.6 + bob, w.z); if (w.grp.rotation) w.grp.rotation.y = -w.ang + Math.PI / 2; } }
     st.compT += dt; if (st.compT >= 1){ st.perfEMA = st.perfEMA * 0.6 + st.compN * 0.4; st.compN = 0; st.compT -= 1;
       // KPIs: Footfall (visitors/min from the spawn EMA), Occupancy (shoppers in the mall / capacity), Avg queue
       // (mean checkout-line length), Checkout utilisation (running tills / open tills), Conversion % (bought / footfall).
@@ -14331,9 +14369,9 @@
     // rotate-to flourish runs as controls.autoRotate (frame loop disables it under reduced-motion).
     if (useOrbit && controls){
       const isSF = (section === 'smart-factory' || section === 'warehouse' || section === 'shopping-mall');
-      const dist = (section === 'warehouse') ? 300 : (section === 'shopping-mall') ? 262 : (isSF ? 290 : (section === 'erp') ? 230 : (section === 'crm') ? 240 : stageCam.dist);   // the multi-bay DC is broad; the mall is a wide-open atrium; the plant is tall; the O2C + sales-pipeline lines are wide
-      const pivotY = stageCam.pivot.y + (isSF ? 16 : (section === 'shopping-mall') ? 14 : (section === 'erp') ? 6 : (section === 'crm') ? 4 : 0);   // raise the look-at so the tall racks/floors/soaring concourse/desks frame
-      const polar = (section === 'warehouse') ? 0.72 : (section === 'shopping-mall') ? 0.92 : (section === 'erp') ? 0.88 : (section === 'crm') ? 0.86 : ORBIT_DEFAULT.polar;   // mall = lower/eye-level 3-4 angle to read the storefronts; warehouse top-down; erp + crm slightly raised
+      const dist = (section === 'warehouse') ? 300 : (section === 'shopping-mall') ? 250 : (isSF ? 290 : (section === 'erp') ? 230 : (section === 'crm') ? 240 : stageCam.dist);   // the multi-bay DC is broad; the mall is a wide-open atrium; the plant is tall; the O2C + sales-pipeline lines are wide
+      const pivotY = stageCam.pivot.y + (isSF ? 16 : (section === 'shopping-mall') ? 20 : (section === 'erp') ? 6 : (section === 'crm') ? 4 : 0);   // raise the mall look-at to mid-height between the two floors so the upper deck + atrium hollow frame
+      const polar = (section === 'warehouse') ? 0.72 : (section === 'shopping-mall') ? 1.26 : (section === 'erp') ? 0.88 : (section === 'crm') ? 0.86 : ORBIT_DEFAULT.polar;   // mall = low eye-level angle to read the two stacked floors + atrium escalators; warehouse top-down; erp + crm slightly raised
       orbitTo(stageCam.pivot.x, pivotY, stageCam.pivot.z, dist, polar, sectionToYaw);
       controls.autoRotate = !reduceMotion && !replaying() && stageSpin;
     }
