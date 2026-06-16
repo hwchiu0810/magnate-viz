@@ -11228,20 +11228,25 @@
     // through) covering the footprint EXCEPT a central rectangular ATRIUM HOLLOW left open for the UP/DOWN
     // escalators (and to see the ground floor below). Balustrades ring the hollow; upper storefronts line it. =====
     const DX0 = xmin - 12, DX1 = xmax + 12, DZ = zmax + 12;          // second-floor footprint
-    // TWO narrow atrium hollows — ONE PER entrance→A0 escalator (the −z escalator + the +z escalator), each sized to
-    // fit its escalator run; the deck stays solid between + around them. The escalators rise through these openings
-    // and land on the right-wing deck at the upper anchor A0 (x≈−64), so shoppers ride them L1↔L2.
-    const MX0 = -98, MX1 = -68;                                      // shared x-span of both escalator wells
-    const HOLES = [ { x0: MX0, x1: MX1, z0: -18, z1: -3 }, { x0: MX0, x1: MX1, z0: 3, z1: 18 } ];
+    // THREE atrium hollows — ONE PER escalator, each sized to fit its run; the deck stays solid between + around
+    // them. Two entrance→A0 escalators rise through the −z / +z wells (x[-98,-68]); the A0→food-court escalator
+    // descends EAST through a third slot (x[-62,8] at z≈0). A0 lands on the thin deck band between them.
+    const MX0 = -98, MX1 = -68;                                      // x-span of the two entrance wells
+    const HOLES = [ { x0: MX0, x1: MX1, z0: -18, z1: -3 },           // entrance escalator (−z)
+                    { x0: MX0, x1: MX1, z0: 3, z1: 18 },             // entrance escalator (+z)
+                    { x0: -62, x1: 8, z0: -6, z1: 6 } ];             // A0 → food-court descending escalator
     const HZMIN = -18, HZMAX = 18;
     const deckStrip = (x0, x1, z0, z1) => { const w = x1 - x0, d = z1 - z0; if (w <= 0.5 || d <= 0.5) return;
       const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, d), new THREE.MeshStandardMaterial({ color: 0x3a4560, emissive: new THREE.Color(0x10151f), emissiveIntensity: 0.14, roughness: 0.5, metalness: 0.4, transparent: true, opacity: 0.9 }));
       s.position.set((x0 + x1) / 2, MALL_L2, (z0 + z1) / 2); g.add(s); };
     deckStrip(DX0, MX0, -DZ, DZ);                  // left wing (full depth)
-    deckStrip(MX1, DX1, -DZ, DZ);                  // right wing (A0 + the concourse sit here)
-    deckStrip(MX0, MX1, -DZ, HOLES[0].z0);         // middle: back band
-    deckStrip(MX0, MX1, HOLES[0].z1, HOLES[1].z0); // middle: solid divider between the two wells
-    deckStrip(MX0, MX1, HOLES[1].z1, DZ);          // middle: front band
+    deckStrip(MX0, MX1, -DZ, -18);                 // entrance col: back band
+    deckStrip(MX0, MX1, -3, 3);                    // entrance col: divider between the two wells
+    deckStrip(MX0, MX1, 18, DZ);                   // entrance col: front band
+    deckStrip(MX1, -62, -DZ, DZ);                  // thin A0-landing band (x[-68,-62]) between the wells and the FC slot
+    deckStrip(-62, 8, -DZ, -6);                    // A0→FC col: back band
+    deckStrip(-62, 8, 6, DZ);                      // A0→FC col: front band
+    deckStrip(8, DX1, -DZ, DZ);                    // east wing (the concourse + checkouts sit beneath)
     // per-hollow balustrade (kerb + frosted glass + glowing handrail) + a dark ground-floor well so each opening
     // reads as a void down to L1 (not blended with the bright deck).
     const railSeg = (x0, z0, x1, z1) => { const len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
@@ -11300,7 +11305,7 @@
     node('ENT0', -118, -22, 'source', null, 'North Entrance', 0);
     node('ENT1', -118,  22, 'source', null, 'West Entrance', 0);
     // ANCHOR / CONCOURSE STORES — browse stations (stage 0→1 morph: pick up goods). A0 sits on the UPPER concourse.
-    node('A0', -64,   0, 'machine', 'anchor', 'Anchor Store · Dept (L2)', 1, C.rate, MALL_L2); N.A0.qcGate = true;
+    node('A0', -64,   0, 'machine', 'anchor', 'Anchor Store · Dept (L2)', 1, C.rate, MALL_L2);   // L2 anchor: all shoppers descend to the food court (no no-buy→exit branch)
     node('A1', -64, -34, 'machine', 'anchor', 'Concourse · Fashion', 1, C.rate);              N.A1.qcGate = true;
     node('A2', -64,  34, 'machine', 'anchor', 'Concourse · Electronics', 1, C.rate);          N.A2.qcGate = true;
     // FOOD COURT — a rest/dwell hub that GATHERS the concourse flows then dispatches to the tills (pass-through;
@@ -11320,7 +11325,7 @@
     seg('ENT0', 'A1'); seg('ENT0', 'A0'); seg('ENT1', 'A2'); seg('ENT1', 'A0');
     // anchors → food court (merge). Each anchor's qc routes index 0 = onward (food court), index 1 (reworkOut) = exit (no-buy)
     N.A0.outStage = 1; N.A1.outStage = 1; N.A2.outStage = 1;
-    seg('A0', 'FC'); seg('A0', 'EXIT', true);     // A0: buy→FC, no-buy→EXIT
+    seg('A0', 'FC');                              // A0 (L2): the descending escalator to the food court (no A0→EXIT)
     seg('A1', 'FC'); seg('A1', 'EXIT', true);
     seg('A2', 'FC'); seg('A2', 'EXIT', true);
     // food court → checkouts (split/dispatch 1→many across the open tills)
@@ -11329,7 +11334,7 @@
     // checkouts → exit
     seg('CK0', 'EXIT'); seg('CK1', 'EXIT'); seg('CK2', 'EXIT'); seg('CK3', 'EXIT');
     // tag the qc gates: outSeg[0]=onward, reworkOut index = the no-buy→exit branch (mirrors the SF qc-gate machinery)
-    for (const id of ['A0', 'A1', 'A2']){ const nd = N[id]; nd.reworkOut = 1; nd.rr = 0; nd.qhash = (id.charCodeAt(1) * 17 + 3); }
+    for (const id of ['A1', 'A2']){ const nd = N[id]; nd.reworkOut = 1; nd.rr = 0; nd.qhash = (id.charCodeAt(1) * 17 + 3); }
     mallRollRates(N, S, C, mallRateSeed);   // assign the RANDOMIZED initial service rates + open-hours + conversion
     const XAX = (typeof THREE !== 'undefined' && THREE.Vector3) ? new THREE.Vector3(1, 0, 0) : null;
     const orient3 = (obj, ax, ay, az, bx, by, bz) => { try { const d = new THREE.Vector3(bx - ax, by - ay, bz - az); if (d.length()) { d.normalize(); if (obj.quaternion && obj.quaternion.setFromUnitVectors) obj.quaternion.setFromUnitVectors(XAX, d); } } catch(_){} };
