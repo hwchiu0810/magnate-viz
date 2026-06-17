@@ -6086,7 +6086,6 @@
       if (camMode === 'roam'){
         // HOLD-LEFT-DRAG to look around (release to stop). No pointer-lock, no ESC needed.
         if (e.button === 0){ roam.drag = true; roam.lx = e.clientX; roam.ly = e.clientY;
-          try { if (gl.setPointerCapture && e.pointerId != null) gl.setPointerCapture(e.pointerId); } catch(_){}
           try { if (gl.style) gl.style.cursor = 'grabbing'; } catch(_){} }
         return;
       }
@@ -6103,11 +6102,15 @@
         mapCam.tx -= (e.clientX - mapCam.px) * k;
         mapCam.tz -= (e.clientY - mapCam.py) * k;
         mapCam.px = e.clientX; mapCam.py = e.clientY;
-      } else if (camMode === 'roam' && roam.drag){
-        // drag-look: rotate by the pointer delta while the left button is held
-        roam.yaw   -= (e.clientX - roam.lx) * 0.004;
-        roam.pitch  = clamp(roam.pitch - (e.clientY - roam.ly) * 0.004, -1.45, 1.45);
-        roam.lx = e.clientX; roam.ly = e.clientY;
+      } else if (camMode === 'roam'){
+        // drag-look: rotate while the LEFT button is held (keyed off e.buttons so it works even if a
+        // pointerdown was missed). Release → e.buttons clears bit 0 → stop. No pointer-lock, no ESC.
+        if (e.buttons & 1){
+          if (!roam.drag){ roam.drag = true; roam.lx = e.clientX; roam.ly = e.clientY; }
+          roam.yaw   -= (e.clientX - roam.lx) * 0.004;
+          roam.pitch  = clamp(roam.pitch - (e.clientY - roam.ly) * 0.004, -1.45, 1.45);
+          roam.lx = e.clientX; roam.ly = e.clientY;
+        } else if (roam.drag){ roam.drag = false; }
       }
     });
     gl.addEventListener('wheel', e => {
@@ -6118,7 +6121,10 @@
 
     // ----- ROAM look = hold-left-drag (set up above) + WASD -----
     window.addEventListener('keydown', e => {
-      if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+      // only swallow keys while genuinely TYPING in a text field (not range sliders / buttons / selects),
+      // so WASD always drives roam even if a panel control was just clicked.
+      const t = e.target, tag = t && t.tagName, typ = (t && t.type) || '';
+      if (tag === 'TEXTAREA' || (tag === 'INPUT' && /^(text|search|number|email|password|tel|url)$/.test(typ))) return;
       roam.keys[e.code] = true;
     });
     window.addEventListener('keyup', e => { roam.keys[e.code] = false; });
@@ -7257,6 +7263,9 @@
           : 'drag to pan · wheel to zoom · V = camera');
     // roam = grab cursor (hold-drag to look); map restores the default cursor
     try { if (typeof gl !== 'undefined' && gl && gl.style) gl.style.cursor = (m === 'roam') ? 'grab' : ''; } catch(_){}
+    // entering roam: drop focus from any panel control (slider/button) so WASD keys reach the roam camera
+    if (m === 'roam'){ try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch(_){}
+      roam.drag = false; for (const kk in roam.keys) roam.keys[kk] = false; }
     // OrbitControls (the map controller) is detached while roaming, re-enabled when we return.
     if (useOrbit && controls){
       controls.enabled = (m === 'map');
