@@ -5616,6 +5616,25 @@
   const MAP_DEFAULT = { tx:0, tz:0, height:120, tilt:0.95 };
   // ROAM: a free-fly walker. Mouse-look is HOLD-LEFT-DRAG (press to look, release to stop — no pointer-lock / ESC).
   const roam = { pos: null, yaw: 0, pitch: -0.12, keys: {}, locked:false, drag:false, lx:0, ly:0 };
+  // advance the free-fly camera (WASD move + drag-look pose). Shared by the streamed-world path AND the diorama
+  // sections (so roam works EVERYWHERE, not just smart-city/factory). Safe to call only when camMode === 'roam'.
+  function driveRoam(dt){
+    if (!roam.pos || typeof THREE === 'undefined') return;
+    const k = roam.keys, fast = (k['ShiftLeft'] || k['ShiftRight']);
+    const spd = (fast ? 42 : 20) * dt;
+    const fwd = new THREE.Vector3(Math.sin(roam.yaw), 0, Math.cos(roam.yaw));
+    const right = new THREE.Vector3(Math.sin(roam.yaw + Math.PI / 2), 0, Math.cos(roam.yaw + Math.PI / 2));
+    if (k['KeyW'] || k['ArrowUp'])    roam.pos.addScaledVector(fwd, spd);
+    if (k['KeyS'] || k['ArrowDown'])  roam.pos.addScaledVector(fwd, -spd);
+    if (k['KeyA'] || k['ArrowLeft'])  roam.pos.addScaledVector(right, -spd);
+    if (k['KeyD'] || k['ArrowRight']) roam.pos.addScaledVector(right, spd);
+    if (k['Space'])                   roam.pos.y += spd;
+    if (k['KeyC'] || k['ControlLeft']) roam.pos.y -= spd;
+    roam.pos.y = clamp(roam.pos.y, 2, 240);
+    cam.position.copy(roam.pos);
+    const cp = Math.cos(roam.pitch);
+    cam.lookAt(roam.pos.x + Math.sin(roam.yaw) * cp, roam.pos.y + Math.sin(roam.pitch), roam.pos.z + Math.cos(roam.yaw) * cp);
+  }
 
   function activeViewpoint(){
     // where the world should stream around (and the coords readout reflects)
@@ -6661,9 +6680,12 @@
         }
         for (; slot < pool.length; slot++){ const p = pool[slot]; if (p && p.m){ p.m.visible = false; } }
       }
-      // orbit the camera around the active scene's pivot
+      // orbit the camera around the active scene's pivot — UNLESS roam (free-fly) is active, in which case the
+      // WASD + drag-look walker drives the camera here too (so roam works in the dioramas, not just the world).
       const pv = stageCam.pivot;
-      if (useOrbit && controls){
+      if (camMode === 'roam'){
+        driveRoam(dt);
+      } else if (useOrbit && controls){
         // OrbitControls owns the orbit: target = scene center (set in aimStageAt). The rotate-to
         // flourish + idle turntable both ride controls.autoRotate, gated by !reduceMotion &&
         // !replaying() (so it freezes under reduced-motion or while scrubbing a replay).
@@ -6698,21 +6720,7 @@
         cam.lookAt(mapCam.tx, 0, mapCam.tz);
       }
     } else {
-      const k = roam.keys, fast = (k['ShiftLeft']||k['ShiftRight']);
-      const spd = (fast ? 42 : 20) * dt;
-      const fwd = new THREE.Vector3(Math.sin(roam.yaw), 0, Math.cos(roam.yaw));
-      const right = new THREE.Vector3(Math.sin(roam.yaw+Math.PI/2), 0, Math.cos(roam.yaw+Math.PI/2));
-      if (k['KeyW']||k['ArrowUp'])    roam.pos.addScaledVector(fwd, spd);
-      if (k['KeyS']||k['ArrowDown'])  roam.pos.addScaledVector(fwd, -spd);
-      if (k['KeyA']||k['ArrowLeft'])  roam.pos.addScaledVector(right, -spd);
-      if (k['KeyD']||k['ArrowRight']) roam.pos.addScaledVector(right, spd);
-      if (k['Space'])                 roam.pos.y += spd;
-      if (k['ShiftLeft']&&k['ControlLeft']) {}                        // (reserved)
-      if (k['KeyC']||k['ControlLeft']) roam.pos.y -= spd;
-      roam.pos.y = clamp(roam.pos.y, 2, 240);
-      cam.position.copy(roam.pos);
-      const cp = Math.cos(roam.pitch);
-      cam.lookAt(roam.pos.x + Math.sin(roam.yaw)*cp, roam.pos.y + Math.sin(roam.pitch), roam.pos.z + Math.cos(roam.yaw)*cp);
+      driveRoam(dt);
     }
 
     // where the world streams around + the coords readout reflect (orbit target / roam pos / map pan)
