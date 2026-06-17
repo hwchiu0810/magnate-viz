@@ -5614,8 +5614,8 @@
   // MAP (hand-rolled FALLBACK): a tilted near-top-down rig that PANS across the endless world.
   const mapCam = { tx: 0, tz: 0, height: 120, tilt: 0.95, drag:false, px:0, py:0 };
   const MAP_DEFAULT = { tx:0, tz:0, height:120, tilt:0.95 };
-  // ROAM: a free-fly walker with pointer-lock mouse-look.
-  const roam = { pos: null, yaw: 0, pitch: -0.12, keys: {}, locked:false };
+  // ROAM: a free-fly walker. Mouse-look is HOLD-LEFT-DRAG (press to look, release to stop — no pointer-lock / ESC).
+  const roam = { pos: null, yaw: 0, pitch: -0.12, keys: {}, locked:false, drag:false, lx:0, ly:0 };
 
   function activeViewpoint(){
     // where the world should stream around (and the coords readout reflects)
@@ -6083,10 +6083,18 @@
     // When OrbitControls is active it owns the 'map' mode (orbit/zoom/pan); these hand-rolled
     // handlers only do anything when useOrbit is false (offline fallback) so they never fight it.
     gl.addEventListener('pointerdown', e => {
+      if (camMode === 'roam'){
+        // HOLD-LEFT-DRAG to look around (release to stop). No pointer-lock, no ESC needed.
+        if (e.button === 0){ roam.drag = true; roam.lx = e.clientX; roam.ly = e.clientY;
+          try { if (gl.setPointerCapture && e.pointerId != null) gl.setPointerCapture(e.pointerId); } catch(_){}
+          try { if (gl.style) gl.style.cursor = 'grabbing'; } catch(_){} }
+        return;
+      }
       if (useOrbit || camMode !== 'map') return;
       mapCam.drag = true; mapCam.px = e.clientX; mapCam.py = e.clientY;
     });
-    window.addEventListener('pointerup', () => { mapCam.drag = false; });
+    window.addEventListener('pointerup', () => { mapCam.drag = false; roam.drag = false;
+      try { if (camMode === 'roam' && gl.style) gl.style.cursor = 'grab'; } catch(_){} });
     window.addEventListener('pointermove', e => {
       if (!useOrbit && camMode === 'map'){
         if (!mapCam.drag) return;
@@ -6095,9 +6103,11 @@
         mapCam.tx -= (e.clientX - mapCam.px) * k;
         mapCam.tz -= (e.clientY - mapCam.py) * k;
         mapCam.px = e.clientX; mapCam.py = e.clientY;
-      } else if (camMode === 'roam' && roam.locked){
-        roam.yaw   -= e.movementX * 0.0022;
-        roam.pitch  = clamp(roam.pitch - e.movementY * 0.0022, -1.45, 1.45);
+      } else if (camMode === 'roam' && roam.drag){
+        // drag-look: rotate by the pointer delta while the left button is held
+        roam.yaw   -= (e.clientX - roam.lx) * 0.004;
+        roam.pitch  = clamp(roam.pitch - (e.clientY - roam.ly) * 0.004, -1.45, 1.45);
+        roam.lx = e.clientX; roam.ly = e.clientY;
       }
     });
     gl.addEventListener('wheel', e => {
@@ -6106,9 +6116,7 @@
       e.preventDefault();
     }, { passive: false });
 
-    // ----- ROAM pointer-lock + WASD -----
-    gl.addEventListener('click', () => { if (camMode === 'roam' && gl.requestPointerLock) gl.requestPointerLock(); });
-    document.addEventListener('pointerlockchange', () => { roam.locked = (document.pointerLockElement === gl); });
+    // ----- ROAM look = hold-left-drag (set up above) + WASD -----
     window.addEventListener('keydown', e => {
       if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
       roam.keys[e.code] = true;
@@ -7243,10 +7251,12 @@
     btn.textContent = m === 'roam' ? '🚶 Roam cam' : (useOrbit ? '🛰️ Orbit cam' : '🛰️ Map cam');
     const ch = $('hud-camhint');
     if (ch) ch.textContent = m === 'roam'
-      ? 'click to lock mouse · WASD move · Space/C up·down · V = camera'
+      ? 'hold left-drag to look · WASD move · Space/C up·down · V = camera'
       : (useOrbit
           ? 'drag to orbit · wheel to zoom · right-drag to pan · V = camera'
           : 'drag to pan · wheel to zoom · V = camera');
+    // roam = grab cursor (hold-drag to look); map restores the default cursor
+    try { if (typeof gl !== 'undefined' && gl && gl.style) gl.style.cursor = (m === 'roam') ? 'grab' : ''; } catch(_){}
     // OrbitControls (the map controller) is detached while roaming, re-enabled when we return.
     if (useOrbit && controls){
       controls.enabled = (m === 'map');
