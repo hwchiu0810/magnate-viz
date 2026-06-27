@@ -12,17 +12,25 @@ a living world — and the newer sections let you *build* visualizations from da
 > shared, deterministic, conservation-checked economy core. It is **not** the production multiplayer
 > client — no servers, accounts, or real money. Everything runs client-side in your browser.
 
-## Sections (12)
+## Sections (13)
 Switch with the buttons along the top:
 
-- **🏭 Factory** — a boundaryless, infinitely-streamed supply-chain world (extraction → smelting →
-  fabrication → assembly), with a central economy district of firm towers (height ∝ net worth).
+- **🌆 Smart City II (streamed world)** — a boundaryless, infinitely-streamed **city-grid** world with a
+  live **traffic & signal-control twin**: cars flow the avenues, congestion recolours the roads, and
+  signal-cycle / demand / incident levers run the intersection network.
 - **🏛 Market** / **💰 Finance** — 3D **Sankeys** (supply-chain value / money flow; the finance one is
   ledger-tied).
 - **🕸 Network** / **🏆 Leaderboard** — a trade-interconnection graph / companies ranked by net worth.
-- **🏙 Smart City · 🛍 Shopping Mall** — focused **digital-twin** worlds: glowing wireframe structure,
-  physics fields (thermal colormaps, a power grid, data-comms driven by the real trade graph), data
-  packets, and a telemetry HUD.
+- **🏙 Smart City** — a **night LED light-show**: a **Taipei-101** media-façade scrolling a character
+  marquee, a **Las-Vegas-Sphere** LED globe cycling procedural images, a light-bridge, and a **240-drone
+  sky swarm** forming symbols/text, over a boundaryless lit metropolis with street lamps + circulating
+  traffic + pedestrians (ambient-light + drone-formation levers).
+- **🛍 Shopping Mall** — a **two-level retail-operations twin**: a wide-open skylit atrium, escalators
+  rising through guarded floor-hollows between levels, open storefronts **stocked by category** (fashion /
+  shoes / electronics / books / grocery / toys / sports / cafe / jewelry / home), and a **free-walking
+  crowd** on both floors; footfall / occupancy / conversion KPIs.
+- **📦 Warehouse** — an automated **distribution centre**: a mobile-rack inventory cube with pick robots
+  that carry totes onto the conveyor flow; WMS KPIs (storage %, picks, dock utilisation, throughput).
 - **🏭 Smart Factory** — a **networked OEE plant**: 26 machines / 41 conveyor belts across 8 stages
   (6 intake → machining → sub-assembly welds → distribution hubs → finishing → dual main-assembly hubs
   → QC / dispatch → pack → ship) with cross-connecting branches. **Function-specific machine models**
@@ -43,11 +51,13 @@ Switch with the buttons along the top:
   become a visualization, powered by the platform's `engine/` modules.
 
 ## Controls
-- **Orbit** by dragging; **scroll** to zoom; toggle **roam** to fly the streamed world.
+- **Orbit** by dragging; **scroll** to zoom; press **V** for **roam** — **hold left-drag to look** +
+  **WASD** to fly (Space / C up·down) — available in *every* section, not just the streamed world.
 - **Click** a firm tower / exchange to **inspect** it (balances, recent trades, net-worth sparkline).
 - **Scrub the timeline** to replay recent history. **B** toggles digital-twin render mode.
 - **Select & move** objects in any section — arm pick-mode and click (Shift for multi-select), drag the
-  3-axis transform gizmo, **pin** so moves stick on animated objects, and **save / export** the layout.
+  3-axis transform gizmo or the **independent X / Y / Z scale sliders**, **pin** so moves stick on
+  animated objects, and **save / export** the layout.
 - Respects `prefers-reduced-motion` — animation freezes if your system requests it.
 
 ## Tech
